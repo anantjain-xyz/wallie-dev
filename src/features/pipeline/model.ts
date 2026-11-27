@@ -114,6 +114,9 @@ function sameLaneMetadata(left: PipelineBoardLane, right: PipelineBoardLane) {
     left.cursor === right.cursor &&
     left.description === right.description &&
     left.factoryName === right.factoryName &&
+    left.factory?.id === right.factory?.id &&
+    left.factory?.name === right.factory?.name &&
+    left.factory?.status === right.factory?.status &&
     left.id === right.id &&
     left.name === right.name &&
     left.pipeline.id === right.pipeline.id &&

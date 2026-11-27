@@ -76,9 +76,6 @@ export function SessionsViewTitle(props: SessionsViewProps) {
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
       <h1 className={PAGE_HEADER_TITLE_CLASS}>Sessions</h1>
       <SessionsViewNavigation {...props} />
-      {props.view === "board" ? (
-        <p className="type-body text-muted">Unarchived sessions by stage.</p>
-      ) : null}
     </div>
   );
 }

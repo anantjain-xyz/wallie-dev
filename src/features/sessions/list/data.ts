@@ -9,6 +9,10 @@ import {
 } from "@/features/sessions/list/sessions-list-preferences";
 import type { WorkspaceSummary } from "@/lib/auth";
 import type { OnboardingResumeState } from "@/features/onboarding/resume";
+import {
+  loadBrowsePipelineOwners,
+  type SessionBrowseFactory,
+} from "@/features/sessions/browse-pipeline-owners";
 import { loadWorkspaceLayoutContext } from "@/features/workspaces/workspace-layout-data";
 import {
   parseSessionListQueryState,
@@ -24,6 +28,7 @@ import {
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 
 export type SessionListPageData = {
+  factoriesByPipeline?: Record<string, SessionBrowseFactory>;
   hasAnySession: boolean;
   hasMore: boolean;
   nextCursor: string | null;
@@ -198,8 +203,19 @@ export async function loadSessionListPageData(
       const hasMore = payload.hasMore === true;
       const nextCursor =
         hasMore && sessions.length > 0 ? encodeCursor(sessions.at(-1)!, queryState.sort) : null;
+      const factoriesByPipeline =
+        searchParams.factory === "all"
+          ? Object.fromEntries(
+              await loadBrowsePipelineOwners(
+                context.supabase,
+                context.workspace.id,
+                sessions.map((session) => session.pipelineId),
+              ),
+            )
+          : undefined;
 
       return {
+        factoriesByPipeline,
         hasAnySession: payload.hasAnySession === true,
         hasMore,
         nextCursor,
