@@ -207,6 +207,56 @@ function renderExactReview(data: SessionReviewData, target: ExactSessionReviewTa
   );
 }
 
+async function queueBriefRejection(exact = false) {
+  function ReviewPhase() {
+    return createElement("span", null, useSessionActivityPresentation()?.currentStage.phaseStatus);
+  }
+  const { artifact, data, target } = exactReviewFixture({ artifactVersion: 2 });
+  data.session.currentArtifactVersion = artifact.version;
+  data.session.artifacts = [artifact];
+  const previous = { ...artifact, id: "earlier-artifact", version: 1, payload: "Earlier review" };
+  const response = Promise.withResolvers<Response>();
+  const request = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = new URL(String(input), "http://localhost");
+    if (url.pathname.endsWith("/phase-action")) return response.promise;
+    if (url.pathname.endsWith("/artifacts")) {
+      const id = url.searchParams.get("artifactId");
+      if (id) return Response.json({ artifact: id === previous.id ? previous : artifact });
+      return Response.json({ artifacts: [previous] });
+    }
+    if (url.pathname.endsWith("/reviews"))
+      return Response.json({
+        reviewRevision: target.reviewRevision,
+        submittedThreadRevisions: {},
+        threads: [],
+        nextCursor: null,
+        counts: { total: 0, open: 0, blocking: 0 },
+        viewer: { memberId: "member-1", canReview: true, readOnlyReason: null },
+      });
+    return Response.json({ stageId: target.stageId, canApprove: true });
+  });
+  const detail = (initialData = data) =>
+    createElement(SessionDetailPageClient, {
+      activity: createElement(ReviewPhase),
+      initialData,
+      initialExactReviewTarget: exact ? target : undefined,
+      initialFormattedArtifact: createElement("p", null, "Full artifact body"),
+      initialFormattedArtifactKey: `${initialData.session.id}:product:id:${initialData.session.currentArtifactId}`,
+    });
+  const view = render(detail(), { wrapper: OverlayProvider });
+  const brief = await screen.findByRole("region", { name: "Artifact changes" });
+  await within(brief).findByText(artifact.payload);
+  const note = "Keep the keyboard focus visible.";
+  fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+  await screen.findByText("No inline comments on this artifact yet.");
+  fireEvent.change(screen.getByRole("textbox", { name: "Feedback for Wallie" }), {
+    target: { value: note },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Queue rerun" }));
+  const settle = (result: Response) => act(async () => response.resolve(result));
+  return { artifact, brief, data, detail, note, request, settle, target, view };
+}
+
 afterEach(() => {
   for (const unsubscribe of feedbackEventCleanups.splice(0)) unsubscribe();
   cleanup();
@@ -702,6 +752,130 @@ describe("SessionDetailPageClient", () => {
       false,
     );
     expect(within(screen.getByRole("dialog")).getByRole("alert")).toHaveTextContent("Try again");
+  });
+
+  it.each([
+    { outcome: "success", exact: false, status: 200, workerStarted: false },
+    { outcome: "success after early worker start", exact: false, status: 200, workerStarted: true },
+    { outcome: "conflict", exact: false, status: 409, workerStarted: false },
+    {
+      outcome: "conflict from an exact review link",
+      exact: true,
+      status: 409,
+      workerStarted: false,
+    },
+  ])(
+    "keeps the same Brief mounted until rejection settles: $outcome",
+    async ({ exact, status, workerStarted }) => {
+      const { brief, data, note, request, settle, target } = await queueBriefRejection(exact);
+      const dialog = screen.getByRole("dialog", { name: "Request changes" });
+      expect(within(dialog).getByRole("button", { name: "Queueing…" })).toBeDisabled();
+      expect(screen.getByText("rejected")).toBeInTheDocument();
+      expect(brief).toBeInTheDocument();
+      expect(document.getElementById("artifact-rendered-panel")).toBeNull();
+
+      const phaseCalls = request.mock.calls.filter(([url]) =>
+        String(url).endsWith("/phase-action"),
+      );
+      expect(phaseCalls).toHaveLength(1);
+      expect(phaseCalls[0][0]).toBe(`/api/sessions/${data.session.id}/phase-action`);
+      expect(JSON.parse(String(phaseCalls[0][1]?.body))).toEqual({
+        action: "reject",
+        artifactId: target.artifactId,
+        stageId: target.stageId,
+        version: target.artifactVersion,
+        feedbackText: note,
+        feedbackSubmission: {
+          requestId: expect.any(String),
+          expectedReviewRevision: target.reviewRevision,
+          selectedThreadIds: [],
+        },
+      });
+
+      if (workerStarted) {
+        const { session } = data;
+        await waitFor(() => expect(mocked.handlers.has("sessions")).toBe(true));
+        act(() =>
+          mocked.handlers.get("sessions")!({
+            eventType: "UPDATE",
+            new: {
+              archived_at: null,
+              created_at: session.createdAt,
+              current_artifact_id: target.artifactId,
+              current_artifact_version: target.artifactVersion,
+              current_stage_id: target.stageId,
+              id: session.id,
+              linear_issue_id: session.linearIssueId,
+              linear_issue_url: session.linearIssueUrl,
+              number: session.number,
+              phase_status: "in_progress",
+              prompt_md: session.promptMd,
+              rejection_count: 1,
+              title: session.title,
+              updated_at: "2026-06-07T12:01:00.000Z",
+            },
+          }),
+        );
+        expect(screen.getByText("in_progress")).toBeInTheDocument();
+        expect(brief).toBeInTheDocument();
+        expect(document.getElementById("artifact-rendered-panel")).toBeNull();
+        expect(within(dialog).getByRole("button", { name: "Queueing…" })).toBeDisabled();
+      }
+
+      if (status === 200) {
+        await settle(
+          Response.json({
+            id: data.session.id,
+            archivedAt: null,
+            currentArtifactId: target.artifactId,
+            artifactVersion: target.artifactVersion,
+            currentStage: data.session.pipeline.stages[0],
+            currentStageId: target.stageId,
+            phaseStatus: "rejected",
+            rejectionCount: 1,
+            updatedAt: "2026-06-07T12:00:00.000Z",
+          }),
+        );
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(screen.getByText("Previous artifact")).toBeVisible();
+        expect(screen.getByText(workerStarted ? "in_progress" : "rejected")).toBeVisible();
+        expect(document.getElementById("artifact-brief-panel")).toBeNull();
+        expect(screen.queryByRole("button", { name: "Request changes" })).toBeNull();
+      } else {
+        await settle(
+          Response.json({ code: "stale_version", error: "Review changed." }, { status }),
+        );
+        expect(screen.getByText("awaiting_review")).toBeInTheDocument();
+        expect(brief).toBeInTheDocument();
+        expect(within(dialog).getByRole("alert")).toHaveTextContent("Review changed.");
+        expect(within(dialog).getByRole("textbox", { name: "Feedback for Wallie" })).toHaveValue(
+          note,
+        );
+        expect(within(dialog).getByRole("button", { name: "Queue rerun" })).toBeEnabled();
+      }
+    },
+  );
+
+  it("does not carry a pending rejection or its draft to another session", async () => {
+    const { artifact, brief, data, detail, settle, view } = await queueBriefRejection();
+    const next = makeSessionDetailData();
+    next.session.id = "33333333-3333-4333-8333-333333333333";
+    next.session.number = data.session.number + 1;
+    next.session.currentStageId = data.session.currentStageId;
+    next.session.pipeline = data.session.pipeline;
+    next.session.currentArtifactId = "different-artifact";
+    next.session.currentArtifactVersion = artifact.version;
+    next.session.artifacts = [{ ...artifact, id: next.session.currentArtifactId }];
+    view.rerender(detail(next));
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(brief).not.toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "Review brief" })).toBeInTheDocument();
+    await settle(Response.json({ error: "Old review changed." }, { status: 409 }));
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    await screen.findByText("No inline comments on this artifact yet.");
+    expect(screen.getByRole("textbox", { name: "Feedback for Wallie" })).toHaveValue("");
+    expect(screen.queryByText("Old review changed.")).toBeNull();
   });
 
   it("accepts an already committed feedback batch while refreshing its unreconciled session", async () => {

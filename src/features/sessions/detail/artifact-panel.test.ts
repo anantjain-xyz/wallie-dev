@@ -190,6 +190,36 @@ describe("ArtifactPanel", () => {
     expect(screen.queryByLabelText("Comment on a block")).toBeNull();
   });
 
+  it.each([
+    { artifactId: "earlier-artifact", version: 2 },
+    { artifactId: "latest-artifact", version: 1 },
+  ])(
+    "does not carry Brief to a cold body outside the pending identity: %o",
+    async (retainBriefFor) => {
+      vi.mocked(fetch).mockImplementationOnce(() =>
+        response({
+          artifact: {
+            ...latestArtifact,
+            id: "latest-artifact",
+            sanitizedHtml: "<p>Loaded current artifact</p>",
+          },
+        }),
+      );
+      renderPanel({
+        currentArtifactId: "latest-artifact",
+        latestArtifact: null,
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        retainBriefFor,
+      });
+
+      expect(await screen.findByText("Loaded current artifact")).toBeTruthy();
+      expect(screen.getByRole("tab", { name: "Rendered", selected: true })).toBeTruthy();
+      expect(screen.queryByRole("tab", { name: "Review brief" })).toBeNull();
+      expect(fetch).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("opens a shared thread in the full artifact even when a brief is available", async () => {
     const query = "?artifactId=latest-artifact&artifactVersion=2&reviewThread=shared-thread";
     window.history.replaceState(null, "", mockedNavigation.pathname + query);

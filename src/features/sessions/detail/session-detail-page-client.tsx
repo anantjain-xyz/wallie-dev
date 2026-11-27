@@ -292,7 +292,11 @@ function SessionDetailContent({
   const stopIntent = useRef<{ sessionId: string; expectedRunId: string; requestId: string } | null>(
     null,
   );
-  const [phaseActionPending, setPhaseActionPending] = useState<"approve" | "reject" | null>(null);
+  const [pendingPhaseAction, setPendingPhaseAction] = useState<{
+    action: "approve" | "reject";
+    briefArtifact: SessionReviewArtifact | null;
+  } | null>(null);
+  const phaseActionPending = pendingPhaseAction?.action ?? null;
   const [phaseActionError, setPhaseActionError] = useState<string | null>(null);
   const [stopPending, setStopPending] = useState(false);
   const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
@@ -986,15 +990,26 @@ function SessionDetailContent({
       }
     }
 
-    setPhaseActionPending(action);
-    setPhaseActionError(null);
-    startInteraction(action, "/w/[workspaceSlug]/sessions/[sessionNumber]");
-
     const reviewStillCurrent =
       artifact.artifactId === session.currentArtifactId &&
       artifact.stageId === session.currentStageId &&
       artifact.version === session.currentArtifactVersion &&
       (!latestArtifact?.id || latestArtifact.id === artifact.artifactId);
+    setPendingPhaseAction({
+      action,
+      briefArtifact:
+        action === "reject" &&
+        reviewStillCurrent &&
+        session.phaseStatus === "awaiting_review" &&
+        selectedStageIsCurrent &&
+        !session.archivedAt &&
+        !exactReadOnly
+          ? artifact
+          : null,
+    });
+    setPhaseActionError(null);
+    startInteraction(action, "/w/[workspaceSlug]/sessions/[sessionNumber]");
+
     const previousStageSlug = session.currentStageSlug;
     const previousPatch: SessionMutationPatch = {
       archivedAt: session.archivedAt,
@@ -1135,7 +1150,7 @@ function SessionDetailContent({
       });
       return false;
     } finally {
-      setPhaseActionPending(null);
+      setPendingPhaseAction(null);
     }
   }
 
@@ -1422,6 +1437,8 @@ function SessionDetailContent({
     </div>
   );
 
+  const pendingBriefArtifact = pendingPhaseAction?.briefArtifact;
+  const readOnlyReason = sessionReviewReadOnlyReason(session);
   const artifactViewer = artifactAvailable ? (
     <ArtifactPanel
       currentArtifactId={selectedStageIsCurrent ? (session.currentArtifactId ?? null) : undefined}
@@ -1441,10 +1458,17 @@ function SessionDetailContent({
       onViewingHistoricalChange={setViewingHistoricalArtifact}
       onDisplayedArtifactChange={setDisplayedArtifact}
       persistStageInUrl={!selectedStageIsCurrent}
-      readOnlyReason={
-        sessionReviewReadOnlyReason(session) ?? (exactReadOnly ? "historical_review" : null)
-      }
+      readOnlyReason={readOnlyReason ?? (exactReadOnly ? "historical_review" : null)}
       rejectionCount={selectedStageIsCurrent ? (session.rejectionCount ?? 0) : undefined}
+      retainBriefFor={
+        selectedStageIsCurrent &&
+        !readOnlyReason &&
+        pendingBriefArtifact?.stageId === session.currentStageId &&
+        pendingBriefArtifact.artifactId === session.currentArtifactId &&
+        pendingBriefArtifact.version === session.currentArtifactVersion
+          ? pendingBriefArtifact
+          : undefined
+      }
       sessionId={session.id}
       specification={selectedStageIsSpecification}
       stageSlug={selectedStageSlug}

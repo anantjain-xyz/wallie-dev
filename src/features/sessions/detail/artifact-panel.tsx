@@ -63,6 +63,7 @@ type ArtifactPanelProps = {
    * prior-stage panels must omit it so a reject elsewhere cannot mark them.
    */
   rejectionCount?: number;
+  retainBriefFor?: { artifactId: string; version: number };
   /** Fires when the reviewer is (or is not) viewing a non-latest version. */
   onViewingHistoricalChange?: (viewingHistorical: boolean) => void;
   /** Identity of the body actually presented, including cached or lazily loaded output. */
@@ -293,6 +294,7 @@ function ArtifactPanelStage({
   persistStageInUrl = false,
   rejectionCount,
   readOnlyReason = null,
+  retainBriefFor,
   seenRejectionCountByStage,
   sessionId,
   specification = false,
@@ -451,13 +453,14 @@ function ArtifactPanelStage({
       ? displayedBody
       : null;
   const hasReviewBrief =
-    isAwaitingReview &&
-    !readOnlyReason &&
     viewingIsLatest &&
     !viewingHistorical &&
     visibleBody?.id &&
     visibleBody.version > 1 &&
-    typeof visibleBody.payload === "string";
+    typeof visibleBody.payload === "string" &&
+    ((isAwaitingReview && !readOnlyReason) ||
+      (retainBriefFor?.artifactId === visibleBody.id &&
+        retainBriefFor.version === visibleBody.version));
   const tabs = hasReviewBrief ? REVIEW_ARTIFACT_TABS : ARTIFACT_TABS;
   const defaultTab = hasReviewBrief && !searchParams.has("reviewThread") ? "brief" : "rendered";
   const activeTab = selectedTab && tabs.includes(selectedTab) ? selectedTab : defaultTab;
