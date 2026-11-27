@@ -1,3 +1,4 @@
+import { WorkspaceResourceScope } from "@/components/app-shell/workspace-factory-page.server";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
@@ -105,6 +106,11 @@ export default async function ImprovementPage({
 
   return (
     <PageContainer>
+      <WorkspaceResourceScope
+        factoryId={scope.factoryId}
+        pathname={workspaceImprovementPath(workspaceSlug, proposalId)}
+        workspaceSlug={workspaceSlug}
+      />
       <PageHeader
         title="Improvement proposal"
         eyebrow={back}

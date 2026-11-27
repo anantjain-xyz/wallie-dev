@@ -74,7 +74,6 @@ export function getGroupedWorkspaceNavigation({
       label,
       active,
       href: active && fromInbox ? browseReturn.href : link(route),
-      section: id === "settings" ? ("Footer" as const) : ("Work" as const),
     };
   });
 

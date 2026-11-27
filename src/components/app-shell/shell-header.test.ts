@@ -10,14 +10,20 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import {
   CreateSessionDialogLoading,
   CreateSessionDialogRequest,
-  isActiveNavItem,
   prefetchShellNavHrefOnIntent,
   preloadCreateSessionDialogOnce,
   ShellHeader,
 } from "@/components/app-shell/shell-header";
 import { normalizeTheme, resolveInitialTheme } from "@/components/app-shell/theme-toggle";
+import {
+  matchWorkspaceLocation,
+  readFactoryRequest,
+  resolveWorkspaceScope,
+  workspaceScopeLocationKey,
+} from "@/components/app-shell/workspace-location";
+import { WorkspaceScopeHandoff } from "@/components/app-shell/workspace-scope-context";
 import { OverlayProvider } from "@/components/ui/overlay-provider";
-import { getWorkspaceNavItems } from "@/lib/routes";
+import type { FactorySelectionOption } from "@/features/factories/factory-selection";
 
 const mocked = vi.hoisted(() => ({
   pathname: "/w/acme-corp",
@@ -35,6 +41,7 @@ vi.mock("next/navigation", () => ({
 const clientMocks = vi.hoisted(() => ({
   createSessionFromClient: vi.fn(),
   deletePendingSessionAttachmentFromClient: vi.fn().mockResolvedValue(undefined),
+  loadSessionCreationFactoriesFromClient: vi.fn().mockResolvedValue([]),
   loadSessionRepositoryOptionsFromClient: vi.fn(),
   uploadSessionAttachmentFromClient: vi.fn(),
 }));
@@ -42,16 +49,18 @@ const clientMocks = vi.hoisted(() => ({
 vi.mock("@/features/sessions/client", () => clientMocks);
 
 const workspace = { id: "workspace-1", name: "Acme Corp", slug: "acme-corp" };
-const navItems = getWorkspaceNavItems(workspace.slug);
 const creationFactory = { id: "factory-1", name: "Default Factory" };
+const defaultOptions = [
+  { ...creationFactory, isDefault: true, status: "active", canManage: true },
+  { id: "other-factory", name: "Mobile", isDefault: false, status: "active" },
+] satisfies FactorySelectionOption[];
 
-function createShellProps(
-  props: Partial<Omit<Parameters<typeof ShellHeader>[0], "children">> = {},
-): Omit<Parameters<typeof ShellHeader>[0], "children"> {
+type HeaderProps = Omit<Parameters<typeof ShellHeader>[0], "children">;
+
+function createShellProps(props: Partial<HeaderProps>): HeaderProps {
   return {
-    creationFactory,
-    navItems,
-    onboarding: { currentStep: "verify", status: "completed" } as const,
+    factories: defaultOptions,
+    onboarding: { currentStep: "verify", status: "completed" },
     viewerAvatarUrl: null,
     viewerEmail: "owner@example.com",
     viewerId: "user-1",
@@ -61,15 +70,41 @@ function createShellProps(
   };
 }
 
-function renderShell(props: Partial<Omit<Parameters<typeof ShellHeader>[0], "children">> = {}) {
+function renderShell(props: Partial<HeaderProps> = {}) {
   return renderToStaticMarkup(createElement(ShellHeader, createShellProps(props), "Page body"));
 }
 
-function shellElement(props: Partial<Omit<Parameters<typeof ShellHeader>[0], "children">> = {}) {
+function shellElement(props: Partial<HeaderProps> = {}) {
+  const header = createShellProps(props);
+  const location = matchWorkspaceLocation(mocked.pathname, header.workspace.slug);
+  const factories = header.factories ?? [];
+  const query = readFactoryRequest(mocked.searchParams);
   return createElement(
     OverlayProvider,
     null,
-    createElement(ShellHeader, createShellProps(props), "Page body"),
+    createElement(
+      ShellHeader,
+      header,
+      createElement(WorkspaceScopeHandoff, {
+        snapshot: {
+          factories,
+          locationKey: workspaceScopeLocationKey(
+            mocked.pathname,
+            location?.detail ? undefined : query,
+          ),
+          picker: location?.detail ? "locked" : "header",
+          scope: resolveWorkspaceScope(
+            location,
+            factories,
+            query,
+            location?.detail ? null : undefined,
+          ),
+          viewerId: header.viewerId,
+          workspaceId: header.workspace.id,
+        },
+      }),
+      "Page body",
+    ),
   );
 }
 
@@ -160,63 +195,48 @@ describe("ShellHeader", () => {
   });
 
   it("keeps New session available after onboarding is complete", () => {
-    mocked.searchParams = new URLSearchParams("create=1");
-
-    const html = renderShell();
-
-    expect(html).toContain("New session");
-    expect(html).not.toContain("Resume setup");
-    expect(html).not.toContain("Loading session form…");
+    mountShell();
+    expect(screen.getByRole("button", { name: "New session" })).toBeVisible();
+    expect(screen.queryByText("Resume setup")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("blocks the default-factory creation deep link for an unauthorized viewer", () => {
-    mocked.searchParams = new URLSearchParams("create=1");
-    mountShell({ creationFactory: null });
-
+    mocked.searchParams = new URLSearchParams("create=1&factory=factory-1");
+    mountShell({ factories: [] });
     expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "New session" })).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it.each([
-    ["the workspace home", "/w/acme-corp", ""],
-    ["the explicit default factory scope", "/w/acme-corp", "factory=factory-1"],
-    ["a case-insensitive default factory id", "/w/acme-corp", "factory=FACTORY-1"],
-    ["a runs list page", "/w/acme-corp/runs", ""],
-    ["an unscoped session detail page", "/w/acme-corp/sessions/42", ""],
-    ["an unscoped run detail page", "/w/acme-corp/runs/run-1", ""],
-  ])("keeps the New session launcher on %s", (_label, pathname, query) => {
-    mocked.pathname = pathname;
-    mocked.searchParams = new URLSearchParams(query);
-    const html = renderShell();
-
-    expect(html).toContain("New session");
-    expect(html).not.toContain("Switch to create");
-    expect(html).not.toContain("New session in ");
-    expect(html).not.toContain("Default Factory");
-  });
+    ["the workspace home", "/w/acme-corp", "", true],
+    ["the explicit default factory scope", "/w/acme-corp", "factory=factory-1", true],
+    ["a case-insensitive default factory id", "/w/acme-corp", "factory=FACTORY-1", true],
+    ["a runs list page", "/w/acme-corp/runs", "", false],
+    ["an unscoped session detail page", "/w/acme-corp/sessions/42", "", false],
+    ["an unscoped run detail page", "/w/acme-corp/runs/run-1", "", false],
+  ])(
+    "places the New session launcher according to the view at %s",
+    (_label, pathname, query, show) => {
+      mocked.pathname = pathname;
+      mocked.searchParams = new URLSearchParams(query);
+      mountShell();
+      expect(Boolean(screen.queryByRole("button", { name: "New session" }))).toBe(show);
+      expect(screen.queryByRole("link", { name: /New session in/ })).toBeNull();
+    },
+  );
 
   it.each([
-    ["another factory", "factory=other-factory"],
-    ["the all-factories aggregate", "factory=all"],
-    ["a repeated malformed scope", "factory=factory-1&factory=other-factory"],
-    ["an unknown factory id", "factory=missing-factory"],
-  ])("routes New session to the default factory from %s", (_label, query) => {
+    ["another factory", "factory=other-factory", true],
+    ["the all-factories aggregate", "factory=all", true],
+    ["a repeated malformed scope", "factory=factory-1&factory=other-factory", false],
+    ["an unknown factory id", "factory=missing-factory", false],
+  ])("never rewrites New session to the default factory from %s", (_label, query, allowed) => {
     mocked.searchParams = new URLSearchParams(query);
     mountShell();
-
-    const link = screen.getByRole("link", {
-      name: "New session in Default Factory",
-    });
-    const href = new URL((link as HTMLAnchorElement).href);
-    expect(href.pathname).toBe("/w/acme-corp/sessions");
-    expect(Object.fromEntries(href.searchParams)).toEqual({
-      factory: "factory-1",
-      create: "1",
-      returnTo: `/w/acme-corp?${query}`,
-    });
-    expect(link).toHaveTextContent("New session in Default Factory");
-    expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+    expect(Boolean(screen.queryByRole("button", { name: "New session" }))).toBe(allowed);
+    expect(screen.queryByRole("link", { name: /New session in/ })).toBeNull();
+    expect(mocked.replace).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -225,56 +245,36 @@ describe("ShellHeader", () => {
     ["Governance", "/w/acme-corp/governance"],
     ["Context", "/w/acme-corp/context"],
     ["Memory", "/w/acme-corp/memory"],
-  ])("routes creation through the default factory from implicit %s scope", (_label, pathname) => {
+  ])("does not route an implicit %s scope to a default-factory launch", (_label, pathname) => {
     mocked.pathname = pathname;
-    mountShell({
-      navItems: getWorkspaceNavItems(workspace.slug, { canManageGovernance: true }),
-      factories: [
-        { ...creationFactory, isDefault: true, status: "active" },
-        { id: "managed", name: "Managed", isDefault: false, status: "active", canManage: true },
-      ],
-    });
-
-    const link = screen.getByRole("link", { name: "New session in Default Factory" });
-    const href = new URL((link as HTMLAnchorElement).href);
-    expect(href.searchParams.get("returnTo")).toBe(pathname);
-    expect(href.searchParams.get("factory")).toBe("factory-1");
-    expect(link).toHaveTextContent("New session in Default Factory");
+    mountShell();
+    expect(screen.queryByRole("link", { name: /New session in/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
   });
 
-  it("links to default-factory creation for a create deep link outside the default scope", () => {
-    mocked.searchParams = new URLSearchParams("create=1&factory=other-factory");
+  it("blocks a create deep link in an unknown scope without offering a different factory", () => {
+    mocked.searchParams = new URLSearchParams("create=1&factory=missing-factory");
     mountShell();
-
     expect(screen.queryByRole("dialog")).toBeNull();
-    const link = screen.getByRole("link", {
-      name: "New session in Default Factory",
-    }) as HTMLAnchorElement;
-    expect(new URL(link.href).searchParams.get("returnTo")).toBe(
-      "/w/acme-corp?factory=other-factory",
-    );
+    expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /New session in/ })).toBeNull();
   });
 
-  it("includes the current hash in copyable launch links and updates when it changes", async () => {
-    mocked.pathname = "/w/acme-corp/activity";
-    mocked.searchParams = new URLSearchParams("actor=example");
+  it("updates the active factory section when an existing setup anchor is opened", async () => {
+    mocked.pathname = "/w/acme-corp/settings/factory-definition";
+    mocked.searchParams = new URLSearchParams("factory=factory-1");
     const initialUrl = window.location.href;
-    window.history.replaceState(null, "", "#recent");
     try {
-      mountShell();
-      const link = screen.getByRole("link", {
-        name: "New session in Default Factory",
-      }) as HTMLAnchorElement;
-      expect(new URL(link.href).searchParams.get("returnTo")).toBe(
-        "/w/acme-corp/activity?actor=example#recent",
+      mountShell({ canManageFactoryDefinition: true });
+      const sections = within(screen.getByRole("navigation", { name: "Factory sections" }));
+      const pipeline = sections.getByRole("link", { name: "Pipeline" });
+      expect(pipeline).toHaveAttribute(
+        "href",
+        "/w/acme-corp/settings/factory-definition?factory=factory-1#definition-field-stages",
       );
-      window.location.hash = "latest";
-      await waitFor(() =>
-        expect(new URL(link.href).searchParams.get("returnTo")).toBe(
-          "/w/acme-corp/activity?actor=example#latest",
-        ),
-      );
+      expect(pipeline).not.toHaveAttribute("aria-current");
+      window.location.hash = "definition-field-stages";
+      await waitFor(() => expect(pipeline).toHaveAttribute("aria-current", "page"));
     } finally {
       window.history.replaceState(null, "", initialUrl);
     }
@@ -297,13 +297,11 @@ describe("ShellHeader", () => {
     mocked.pathname = "/w/acme-corp/activity";
     mocked.searchParams = new URLSearchParams("factory=all&actor=example");
     rerender(shellElement());
-    await waitFor(() =>
-      expect(screen.getByRole("link", { name: "New session in Default Factory" })).toHaveFocus(),
-    );
+    await waitFor(() => expect(screen.getByRole("main")).toHaveFocus());
   });
 
   it("uses Sessions rather than a different workspace as the direct URL fallback", async () => {
-    mocked.pathname = "/w/acme-corp/analytics";
+    mocked.pathname = "/w/acme-corp";
     mocked.searchParams = new URLSearchParams({
       create: "1",
       returnTo: "/w/another-workspace",
@@ -327,13 +325,7 @@ describe("ShellHeader", () => {
       repositoryOptions: [],
       stageOptions: [],
     });
-    const shell = (props: Parameters<typeof createShellProps>[0] = {}) =>
-      createElement(
-        OverlayProvider,
-        null,
-        createElement(ShellHeader, createShellProps(props), "Page body"),
-      );
-    const view = render(shell());
+    const view = mountShell();
 
     fireEvent.click(screen.getByRole("button", { name: "New session" }));
     const prompt = await screen.findByLabelText("Prompt");
@@ -341,12 +333,12 @@ describe("ShellHeader", () => {
     expect(prompt).toHaveValue("Keep this draft");
 
     mocked.searchParams = new URLSearchParams("factory=other-factory");
-    view.rerender(shell());
+    view.rerender(shellElement());
     await waitFor(() => expect(screen.queryByLabelText("Prompt")).toBeNull());
-    expect(screen.getByRole("link", { name: "New session in Default Factory" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "New session" })).toBeVisible();
 
     mocked.searchParams = new URLSearchParams();
-    view.rerender(shell());
+    view.rerender(shellElement());
     fireEvent.click(screen.getByRole("button", { name: "New session" }));
     expect(await screen.findByLabelText("Prompt")).toHaveValue("Keep this draft");
   });
@@ -418,9 +410,9 @@ describe("ShellHeader", () => {
     ["/w/acme-corp", "Sessions"],
     ["/w/acme-corp/sessions", "Sessions"],
     ["/w/acme-corp/inbox", "Inbox"],
-    ["/w/acme-corp/analytics", "Analytics"],
+    ["/w/acme-corp/analytics", "Insights"],
     ["/w/acme-corp/settings/profile", "Settings"],
-    ["/w/acme-corp/runs/run-id", "Runs"],
+    ["/w/acme-corp/runs/run-id", "Activity"],
   ])("names the drawer trigger after the current destination at %s", (pathname, label) => {
     mocked.pathname = pathname;
 
@@ -439,79 +431,48 @@ describe("ShellHeader", () => {
   });
 
   it.each([true, false])(
-    "preserves Workflows scope only for a manageable factory and names the fallback (%s)",
+    "addresses the selected factory on Graph workflows without falling back (%s)",
     (manageable) => {
-      const managedFactory = "00000000-0000-4000-8000-000000000010";
-      const selectedFactory = manageable ? managedFactory : "00000000-0000-4000-8000-000000000011";
+      const selectedFactory = manageable ? creationFactory.id : "other-factory";
+      mocked.pathname = "/w/acme-corp/agents";
       mocked.searchParams = new URLSearchParams({ factory: selectedFactory });
-      mountShell({
-        navItems: getWorkspaceNavItems(workspace.slug, { canManageWorkflows: true }),
-        factories: [
-          { ...creationFactory, isDefault: true, status: "active" },
-          {
-            id: managedFactory,
-            name: "Managed",
-            canManage: true,
-            isDefault: false,
-            status: "active",
-          },
-          { id: selectedFactory, name: "Other", isDefault: false, status: "active" },
-        ],
-      });
-
-      const nav = screen.getByRole("navigation", { name: "Workspace navigation" });
-      const workflows = within(nav).getByRole("link", { name: "Workflows" });
-      expect(workflows).toHaveAttribute("href", `/w/acme-corp/workflows?factory=${managedFactory}`);
-      expect(workflows).toHaveAccessibleDescription(manageable ? "" : "Opens in Managed");
+      mountShell();
+      const sections = within(screen.getByRole("navigation", { name: "Factory sections" }));
+      expect(sections.getByRole("link", { name: "Graph workflows" })).toHaveAttribute(
+        "href",
+        `/w/acme-corp/workflows?factory=${selectedFactory}`,
+      );
     },
   );
 
-  it("shows the definition route under Configure only when authorized", () => {
-    mocked.pathname = "/w/acme-corp/settings/factory-definition";
-    mountShell({
-      navItems: getWorkspaceNavItems(workspace.slug, { canManageFactoryDefinition: true }),
-    });
-
-    const nav = screen.getByRole("navigation", { name: "Workspace navigation" });
-    const configure = within(nav).getByRole("list", { name: "Configure" });
-    expect(within(configure).getByRole("link", { name: "Factory definition" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
-    expect(within(nav).getByRole("link", { name: "Settings" })).not.toHaveAttribute("aria-current");
-    const improve = within(nav).getByRole("list", { name: "Improve" });
-    expect(within(improve).getByRole("link", { name: "Analytics" })).toHaveAttribute(
+  it("shows the definition route within Factory only when authorized", () => {
+    mocked.pathname = "/w/acme-corp/agents";
+    mocked.searchParams = new URLSearchParams("factory=factory-1");
+    const view = mountShell({ canManageFactoryDefinition: true });
+    const nav = within(screen.getByRole("navigation", { name: "Workspace navigation" }));
+    const sections = within(screen.getByRole("navigation", { name: "Factory sections" }));
+    expect(nav.getByRole("link", { name: "Factory" })).toHaveAttribute("aria-current", "page");
+    expect(nav.getByRole("link", { name: "Settings" })).not.toHaveAttribute("aria-current");
+    expect(sections.getByRole("link", { name: "Definition" })).toHaveAttribute(
       "href",
-      "/w/acme-corp/analytics",
+      "/w/acme-corp/settings/factory-definition?factory=factory-1",
     );
-    expect(within(nav).queryByRole("list", { name: "Platform" })).toBeNull();
+    view.rerender(shellElement({ canManageFactoryDefinition: false }));
+    expect(sections.queryByRole("link", { name: "Definition" })).toBeNull();
   });
 
   it("keeps scope on aggregate links and preserves workspace Settings URLs", () => {
     mocked.searchParams = new URLSearchParams("factory=all");
     mountShell();
-
-    const nav = screen.getByRole("navigation", { name: "Workspace navigation" });
-    expect(within(nav).getByRole("link", { name: "Sessions" })).toHaveAttribute(
-      "href",
-      "/w/acme-corp?factory=all",
-    );
-    expect(within(nav).getByRole("link", { name: "Runs" })).toHaveAttribute(
-      "href",
-      "/w/acme-corp/runs?factory=all",
-    );
-    expect(
-      within(within(nav).getByRole("list", { name: "Work" })).getByRole("link", { name: "Inbox" }),
-    ).toHaveAttribute("href", "/w/acme-corp/inbox?factory=all");
-    expect(within(nav).getByRole("link", { name: "Settings" })).toHaveAttribute(
-      "href",
-      "/w/acme-corp/settings",
-    );
-    expect(
-      within(within(nav).getByRole("list", { name: "Improve" })).getByRole("link", {
-        name: "Analytics",
-      }),
-    ).toHaveAttribute("href", "/w/acme-corp/analytics?factory=factory-1");
+    const nav = within(screen.getByRole("navigation", { name: "Workspace navigation" }));
+    for (const [name, href] of [
+      ["Sessions", "/w/acme-corp?factory=all"],
+      ["Activity", "/w/acme-corp/runs?factory=all"],
+      ["Inbox", "/w/acme-corp/inbox?factory=all"],
+      ["Settings", "/w/acme-corp/settings"],
+      ["Insights", "/w/acme-corp/analytics?factory=all"],
+    ])
+      expect(nav.getByRole("link", { name })).toHaveAttribute("href", href);
   });
 
   it.each([
@@ -534,8 +495,9 @@ describe("ShellHeader", () => {
       "/w/acme-corp/sessions?factory=all",
     );
     expect(within(drawer).queryByRole("link", { name: "Overview" })).toBeNull();
-    expect(within(drawer).getByRole("link", { name: "Analytics" })).toHaveAccessibleDescription(
-      "Opens in Default Factory",
+    expect(within(drawer).getByRole("link", { name: "Insights" })).toHaveAttribute(
+      "href",
+      "/w/acme-corp/analytics?factory=all",
     );
   });
 
@@ -546,7 +508,7 @@ describe("ShellHeader", () => {
     expect(screen.queryByRole("button", { name: "Collapse sidebar" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Expand sidebar" })).toBeNull();
     expect(document.querySelector("[data-shell-rail]")).not.toHaveAttribute("data-collapsed");
-    expect(screen.getByRole("link", { name: "Runs" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Activity" })).toBeVisible();
   });
 
   it("prefetches desktop navigation links on mouse/pen hover or focus and skips touch pointers", () => {
@@ -554,14 +516,14 @@ describe("ShellHeader", () => {
     mountShell();
 
     const sessionsLink = screen.getByRole("link", { name: "Sessions" });
-    expect(sessionsLink.getAttribute("href")).toBe("/w/acme-corp/sessions");
+    expect(sessionsLink.getAttribute("href")).toBe("/w/acme-corp/sessions?factory=all");
 
     fireEvent.pointerEnter(sessionsLink, { pointerType: "touch" });
     expect(mocked.prefetch).not.toHaveBeenCalled();
 
     fireEvent.pointerEnter(sessionsLink, { pointerType: "mouse" });
     expect(mocked.prefetch).toHaveBeenCalledTimes(1);
-    expect(mocked.prefetch).toHaveBeenCalledWith("/w/acme-corp/sessions", {
+    expect(mocked.prefetch).toHaveBeenCalledWith("/w/acme-corp/sessions?factory=all", {
       kind: PrefetchKind.FULL,
     });
 
@@ -585,19 +547,19 @@ describe("ShellHeader", () => {
     mocked.pathname = "/w/acme-corp/analytics";
     mountShell();
 
-    const drawerTrigger = screen.getByRole("button", { name: "Workspace navigation: Analytics" });
+    const drawerTrigger = screen.getByRole("button", { name: "Workspace navigation: Insights" });
     fireEvent.click(drawerTrigger);
 
     const drawer = await screen.findByRole("dialog", { name: "Workspace pages" });
     const compactSessionsLink = within(drawer).getByRole("link", { name: "Sessions" });
-    expect(compactSessionsLink.getAttribute("href")).toBe("/w/acme-corp/sessions");
+    expect(compactSessionsLink.getAttribute("href")).toBe("/w/acme-corp/sessions?factory=all");
 
     fireEvent.pointerEnter(compactSessionsLink, { pointerType: "touch" });
     expect(mocked.prefetch).not.toHaveBeenCalled();
 
     fireEvent.pointerEnter(compactSessionsLink, { pointerType: "mouse" });
     expect(mocked.prefetch).toHaveBeenCalledTimes(1);
-    expect(mocked.prefetch).toHaveBeenCalledWith("/w/acme-corp/sessions", {
+    expect(mocked.prefetch).toHaveBeenCalledWith("/w/acme-corp/sessions?factory=all", {
       kind: PrefetchKind.FULL,
     });
 
@@ -663,12 +625,16 @@ describe("ShellHeader", () => {
 
 describe("shell page title helpers", () => {
   it("marks the board root, list, and detail under one Sessions item", () => {
-    const sessions = navItems.find((item) => item.id === "sessions")!;
-    expect(isActiveNavItem("/w/acme-corp", "acme-corp", sessions)).toBe(true);
-    expect(isActiveNavItem("/w/acme-corp/sessions", "acme-corp", sessions)).toBe(true);
-    expect(isActiveNavItem("/w/acme-corp/sessions/42", "acme-corp", sessions)).toBe(true);
-    expect(isActiveNavItem("/w/acme-corp/analytics", "acme-corp", sessions)).toBe(false);
-    expect(isActiveNavItem("/w/acme-corp/runs/run-id", "acme-corp", sessions)).toBe(false);
+    for (const suffix of ["", "/sessions", "/sessions/42"]) {
+      expect(matchWorkspaceLocation(`/w/acme-corp${suffix}`, "acme-corp")?.destination).toBe(
+        "sessions",
+      );
+    }
+    for (const suffix of ["/analytics", "/runs/run-id"]) {
+      expect(matchWorkspaceLocation(`/w/acme-corp${suffix}`, "acme-corp")?.destination).not.toBe(
+        "sessions",
+      );
+    }
   });
 });
 
@@ -771,7 +737,7 @@ describe("create-session dialog loading", () => {
   });
 
   it("deduplicates preloads for one shell mount", () => {
-    const startedKey = { current: null };
+    const startedKey = new Set<string>();
     const preloadSessionRepositories = vi.fn(async () => ({
       defaultGithubRepositoryId: null,
       pipelineId: null,
@@ -779,7 +745,7 @@ describe("create-session dialog loading", () => {
       stageOptions: [],
     }));
     const load = vi.fn(async () => ({ preloadSessionRepositories }));
-    const input = { userId: "user-1", workspaceId: "workspace-1" };
+    const input = { userId: "user-1", workspaceId: "workspace-1", factoryId: "factory-1" };
 
     preloadCreateSessionDialogOnce(startedKey, input, load);
     preloadCreateSessionDialogOnce(startedKey, input, load);
@@ -789,23 +755,23 @@ describe("create-session dialog loading", () => {
   });
 
   it("resets the guard so a failed preload can retry", async () => {
-    const startedKey = { current: null };
+    const startedKey = new Set<string>();
     const preloadSessionRepositories = vi.fn(async () => {
       throw new Error("repositories failed");
     });
     const load = vi.fn(async () => ({ preloadSessionRepositories }));
-    const input = { userId: "user-1", workspaceId: "workspace-1" };
+    const input = { userId: "user-1", workspaceId: "workspace-1", factoryId: "factory-1" };
 
     preloadCreateSessionDialogOnce(startedKey, input, load);
-    await vi.waitFor(() => expect(startedKey.current).toBeNull());
+    await vi.waitFor(() => expect(startedKey.size).toBe(0));
 
     preloadCreateSessionDialogOnce(startedKey, input, load);
 
     expect(load).toHaveBeenCalledTimes(2);
   });
 
-  it("starts a separate preload after the workspace changes", async () => {
-    const startedKey = { current: null };
+  it("keys repository preloads by account, workspace and factory and only loads the chunk from All", async () => {
+    const startedKey = new Set<string>();
     const preloadSessionRepositories = vi.fn(async () => ({
       defaultGithubRepositoryId: null,
       pipelineId: null,
@@ -814,19 +780,20 @@ describe("create-session dialog loading", () => {
     }));
     const load = vi.fn(async () => ({ preloadSessionRepositories }));
 
-    preloadCreateSessionDialogOnce(
-      startedKey,
-      { userId: "user-1", workspaceId: "workspace-1" },
-      load,
-    );
-    preloadCreateSessionDialogOnce(
-      startedKey,
-      { userId: "user-1", workspaceId: "workspace-2" },
-      load,
-    );
+    const input = { userId: "user-1", workspaceId: "workspace-1", factoryId: "factory-1" };
+    preloadCreateSessionDialogOnce(startedKey, input, load);
+    preloadCreateSessionDialogOnce(startedKey, { ...input, workspaceId: "workspace-2" }, load);
+    preloadCreateSessionDialogOnce(startedKey, { ...input, userId: "user-2" }, load);
+    preloadCreateSessionDialogOnce(startedKey, { ...input, factoryId: "factory-2" }, load);
+    preloadCreateSessionDialogOnce(startedKey, { ...input, factoryId: undefined }, load);
+    preloadCreateSessionDialogOnce(startedKey, input, load);
 
-    expect(load).toHaveBeenCalledTimes(2);
-    await vi.waitFor(() => expect(preloadSessionRepositories).toHaveBeenCalledTimes(2));
+    expect(load).toHaveBeenCalledTimes(5);
+    await vi.waitFor(() => expect(preloadSessionRepositories).toHaveBeenCalledTimes(4));
+    expect(preloadSessionRepositories).not.toHaveBeenCalledWith({
+      ...input,
+      factoryId: undefined,
+    });
   });
 });
 

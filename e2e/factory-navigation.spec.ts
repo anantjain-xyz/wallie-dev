@@ -470,9 +470,9 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     await expect(defaultLink).toBeVisible();
     await expect(visibleLink).toHaveCount(0);
     await expectFactoryOptions(page, ["All factories", defaultFactory.name, visibleFactory.name]);
-    await expect(page.getByRole("link", { name: "Factory definition", exact: true })).toHaveCount(
-      0,
-    );
+    const factoryGroup = page
+      .getByRole("navigation", { name: "Workspace navigation" })
+      .getByRole("link", { name: "Factory", exact: true });
     await selectFactory(page, "Customer tools");
     await expect(visibleLink).toBeVisible();
     await expect(defaultLink).toHaveCount(0);
@@ -481,11 +481,20 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     expect(switchedQuery.has("stage")).toBe(false);
     expect(switchedQuery.get("q")).toBe("session");
     expect(switchedQuery.get("sort")).toBe("oldest");
-    await page.getByRole("link", { name: "Agents", exact: true }).click();
+    await expect(factoryGroup).toHaveAttribute(
+      "href",
+      `${agentsPath}?factory=${visibleFactory.id}`,
+    );
+    await factoryGroup.click();
     await expect(
       page.getByRole("heading", { name: "Agents", exact: true, level: 1 }),
     ).toBeVisible();
     expect(new URL(page.url()).searchParams.get("factory")).toBe(visibleFactory.id);
+    await expect(
+      page
+        .getByRole("navigation", { name: "Factory sections" })
+        .getByRole("link", { name: "Definition", exact: true }),
+    ).toHaveCount(0);
     await expectFactoryOptions(page, [defaultFactory.name, visibleFactory.name]);
     await expect(page.getByRole("link", { name: "New agent" })).toHaveCount(0);
     const agents = page.getByRole("region", { name: "Factory agents" });
@@ -569,8 +578,9 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
       "aria-current",
       "page",
     );
-    await expect(drawer.getByRole("link", { name: "Factory definition", exact: true })).toHaveCount(
-      0,
+    await expect(drawer.getByRole("link", { name: "Factory", exact: true })).toHaveAttribute(
+      "href",
+      `${agentsPath}?factory=${visibleFactory.id}`,
     );
     await capture(page, info, "03-mobile-dark-navigation-drawer");
     await page.keyboard.press("Escape");
@@ -711,10 +721,18 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     await page.emulateMedia({ colorScheme: "light" });
     await page.goto(governancePath);
     await expect(page.getByRole("heading", { name: "Governance", level: 1 })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Choose a factory", exact: true }),
+    ).toBeVisible();
+    await expectFactoryOptions(page, ["Choose factory", visibleFactory.name]);
+    await selectFactory(page, visibleFactory.name);
     await expect(factory).toHaveText(visibleFactory.name);
     await expect(factory).toHaveAttribute("data-value", visibleFactory.id);
-    await expectFactoryOptions(page, [visibleFactory.name]);
-    await expect(page.getByRole("link", { name: "Governance", exact: true })).toBeVisible();
+    await expect(
+      page
+        .getByRole("navigation", { name: "Factory sections" })
+        .getByRole("link", { name: "Access", exact: true }),
+    ).toHaveAttribute("aria-current", "page");
 
     await page.getByRole("button", { name: "New service principal", exact: true }).click();
     await page.getByRole("textbox", { name: "Principal name", exact: true }).fill("Release runner");

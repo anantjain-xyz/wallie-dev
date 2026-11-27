@@ -154,7 +154,7 @@ const routes = {
     access: "managed",
     tab: "Knowledge",
   },
-  settings: { destination: "settings", path: workspaceSettingsPath, mode: "global" },
+  settings: { destination: "settings", path: workspaceSettingsPath, mode: "global", details: true },
 } as const satisfies Record<string, LocationRule>;
 
 export type WorkspaceRoute = keyof typeof routes;

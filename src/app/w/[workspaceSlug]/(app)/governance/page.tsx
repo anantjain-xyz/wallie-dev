@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { z } from "zod";
 
+import { scopeFactoryIndex } from "@/components/app-shell/workspace-factory-page.server";
 import {
   MetadataItem,
   MetadataList,
@@ -391,7 +392,7 @@ function GovernanceResources({
   );
 }
 
-export default async function GovernancePage({
+async function GovernancePage({
   params,
   searchParams,
 }: {
@@ -572,3 +573,9 @@ export default async function GovernancePage({
     </PageContainer>
   );
 }
+
+export default scopeFactoryIndex(GovernancePage, {
+  resetParams: GOVERNANCE_FACTORY_RESET_PARAMS,
+  route: "governance",
+  title: "Governance",
+});

@@ -46,12 +46,12 @@ export function AgentDirectoryFactorySelector({
   selectedValue: string;
 }) {
   const dirtyRef = useContext(DraftContext);
-  const selector = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
   const [target, setTarget] = useState<{ navigate: () => void; label: string } | null>(null);
 
   return (
     <>
-      <div className="min-w-0" ref={selector}>
+      <div className="min-w-0">
         <FactorySelector
           factories={factories}
           onSwitch={(navigate, label) => {
@@ -60,6 +60,7 @@ export function AgentDirectoryFactorySelector({
           }}
           resetParams={["q", "new"]}
           selectedValue={selectedValue}
+          triggerRef={trigger}
         />
       </div>
       <AlertDialog
@@ -72,7 +73,7 @@ export function AgentDirectoryFactorySelector({
           description={`Switching to ${target?.label ?? "another factory"} will discard your unsaved agent draft.`}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            selector.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
+            trigger.current?.focus();
           }}
           title="Switch factories without saving?"
         >

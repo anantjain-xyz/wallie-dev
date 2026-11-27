@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ShellHeader } from "@/components/app-shell/shell-header";
@@ -17,9 +17,18 @@ import {
   type WorkspaceScopeSnapshot,
 } from "@/components/app-shell/workspace-scope-context";
 import { OverlayProvider } from "@/components/ui/overlay-provider";
+import {
+  AgentDirectoryDraftScope,
+  AgentDirectoryFactorySelector,
+  useDirectoryDraftStatus,
+} from "@/features/factory-agents/agent-directory-draft";
+import { FactoryDefinitionSwitch } from "@/features/factory-definition/factory-definition-switch";
+import { ScorerDraftGuard } from "@/features/factory-scorers/scorer-draft-guard";
+import { ScorerFactorySelector } from "@/features/factory-scorers/scorer-factory-selector";
+import { ScorerForm } from "@/features/factory-scorers/scorer-form";
 import { FactorySelector } from "@/features/factories/factory-selector";
 import type { FactorySelectionOption } from "@/features/factories/factory-selection";
-import { getWorkspaceNavItems } from "@/lib/routes";
+import type { ReactNode } from "react";
 
 const router = vi.hoisted(() => ({
   path: "",
@@ -69,10 +78,12 @@ function receipt(
 }
 
 function shell({
+  children,
   snapshot,
   options = factories,
   viewerId = account,
 }: {
+  children?: ReactNode;
   snapshot?: WorkspaceScopeSnapshot;
   options?: FactorySelectionOption[];
   viewerId?: string;
@@ -80,11 +91,8 @@ function shell({
   return (
     <OverlayProvider>
       <ShellHeader
-        creationFactory={{ id: platform.id, name: platform.name }}
         factories={options}
-        navItems={getWorkspaceNavItems(workspace.slug)}
         onboarding={null}
-        scopedNavigation
         viewerAvatarUrl={null}
         viewerEmail={null}
         viewerId={viewerId}
@@ -92,7 +100,7 @@ function shell({
         workspaceAvatarUrl={null}
       >
         {snapshot ? <WorkspaceScopeHandoff snapshot={snapshot} /> : null}
-        <FactorySelector factories={options} selectedValue={mobile.id} />
+        {children ?? <FactorySelector factories={options} selectedValue={mobile.id} />}
       </ShellHeader>
     </OverlayProvider>
   );
@@ -100,6 +108,11 @@ function shell({
 
 const header = () => within(screen.getByRole("banner"));
 const navigation = () => within(screen.getByRole("navigation", { name: "Workspace navigation" }));
+
+function AgentDraft() {
+  useDirectoryDraftStatus(true);
+  return <AgentDirectoryFactorySelector factories={factories} selectedValue={mobile.id} />;
+}
 
 describe("scoped application shell", () => {
   beforeEach(() => {
@@ -143,13 +156,15 @@ describe("scoped application shell", () => {
     expect(await header().findByRole("combobox", { name: "Factory" })).toHaveTextContent(
       "Mobile app",
     );
-    expect(within(screen.getByRole("main")).queryByRole("combobox")).toBeNull();
+    expect(
+      within(screen.getByRole("main")).queryByRole("combobox", { name: "Factory" }),
+    ).toBeNull();
     expect(navigation().getAllByRole("link")).toHaveLength(6);
     expect(navigation().getByRole("link", { name: "Inbox" })).toHaveAttribute(
       "href",
       "/w/tandem/inbox?factory=mobile",
     );
-    expect(header().queryByRole("link", { name: /New session in Platform/ })).toBeNull();
+    expect(header().getByRole("button", { name: "New session" })).toBeInTheDocument();
   });
 
   it("updates the addressed scope without replacing history or retaining factory-bound filters", async () => {
@@ -205,6 +220,15 @@ describe("scoped application shell", () => {
     );
   });
 
+  it("keeps All read-only when none of its factories can receive a session", () => {
+    router.query = new URLSearchParams("factory=all&create=1");
+    const archived: FactorySelectionOption[] = [{ ...mobile, status: "archived" }];
+    render(shell({ options: archived, snapshot: receipt(archived) }));
+    expect(header().getByRole("combobox", { name: "Factory" })).toHaveTextContent("All factories");
+    expect(header().queryByRole("button", { name: "New session" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Start a new session" })).toBeNull();
+  });
+
   it("offers a factory-only picker with no All option", async () => {
     router.path = "/w/tandem/analytics";
     router.query = new URLSearchParams("factory=all");
@@ -214,6 +238,79 @@ describe("scoped application shell", () => {
     fireEvent.click(chooser);
     expect(screen.getByRole("option", { name: "Mobile app" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "All factories" })).toBeNull();
+  });
+
+  it.each([
+    {
+      page: "agents",
+      search: "q=keep-until-discard&new=1",
+      cancel: "Cancel",
+      discard: "Discard and switch",
+      guard: (
+        <AgentDirectoryDraftScope>
+          <AgentDraft />
+        </AgentDirectoryDraftScope>
+      ),
+    },
+    {
+      page: "scorers",
+      search: "q=keep-until-discard&preset=blank&revision=old",
+      cancel: "Keep editing",
+      discard: "Discard changes",
+      guard: (
+        <ScorerDraftGuard>
+          <ScorerFactorySelector factories={factories} selectedValue={mobile.id} />
+          <ScorerForm
+            draft={{ kind: "create" }}
+            factoryId={mobile.id}
+            factoryLabel={mobile.name}
+            workspaceId={workspace.id}
+            workspaceSlug={workspace.slug}
+          />
+        </ScorerDraftGuard>
+      ),
+    },
+    {
+      page: "settings/factory-definition",
+      search: "revision=old",
+      cancel: "Stay",
+      discard: "Discard and switch",
+      guard: (
+        <FactoryDefinitionSwitch
+          dirty
+          disabled={false}
+          onDiscard={() => undefined}
+          selection={{ factories, resetParams: ["revision"], selectedValue: mobile.id }}
+        />
+      ),
+    },
+  ])("reuses the $page guard and restores focus to the header picker", async (scenario) => {
+    router.path = `/w/tandem/${scenario.page}`;
+    router.query = new URLSearchParams(`factory=mobile&${scenario.search}`);
+    render(shell({ children: scenario.guard, snapshot: { ...receipt(), picker: "guarded" } }));
+    if (scenario.page === "scorers") {
+      fireEvent.change(screen.getByLabelText("Rubric"), { target: { value: "Keep this edit" } });
+    }
+    const trigger = await header().findByRole("combobox", { name: "Factory" });
+    expect(
+      within(screen.getByRole("main")).queryByRole("combobox", { name: "Factory" }),
+    ).toBeNull();
+    function choose() {
+      fireEvent.click(trigger);
+      fireEvent.click(screen.getByRole("option", { name: /^Platform/ }));
+    }
+    choose();
+    const cancel = await screen.findByRole("button", { name: scenario.cancel });
+    expect(router.push).not.toHaveBeenCalled();
+    fireEvent.click(cancel);
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(router.push).not.toHaveBeenCalled();
+    choose();
+    fireEvent.click(await screen.findByRole("button", { name: scenario.discard }));
+    expect(router.push).toHaveBeenCalledExactlyOnceWith(
+      `/w/tandem/${scenario.page}?factory=platform`,
+      { scroll: false },
+    );
   });
 
   it("keeps Settings global and only forwards an account- and workspace-keyed preference", () => {

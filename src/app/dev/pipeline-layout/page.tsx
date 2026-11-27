@@ -132,7 +132,6 @@ export default async function PipelineLayoutPreview({
             : data;
   return (
     <AppShell
-      creationFactory={{ id: "proof-default-factory", name: "Proof Factory" }}
       workspace={workspace}
       onboarding={null}
       pathnameOverride="/w/proof"

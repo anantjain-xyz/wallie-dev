@@ -1,3 +1,4 @@
+import { WorkspaceResourceScope } from "@/components/app-shell/workspace-factory-page.server";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -82,6 +83,11 @@ export default async function FailureValidationPage({
   const assetBase = `/api/sessions/${member.session_id}/validation-evidence/assets`;
   return (
     <PageContainer className="space-y-6">
+      <WorkspaceResourceScope
+        factoryId={scope?.factoryId ?? null}
+        pathname={`${workspaceFailureGroupPath(workspaceSlug, cohortId)}/validation/${encodeURIComponent(memberId)}`}
+        workspaceSlug={workspaceSlug}
+      />
       <PageHeader
         title="Validation evidence"
         eyebrow={back}

@@ -27,15 +27,16 @@ export function FactoryDefinitionSwitch({
   onDiscard: () => void;
   selection: FactoryDefinitionSelection;
 }) {
-  const selectorRef = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
   const [target, setTarget] = useState<{ navigate: () => void; label: string } | null>(null);
 
   return (
     <>
-      <div className="min-w-0" ref={selectorRef}>
+      <div className="min-w-0">
         <FactorySelector
           {...selection}
           disabled={disabled}
+          triggerRef={trigger}
           onSwitch={(navigate, label) => {
             if (dirty) setTarget({ navigate, label });
             else navigate();
@@ -56,7 +57,7 @@ export function FactoryDefinitionSwitch({
           }
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            selectorRef.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
+            trigger.current?.focus();
           }}
           title="Switch factories without saving?"
         >

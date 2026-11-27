@@ -1,3 +1,4 @@
+import { WorkspaceResourceScope } from "@/components/app-shell/workspace-factory-page.server";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
@@ -104,6 +105,11 @@ export default async function AgentDetailPage({
 
   return (
     <PageContainer className="pt-5 sm:pt-10">
+      <WorkspaceResourceScope
+        factoryId={factory.id}
+        pathname={workspaceAgentDetailPath(workspaceSlug, agentId)}
+        workspaceSlug={workspaceSlug}
+      />
       <PageHeader
         title={agent.name}
         description={`${factory.name} · ${agent.slug}`}

@@ -56,13 +56,16 @@ for (const mobile of [false, true]) {
     const nav = page.getByRole("navigation", { name: "Workspace navigation" });
     const drawer = page.getByRole("dialog", { name: "Workspace pages" });
     const views = page.getByRole("navigation", { name: "Sessions views" });
+    const listHref = await views.getByRole("link", { name: "List" }).getAttribute("href");
+    const factoryId = new URL(listHref!, page.url()).searchParams.get("factory");
+    expect(factoryId).toMatch(/^[a-f\d-]{36}$/u);
     await expect(views.locator('[aria-current="page"]')).toHaveText("Board");
     if (mobile) {
       const trigger = page.getByRole("button", { name: "Workspace navigation: Sessions" });
       await trigger.click();
       const sessions = drawer.getByRole("link", { name: "Sessions", exact: true });
       await expect(sessions).toHaveAttribute("aria-current", "page");
-      await expect(sessions).toHaveAttribute("href", "/w/acme-corp");
+      await expect(sessions).toHaveAttribute("href", `/w/acme-corp?factory=${factoryId}`);
       await page.keyboard.press("Escape");
       await expect(trigger).toBeFocused();
     } else {
@@ -95,8 +98,8 @@ for (const mobile of [false, true]) {
       await page.keyboard.press("Escape");
       await expect(trigger).toBeFocused();
     } else {
-      await nav.getByRole("link", { name: "Runs", exact: true }).click();
-      await expect(nav.getByRole("link", { name: "Runs", exact: true })).toHaveAttribute(
+      await nav.getByRole("link", { name: "Activity", exact: true }).click();
+      await expect(nav.getByRole("link", { name: "Activity", exact: true })).toHaveAttribute(
         "aria-current",
         "page",
       );
@@ -134,22 +137,35 @@ test("mobile keyboard navigation reaches every destination and header action", a
   const views = page.getByRole("navigation", { name: "Sessions views" });
   await views.getByRole("link", { name: "List" }).press("Enter");
   await expect(views.locator('[aria-current="page"]')).toHaveText("List");
-  const factoryId = await page
-    .getByRole("combobox", { name: "Factory", exact: true })
-    .getAttribute("data-value");
+  const factoryId = new URL(page.url()).searchParams.get("factory");
+  expect(factoryId).toMatch(/^[a-f\d-]{36}$/u);
+  await expect(header.getByRole("combobox", { name: "Factory", exact: true })).toHaveCount(0);
 
-  for (const [current, destination, path] of [
-    ["Sessions", "Runs", `/w/acme-corp/runs?factory=${factoryId}`],
-    ["Runs", "Settings", "/w/acme-corp/settings"],
-    ["Settings", "Sessions", "/w/acme-corp/sessions"],
+  for (const [current, destination, href, path = href] of [
+    ["Sessions", "Activity", `/w/acme-corp/runs?factory=${factoryId}`],
+    ["Activity", "Settings", "/w/acme-corp/settings"],
+    [
+      "Settings",
+      "Sessions",
+      `/w/acme-corp/sessions?lastFactory=${factoryId}`,
+      `/w/acme-corp/sessions?factory=${factoryId}`,
+    ],
   ]) {
     const trigger = header.getByRole("button", { name: `Workspace navigation: ${current}` });
     await trigger.focus();
     await trigger.press("Enter");
     const drawer = page.getByRole("dialog", { name: "Workspace pages" });
     await expect(drawer).toBeVisible();
+    await expect(drawer.getByRole("link")).toHaveText([
+      "Inbox",
+      "Sessions",
+      "Activity",
+      "Insights",
+      "Factory",
+      "Settings",
+    ]);
     const item = drawer.getByRole("link", { name: destination, exact: true });
-    await expect(item).toHaveAttribute("href", path);
+    await expect(item).toHaveAttribute("href", href);
     for (let index = 0; index < (await drawer.getByRole("link").count()) + 2; index++) {
       if (await item.evaluate((link) => link === document.activeElement)) break;
       await page.keyboard.press("Tab");
@@ -215,7 +231,7 @@ test("desktop sidebar stays expanded and retains existing workbench, run and Set
   const navigation = page.getByRole("navigation", { name: "Workspace navigation" });
   const sidebar = page.locator("[data-shell-rail]");
   const sessions = navigation.getByRole("link", { name: "Sessions", exact: true });
-  const runs = navigation.getByRole("link", { name: "Runs", exact: true });
+  const activity = navigation.getByRole("link", { name: "Activity", exact: true });
   const main = page.getByRole("main");
   const artifact = main.getByRole("region", { name: "Artifact text", exact: true });
   await expect(artifact).toBeVisible();
@@ -224,10 +240,18 @@ test("desktop sidebar stays expanded and retains existing workbench, run and Set
   await expect(page.getByRole("button", { name: "Collapse sidebar" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Expand sidebar" })).toHaveCount(0);
   await expect(sessions).toHaveAttribute("aria-current", "page");
-  await expect(navigation.getByText("Work", { exact: true })).toBeVisible();
-  await expect(
-    navigation.getByRole("link", { name: "Factory definition", exact: true }),
-  ).toHaveAttribute("href", "/w/acme-corp/settings/factory-definition");
+  await expect(navigation.getByRole("link")).toHaveText([
+    "Inbox",
+    "Sessions",
+    "Activity",
+    "Insights",
+    "Factory",
+    "Settings",
+  ]);
+  await expect(navigation.getByRole("link", { name: "Factory", exact: true })).toHaveAttribute(
+    "href",
+    /^\/w\/acme-corp\/settings\/factory-definition\?factory=[a-f\d-]{36}$/u,
+  );
   await expect(navigation.getByRole("link", { name: "Benchmarks", exact: true })).toHaveCount(0);
   const width = await main.evaluate((element) => element.getBoundingClientRect().width);
   expect(width).toBeGreaterThanOrEqual(1080);
@@ -242,9 +266,12 @@ test("desktop sidebar stays expanded and retains existing workbench, run and Set
   await page.setViewportSize({ width: 1440, height: 900 });
 
   await expect(sessions).toBeVisible();
-  await runs.click();
+  await activity.click();
   await expect(page.getByRole("heading", { name: "Runs", exact: true })).toBeVisible();
-  await expect(runs).toHaveAttribute("aria-current", "page");
+  await expect(activity).toHaveAttribute("aria-current", "page");
+  await expect(
+    page.getByRole("navigation", { name: "Activity views" }).getByRole("link", { name: "Runs" }),
+  ).toHaveAttribute("aria-current", "page");
   const runLink = page
     .getByRole("list", { name: /^Runs/ })
     .getByRole("link", { name: /— .*?(?:attempt \d+|created )/u })
@@ -254,7 +281,7 @@ test("desktop sidebar stays expanded and retains existing workbench, run and Set
   await page.goto(runHref);
   await expect(page).toHaveURL(/\/w\/acme-corp\/runs\/[a-f\d-]+(?:\?.*)?$/u);
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-  await expect(runs).toHaveAttribute("aria-current", "page");
+  await expect(activity).toHaveAttribute("aria-current", "page");
 
   await page.goto("/w/acme-corp/settings?category=workspace#coding-agent");
   await expect(page).toHaveURL(/\/settings\?category=integrations#runtime$/u);

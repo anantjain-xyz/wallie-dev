@@ -12,7 +12,10 @@ import {
 } from "@/components/app-shell/workspace-location";
 import { WorkspaceScopeHandoff } from "@/components/app-shell/workspace-scope-context";
 import { WorkspaceScopeRequired } from "@/components/app-shell/workspace-scope-required";
-import { loadWorkspaceRouteScope } from "@/components/app-shell/workspace-scope.server";
+import {
+  loadWorkspaceResourceScope,
+  loadWorkspaceRouteScope,
+} from "@/components/app-shell/workspace-scope.server";
 import {
   isWorkspaceOperator,
   loadAuthenticatedWorkspaceContext,
@@ -22,6 +25,12 @@ type PageProps<Search> = {
   params: Promise<{ workspaceSlug: string }>;
   searchParams: Promise<Search>;
 };
+
+export async function WorkspaceResourceScope(
+  props: Parameters<typeof loadWorkspaceResourceScope>[0],
+) {
+  return <WorkspaceScopeHandoff snapshot={await loadWorkspaceResourceScope(props)} />;
+}
 
 export function scopeFactoryIndex<Search extends WorkspaceLocationQuery>(
   Page: (props: PageProps<Search>) => ReactNode | Promise<ReactNode>,
@@ -50,12 +59,14 @@ export function scopeFactoryIndex<Search extends WorkspaceLocationQuery>(
       search,
       workspaceSlug,
     });
-    if (
-      route === "automations" &&
-      !workspaceScopeOptions(workspaceLocationForRoute(route, workspaceSlug), snapshot.factories)
-        .length
-    )
-      notFound();
+    const choices = workspaceScopeOptions(
+      workspaceLocationForRoute(route, workspaceSlug),
+      snapshot.factories,
+    );
+    if (!choices.length && route === "automations") notFound();
+    if (!choices.length && route === "governance") {
+      return <Page params={params} searchParams={searchParams} />;
+    }
 
     if (snapshot.scope.kind !== "factory") {
       return (

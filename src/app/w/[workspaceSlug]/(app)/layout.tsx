@@ -24,15 +24,9 @@ export default async function WorkspaceAppLayout({ children, params }: Workspace
     loadWorkspaceFactoryOptions(workspaceSlug),
     loadWorkspaceSwitcherOptions(workspaceSlug),
   ]);
-  const defaultFactory = factories.find(
-    (factory) => factory.isDefault && factory.status === "active",
-  );
-
   return (
     <AppShell
       canManageFactoryDefinition={isWorkspaceOperator(currentMember)}
-      canManageGovernance={factories.some(({ canManage }) => canManage)}
-      creationFactory={defaultFactory ? { id: defaultFactory.id, name: defaultFactory.name } : null}
       factories={factories}
       onboarding={onboarding}
       viewerAvatarUrl={viewerAvatarUrl}

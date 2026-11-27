@@ -29,7 +29,6 @@ import {
 import {
   workspaceFailureGroupPath,
   workspaceFailureGroupsPath,
-  workspaceImprovementsPath,
   workspaceRunsPath,
   workspaceSessionsPath,
 } from "@/lib/routes";
@@ -148,17 +147,7 @@ async function FailureGroupsPage({
   return (
     <PageContainer>
       <PageHeader
-        actions={
-          <>
-            {factorySelector}
-            <Link
-              className="ui-button"
-              href={workspaceImprovementsPath(workspaceSlug, { factory: scope.factoryId })}
-            >
-              Improvements
-            </Link>
-          </>
-        }
+        actions={factorySelector}
         actionsRightOnDesktop
         title="Failure groups"
         description={

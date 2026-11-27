@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
 
+import { WorkspaceResourceScope } from "@/components/app-shell/workspace-factory-page.server";
 import {
   loadWorkflowAuthoringPageScope,
   loadWorkflowEditorChoices,
@@ -45,14 +46,26 @@ export default async function WorkflowEditorPage({
     snapshot.selectedDraftGraph ?? snapshot.graph,
   );
   return (
-    <WorkflowEditor
-      key={`${factoryId}:${workflow.data}:${draft.data ?? "current"}`}
-      initial={snapshot}
-      choices={choices}
-      workspaceSlug={workspaceSlug}
-      factoryId={factoryId}
-      recoveryOwner={pageScope.user.id}
-      endpoint={workflowAuthoringApiPath(workspaceId, factoryId, workflow.data)}
-    />
+    <>
+      <WorkspaceResourceScope
+        factoryId={factoryId}
+        pathname={
+          workspaceWorkflowDetailPath(workspaceSlug, workflowId, { factory: factoryId }).split(
+            "?",
+            1,
+          )[0]
+        }
+        workspaceSlug={workspaceSlug}
+      />
+      <WorkflowEditor
+        key={`${factoryId}:${workflow.data}:${draft.data ?? "current"}`}
+        initial={snapshot}
+        choices={choices}
+        workspaceSlug={workspaceSlug}
+        factoryId={factoryId}
+        recoveryOwner={pageScope.user.id}
+        endpoint={workflowAuthoringApiPath(workspaceId, factoryId, workflow.data)}
+      />
+    </>
   );
 }

@@ -230,6 +230,7 @@ async function BenchmarksPage({
 }
 
 export default scopeFactoryIndex(BenchmarksPage, {
+  picker: "leaf",
   route: "benchmarks",
   title: "Benchmarks",
   resetParams: ["newSuite"],

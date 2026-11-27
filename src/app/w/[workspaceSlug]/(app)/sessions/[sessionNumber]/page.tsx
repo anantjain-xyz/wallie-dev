@@ -1,6 +1,8 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
 
+import { WorkspaceScopeHandoff } from "@/components/app-shell/workspace-scope-context";
+import { loadWorkspaceResourceScope } from "@/components/app-shell/workspace-scope.server";
 import { MarkdownContent } from "@/components/shared/markdown-content";
 import {
   mayContainEvidenceLinks,
@@ -13,6 +15,7 @@ import {
 import { loadSessionDetailPageData } from "@/features/sessions/detail/data";
 import { SessionDetailPageClient } from "@/features/sessions/detail/session-detail-page-client";
 import { parseSessionBrowseReturn } from "@/lib/sessions/browse-return";
+import { workspaceSessionDetailPath } from "@/lib/routes";
 import {
   parseSessionReviewTarget,
   sessionReviewQuery,
@@ -95,6 +98,11 @@ export default async function SessionDetailPage({ params, searchParams }: Sessio
           browseReturn ? { returnTo: browseReturn.href } : undefined,
         );
   const exactReview = request.kind === "exact" ? await loadExactReview(data, request.target) : null;
+  const snapshot = await loadWorkspaceResourceScope({
+    factoryId: data.factoryId,
+    pathname: workspaceSessionDetailPath(workspaceSlug, sessionNumber),
+    workspaceSlug,
+  });
   const initialNow = new Date().toISOString();
   const latestArtifact =
     exactReview?.artifact ??
@@ -123,29 +131,36 @@ export default async function SessionDetailPage({ params, searchParams }: Sessio
     ) : null;
 
   return (
-    <SessionDetailPageClient
-      browseReturn={browseReturn}
-      activity={
-        <Suspense fallback={<SessionActivityFallback />}>
-          <SessionActivity
-            archivedAt={data.review.session.archivedAt}
-            context={data.activityContext}
-            initialNow={initialNow}
-            workspaceSlug={data.review.workspaceSlug}
-          />
-        </Suspense>
-      }
-      canReview={data.canReview}
-      failedStageSlug={data.failedStageSlug}
-      hasFailedRun={data.hasFailedRun}
-      latestRun={data.latestRun}
-      initialData={data.review}
-      initialNow={initialNow}
-      initialFormattedArtifact={initialFormattedArtifact}
-      initialFormattedArtifactKey={initialFormattedArtifactKey}
-      initialExactReviewTarget={exactReview?.target}
-      repository={data.repository}
-      workflowInspection={data.workflowInspection ?? undefined}
-    />
+    <>
+      <WorkspaceScopeHandoff snapshot={snapshot} />
+      <SessionDetailPageClient
+        browseReturn={browseReturn}
+        activity={
+          <Suspense fallback={<SessionActivityFallback />}>
+            <SessionActivity
+              archivedAt={data.review.session.archivedAt}
+              context={data.activityContext}
+              initialNow={initialNow}
+              workspaceSlug={data.review.workspaceSlug}
+            />
+          </Suspense>
+        }
+        canReview={data.canReview}
+        failedStageSlug={data.failedStageSlug}
+        hasFailedRun={data.hasFailedRun}
+        latestRun={data.latestRun}
+        initialData={
+          snapshot.scope.kind === "factory"
+            ? { ...data.review, factoryName: undefined }
+            : data.review
+        }
+        initialNow={initialNow}
+        initialFormattedArtifact={initialFormattedArtifact}
+        initialFormattedArtifactKey={initialFormattedArtifactKey}
+        initialExactReviewTarget={exactReview?.target}
+        repository={data.repository}
+        workflowInspection={data.workflowInspection ?? undefined}
+      />
+    </>
   );
 }

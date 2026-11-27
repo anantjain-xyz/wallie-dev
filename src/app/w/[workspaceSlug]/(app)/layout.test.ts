@@ -33,7 +33,6 @@ describe("workspace app route group layout", () => {
       isDefault: true,
       status: "active",
       canManage: true,
-      canStart: true,
       managesFactory: true,
     },
     {
@@ -41,7 +40,6 @@ describe("workspace app route group layout", () => {
       isDefault: false,
       status: "active",
       canManage: false,
-      canStart: false,
       managesFactory: false,
     },
     {
@@ -49,7 +47,6 @@ describe("workspace app route group layout", () => {
       isDefault: false,
       status: "active",
       canManage: false,
-      canStart: false,
       managesFactory: true,
     },
     {
@@ -57,12 +54,11 @@ describe("workspace app route group layout", () => {
       isDefault: true,
       status: "archived",
       canManage: true,
-      canStart: false,
       managesFactory: true,
     },
   ])(
-    "wraps workspace pages with the right factory actions for $role/$status",
-    async ({ role, isDefault, status, canManage, canStart, managesFactory }) => {
+    "supplies authorized factory options and workspace capabilities for $role/$status",
+    async ({ role, isDefault, status, canManage, managesFactory }) => {
       const workspace = { id: "workspace-1", name: "Northwind", slug: "northwind" };
       const onboarding = { currentStep: "repository", status: "in_progress" };
       const factories = [
@@ -85,8 +81,6 @@ describe("workspace app route group layout", () => {
         params: Promise.resolve({ workspaceSlug: "northwind" }),
       })) as ReactElement<{
         canManageFactoryDefinition: boolean;
-        canManageGovernance: boolean;
-        creationFactory: { id: string; name: string } | null;
         factories: typeof factories;
         children: string;
         onboarding: typeof onboarding;
@@ -101,8 +95,6 @@ describe("workspace app route group layout", () => {
       expect(element.type).toBe(mocked.AppShell);
       expect(element.props).toMatchObject({
         canManageFactoryDefinition: canManage,
-        canManageGovernance: managesFactory,
-        creationFactory: canStart ? { id: "factory-1", name: "Northwind" } : null,
         factories,
         children: "app-page",
         onboarding,
@@ -113,6 +105,7 @@ describe("workspace app route group layout", () => {
         workspaceAvatarUrl: "https://cdn.example.com/avatar.png",
         workspaceOptions,
       });
+      expect(element.props).not.toHaveProperty("creationFactory");
     },
   );
 });
