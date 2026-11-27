@@ -106,7 +106,7 @@ export function WorkspacePersonalProfile({
   profile: Promise<SettingsWorkspaceProfile>;
 }) {
   return (
-    <Section anchorId="profile" heading="h3" title="Your profile">
+    <Section anchorId="profile" title="Profile">
       <Suspense fallback={<WorkspaceSettingsLoading label="your profile" />}>
         <WorkspaceSettingsRead
           data={profile}

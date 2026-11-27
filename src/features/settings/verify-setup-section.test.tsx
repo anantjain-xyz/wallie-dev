@@ -39,10 +39,18 @@ vi.mock("@/features/onboarding/runtime-readiness", () => ({
       step: "verify",
       statusLabel: "Stale",
     },
+    {
+      id: "provider-credentials",
+      label: "Provider credentials",
+      detail: "Connect the provider used by the default runtime.",
+      passed: false,
+      step: "runtime",
+    },
   ],
 }));
 
 const data = {
+  agentConfig: { agent_provider: "cursor" },
   canManage: true,
   github: { repositories: [{ id: "repo-a", fullName: "fixture-org/demo" }] },
   setupHealth: {
@@ -55,7 +63,7 @@ const data = {
     enabledProviders: ["e2b"],
     connections: { e2b: { status: "connected" } },
   },
-  workspace: { id: "workspace-a" },
+  workspace: { id: "workspace-a", slug: "fixture-workspace" },
 } as unknown as SettingsPageData;
 
 afterEach(() => {
@@ -88,6 +96,10 @@ it.each([
   expect(screen.getByRole("link", { name: "Open Factory connector resources" })).toHaveAttribute(
     "href",
     "#connector-resources",
+  );
+  expect(screen.getByRole("link", { name: "Open provider access" })).toHaveAttribute(
+    "href",
+    "/w/fixture-workspace/settings?category=personal&provider=cursor#provider-access",
   );
   expect(mock.capability.mock.calls[0]?.[0]).toMatchObject({
     definitionTarget: { id: "definition", kind, repositoryId: "repo-a" },

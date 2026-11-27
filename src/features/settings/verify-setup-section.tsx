@@ -9,7 +9,9 @@ import { SandboxCapabilitySection } from "@/features/settings/sandbox-capability
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
+import { normalizeAgentProviderName } from "@/lib/agent-config/contracts";
 import type { WorkspaceOnboardingStep } from "@/lib/onboarding/contracts";
+import { workspaceSettingsPath } from "@/lib/routes";
 
 type VerifySetupSectionProps = {
   data: SettingsPageData;
@@ -40,12 +42,13 @@ const stepLabel: Record<WorkspaceOnboardingStep, string> = {
 
 const sandboxLabel = { daytona: "Daytona", e2b: "E2B", vercel: "Vercel Sandbox" } as const;
 
-function checklistItemHref(item: ReturnType<typeof buildVerifyChecklist>[number]) {
-  if (item.id === "provider-credentials") return "#provider-access";
-  return `#${stepAnchor[item.step]}`;
-}
-
-function ReadinessChecks({ items }: { items: ReturnType<typeof buildVerifyChecklist> }) {
+function ReadinessChecks({
+  items,
+  providerAccessHref,
+}: {
+  items: ReturnType<typeof buildVerifyChecklist>;
+  providerAccessHref: string;
+}) {
   return (
     <ul className="divide-y divide-border border-y border-border">
       {items.map((item) => (
@@ -79,7 +82,14 @@ function ReadinessChecks({ items }: { items: ReturnType<typeof buildVerifyCheckl
               )}
             />
             {!item.passed && item.step !== "verify" ? (
-              <a className="ui-button" href={checklistItemHref(item)}>
+              <a
+                className="ui-button"
+                href={
+                  item.id === "provider-credentials"
+                    ? providerAccessHref
+                    : `#${stepAnchor[item.step]}`
+                }
+              >
                 {item.id === "provider-credentials"
                   ? "Open provider access"
                   : `Open ${stepLabel[item.step]} settings`}
@@ -117,6 +127,11 @@ export function VerifySetupSection({
   });
   const needsAttention = checklist.filter((item) => !item.passed);
   const passing = checklist.filter((item) => item.passed);
+  const configuredProvider = data.agentConfig.agent_provider;
+  const provider = normalizeAgentProviderName(
+    typeof configuredProvider === "string" ? configuredProvider : undefined,
+  );
+  const providerAccessHref = `${workspaceSettingsPath(data.workspace.slug, { category: "personal", provider: provider ?? undefined })}#provider-access`;
   const preferredRepositoryId =
     data.setupHealth.primaryRepositoryProfile.repositoryId ??
     data.setupHealth.selectedRepository.repositoryId;
@@ -145,7 +160,7 @@ export function VerifySetupSection({
             </p>
           </div>
           {needsAttention.length ? (
-            <ReadinessChecks items={needsAttention} />
+            <ReadinessChecks items={needsAttention} providerAccessHref={providerAccessHref} />
           ) : (
             <Status label="All workspace checks ready" value="healthy" />
           )}
@@ -155,7 +170,7 @@ export function VerifySetupSection({
                 Passing checks ({passing.length})
               </summary>
               <div className="mt-2">
-                <ReadinessChecks items={passing} />
+                <ReadinessChecks items={passing} providerAccessHref={providerAccessHref} />
               </div>
             </details>
           ) : null}

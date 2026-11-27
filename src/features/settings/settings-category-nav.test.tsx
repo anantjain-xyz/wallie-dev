@@ -84,13 +84,24 @@ describe("resolveSettingsHashRoute", () => {
 });
 
 describe("SettingsCategoryNav hash routing", () => {
-  it("orders the major categories with Advanced last and uses the requested subtitle", () => {
+  it("groups workspace operations separately from Personal settings", () => {
     expect(SETTINGS_CATEGORY_LINKS.map((category) => category.id)).toEqual([
       "integrations",
       "workspace",
       "advanced",
+      "personal",
     ]);
-    expect(SETTINGS_CATEGORY_LINKS.at(-1)?.description).toContain("maintenance");
+    const { getByRole } = render(
+      <SettingsCategoryNav activeCategory="advanced" canManage workspaceSlug="acme" />,
+    );
+    expect(getByRole("list", { name: "Workspace settings" })).toHaveTextContent(
+      "Usage & retention",
+    );
+    expect(getByRole("list", { name: "Workspace settings" })).not.toHaveTextContent("Personal");
+    expect(getByRole("link", { name: /^Personal$/ })).toHaveAttribute(
+      "href",
+      "/w/acme/settings?category=personal",
+    );
   });
 
   it("sticks below the shell header on desktop without covering mobile anchors", () => {
@@ -123,7 +134,6 @@ describe("SettingsCategoryNav hash routing", () => {
       ["Sandbox connections", "#sandbox"],
       ["Workspace secrets", "#workspace-secrets"],
       ["Agent runtime", "#runtime"],
-      ["Your provider access", "#provider-access"],
       ["Verify setup", "#verify"],
     ];
     for (const [name, href] of links) {
@@ -161,9 +171,10 @@ describe("SettingsCategoryNav hash routing", () => {
     {
       category: "workspace" as const,
       links: [
-        ["Workspace", "#workspace"],
-        ["Team access", "#members"],
-        ["Your profile", "#profile"],
+        ["General", "#workspace"],
+        ["Members", "#members"],
+        ["OAuth clients", "#oauth-clients"],
+        ["OAuth connections", "#workspace-oauth-connections"],
         ["Danger zone", "#danger-zone"],
       ],
     },
@@ -174,6 +185,14 @@ describe("SettingsCategoryNav hash routing", () => {
         ["Retention and exports", "#run-history"],
         ["Maintenance", "#maintenance"],
         ["Rate limits", "#rate-limits"],
+      ],
+    },
+    {
+      category: "personal" as const,
+      links: [
+        ["Profile", "#profile"],
+        ["Provider access", "#provider-access"],
+        ["Connected clients", "#connected-clients"],
       ],
     },
   ])("renders the $category section links as a submenu", ({ category, links }) => {
@@ -187,18 +206,25 @@ describe("SettingsCategoryNav hash routing", () => {
     }
   });
 
-  it("links ordinary members to personal connected clients in Workspace settings", () => {
+  it("retargets legacy personal links and hides workspace OAuth actions from members", () => {
     searchParams = new URLSearchParams("category=workspace");
-    const { getByRole } = render(
+    const { queryByRole } = render(
       <SettingsCategoryNav activeCategory="workspace" canManage={false} workspaceSlug="acme" />,
     );
-    expect(getByRole("link", { name: "Connected clients" })).toHaveAttribute(
-      "href",
-      "#connected-clients",
-    );
+    expect(queryByRole("link", { name: "OAuth clients" })).toBeNull();
+    expect(queryByRole("link", { name: "OAuth connections" })).toBeNull();
+    expect(queryByRole("link", { name: "Connected clients" })).toBeNull();
     expect(resolveSettingsHashRoute("#connected-clients")).toEqual({
       anchor: "connected-clients",
-      category: "workspace",
+      category: "personal",
+    });
+    expect(resolveSettingsHashRoute("#provider-access")).toEqual({
+      anchor: "provider-access",
+      category: "personal",
+    });
+    expect(resolveSettingsHashRoute("#profile")).toEqual({
+      anchor: "profile",
+      category: "personal",
     });
   });
 
@@ -212,19 +238,26 @@ describe("SettingsCategoryNav hash routing", () => {
     expect(queryByRole("link", { name: "Retention and exports" })).toBeNull();
   });
 
-  it.each(["maintenance", "run-history"])("does not route non-managers to %s", async (anchor) => {
-    searchParams = new URLSearchParams("category=integrations");
-    render(
-      <SettingsCategoryNav activeCategory="integrations" canManage={false} workspaceSlug="acme" />,
-    );
+  it.each(["maintenance", "run-history", "oauth-clients", "workspace-oauth-connections"])(
+    "does not route non-managers to %s",
+    async (anchor) => {
+      searchParams = new URLSearchParams("category=integrations");
+      render(
+        <SettingsCategoryNav
+          activeCategory="integrations"
+          canManage={false}
+          workspaceSlug="acme"
+        />,
+      );
 
-    window.history.replaceState(null, "", `/w/acme/settings?category=integrations#${anchor}`);
-    act(() => window.dispatchEvent(new HashChangeEvent("hashchange")));
+      window.history.replaceState(null, "", `/w/acme/settings?category=integrations#${anchor}`);
+      act(() => window.dispatchEvent(new HashChangeEvent("hashchange")));
 
-    await waitFor(() => {
-      expect(replace).not.toHaveBeenCalled();
-    });
-  });
+      await waitFor(() => {
+        expect(replace).not.toHaveBeenCalled();
+      });
+    },
+  );
 
   it("scrolls to the shared Maintenance section heading for managers", async () => {
     searchParams = new URLSearchParams("category=advanced");

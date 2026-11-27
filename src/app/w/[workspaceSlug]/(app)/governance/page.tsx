@@ -26,14 +26,6 @@ import {
   type GovernanceScope,
 } from "@/features/factory-governance/governance-data";
 import {
-  ConnectedOAuthClients,
-  RegisteredOAuthClients,
-} from "@/features/factory-governance/governance-oauth";
-import {
-  loadOAuthClientData,
-  type GovernanceOAuthData,
-} from "@/features/factory-governance/governance-oauth-data";
-import {
   GovernanceResourcePages,
   governanceSourceQuery,
 } from "@/features/factory-governance/governance-resource-link";
@@ -410,11 +402,11 @@ export default async function GovernancePage({
         <div className="ui-sheet space-y-3 p-4 sm:p-5">
           <h2 className="font-semibold text-foreground">Factory manager access required</h2>
           <p className="type-secondary text-muted">
-            You can still review or disconnect your own integrations in Workspace Settings.
+            You can still review or disconnect your own clients in Personal settings.
           </p>
           <Link
             className="ui-button"
-            href={`${workspaceSettingsPath(workspaceSlug, { category: "workspace" })}#connected-clients`}
+            href={`${workspaceSettingsPath(workspaceSlug, { category: "personal" })}#connected-clients`}
           >
             Manage your connected clients
           </Link>
@@ -477,20 +469,10 @@ export default async function GovernancePage({
 
   const { beforeAudit, afterOAuthClient, afterOAuthGrant, ...pages } = parsed.data;
   let data: GovernanceData;
-  let oauth: GovernanceOAuthData | null;
   let subscriptions: Awaited<ReturnType<typeof loadGovernanceSubscriptions>> | null;
   try {
-    [data, oauth, subscriptions] = await Promise.all([
+    [data, subscriptions] = await Promise.all([
       loadGovernance(scope, { ...pages, auditCursor: beforeAudit, source: source.data }),
-      !source.data
-        ? loadOAuthClientData(scope, {
-            afterOAuthClient,
-            afterOAuthGrant,
-            ...(scope.isOperator
-              ? { isOperator: true }
-              : { consentingMemberId: scope.actorMemberId }),
-          })
-        : null,
       !source.data || source.data.kind === "grant"
         ? loadGovernanceSubscriptions(scope).catch(() => null)
         : null,
@@ -514,8 +496,10 @@ export default async function GovernancePage({
     );
   }
 
-  const oauthPage = (key: "afterOAuthClient" | "afterOAuthGrant", anchor: string, value?: string) =>
-    `${workspaceGovernancePath(workspaceSlug, { factory: factory.id, ...pages, beforeAudit, afterOAuthClient, afterOAuthGrant, [key]: value })}#${anchor}`;
+  const oauthClientsHref = `${workspaceSettingsPath(workspaceSlug, { category: "workspace", afterOAuthClient })}#oauth-clients`;
+  const oauthConnectionsHref = scope.isOperator
+    ? `${workspaceSettingsPath(workspaceSlug, { category: "workspace", afterOAuthGrant })}#workspace-oauth-connections`
+    : `${workspaceSettingsPath(workspaceSlug, { category: "personal", afterOAuthGrant })}#connected-clients`;
 
   return (
     <PageContainer className="pt-5 sm:pt-10">
@@ -533,7 +517,7 @@ export default async function GovernancePage({
         description={
           source.data
             ? `Factory: ${factory.name}`
-            : `The factory selector scopes principals, execution grants, credentials, subscriptions, and audit to ${factory.name}. It does not filter workspace OAuth clients or connections.`
+            : `The factory selector scopes principals, execution grants, credentials, subscriptions, and audit to ${factory.name}.`
         }
         title="Governance"
       />
@@ -553,39 +537,27 @@ export default async function GovernancePage({
           />
         )}
         <GovernanceAudit cursor={beforeAudit} data={data} scope={scope} source={source.data} />
-        {oauth && scope.isOperator && (
-          <RegisteredOAuthClients
-            data={oauth}
-            workspaceId={scope.workspaceId}
-            navigation={
-              <GovernanceResourcePages
-                href={oauthPage("afterOAuthClient", "oauth-clients")}
-                next={
-                  oauth.nextClient &&
-                  oauthPage("afterOAuthClient", "oauth-clients", oauth.nextClient)
-                }
-                previous={Boolean(afterOAuthClient)}
-              />
-            }
-          />
-        )}
-        {oauth && (
-          <ConnectedOAuthClients
-            data={oauth}
-            governanceScope={scope.isOperator ? "workspace" : "personal"}
-            memberOptions={scope.isOperator ? data.memberOptions : undefined}
-            workspaceId={scope.workspaceId}
-            navigation={
-              <GovernanceResourcePages
-                href={oauthPage("afterOAuthGrant", "connected-clients")}
-                next={
-                  oauth.nextGrant &&
-                  oauthPage("afterOAuthGrant", "connected-clients", oauth.nextGrant)
-                }
-                previous={Boolean(afterOAuthGrant)}
-              />
-            }
-          />
+        {!source.data && (
+          <nav aria-label="OAuth settings" className="flex flex-wrap gap-2">
+            {scope.isOperator ? (
+              <Link
+                className="ui-button min-h-9 scroll-mt-4"
+                href={oauthClientsHref}
+                id="oauth-clients"
+              >
+                Manage workspace OAuth clients
+              </Link>
+            ) : null}
+            <Link
+              className="ui-button min-h-9 scroll-mt-4"
+              href={oauthConnectionsHref}
+              id="connected-clients"
+            >
+              {scope.isOperator
+                ? "Manage workspace OAuth connections"
+                : "Manage your connected clients"}
+            </Link>
+          </nav>
         )}
       </div>
     </PageContainer>

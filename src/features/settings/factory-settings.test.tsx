@@ -71,6 +71,7 @@ function renderSettings() {
         initialAgentConfig={{}}
         setFlashMessage={vi.fn()}
         workspaceId={workspaceId}
+        workspaceSlug="demo"
       />
     </FactorySettingsProvider>,
   );
