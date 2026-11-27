@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -328,6 +329,21 @@ test("reviews recurring failures and preserves source evidence across filters, s
       ],
     });
     await capture(page, info, "08a-exact-validation-evidence");
+
+    const unavailableEvidence = new URL(page.url());
+    const memberSegment = unavailableEvidence.pathname.lastIndexOf("/");
+    unavailableEvidence.pathname = `${unavailableEvidence.pathname.slice(0, memberSegment + 1)}${randomUUID()}`;
+    await page.goto(unavailableEvidence.href);
+    await expect(main.getByRole("heading", { name: "Evidence unavailable" })).toBeVisible();
+    const banner = page.getByRole("banner");
+    await expect(banner.getByText("Product delivery", { exact: true })).toBeVisible();
+    await expect(banner.getByRole("combobox", { name: "Factory", exact: true })).toHaveCount(0);
+    await expect(improvements).toHaveAttribute(
+      "href",
+      `/w/${fixture.slug}/improvements?factory=${fixture.factoryId}`,
+    );
+    await expect(main.getByRole("link", { name: "View technical receipt (JSON)" })).toHaveCount(0);
+    await capture(page, info, "08b-unavailable-validation-evidence");
 
     const reader = await browser.newPage({ viewport: { width: 390, height: 844 } });
     try {

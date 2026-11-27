@@ -1,11 +1,15 @@
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderToReadableStream, renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import ActivityPage from "@/app/w/[workspaceSlug]/(app)/activity/page";
+import FailureValidationPage from "@/app/w/[workspaceSlug]/(app)/failure-groups/[cohortId]/validation/[memberId]/page";
 import InboxPage from "@/app/w/[workspaceSlug]/(app)/inbox/page";
 import RunsPage from "@/app/w/[workspaceSlug]/(app)/runs/page";
 import { scopeFactoryIndex } from "@/components/app-shell/workspace-factory-page.server";
-import { workspaceFactorySwitchHref } from "@/components/app-shell/workspace-location";
+import {
+  workspaceFactorySwitchHref,
+  workspaceScopeLocationKey,
+} from "@/components/app-shell/workspace-location";
 import { getGroupedWorkspaceNavigation } from "@/components/app-shell/grouped-workspace-navigation";
 import {
   runFromListHref,
@@ -20,8 +24,14 @@ const mocks = vi.hoisted(() => ({
   runs: vi.fn(),
   activity: vi.fn(),
   factories: vi.fn(),
+  failureCohort: vi.fn(),
+  failureValidation: vi.fn(),
+  scopeHandoff: vi.fn(() => null),
 }));
 
+vi.mock("@/components/app-shell/workspace-scope-context", () => ({
+  WorkspaceScopeHandoff: mocks.scopeHandoff,
+}));
 vi.mock("@/features/factories/factory-options-data", () => ({
   loadWorkspaceFactoryOptions: mocks.factories,
 }));
@@ -51,8 +61,16 @@ vi.mock("@/features/factory-activity/activity-actors-data", () => ({
 vi.mock("@/features/factory-activity/activity-page", () => ({
   FactoryActivityPage: () => "Activity feed",
 }));
+vi.mock("@/lib/factory-failures/cohorts", () => ({ getFailureCohort: mocks.failureCohort }));
+vi.mock("@/features/factory-failures/failure-validation-data", () => ({
+  loadFailureValidation: mocks.failureValidation,
+}));
 
 const slug = "tandem";
+const cohortId = "b974a915-abf8-4f96-9f6e-4a0b26b41f35";
+const memberId = "a6e68d53-190b-4658-ae99-bced8c09f9fb";
+const groupPath = `/w/${slug}/failure-groups/${cohortId}`;
+const validationPath = `${groupPath}/validation/${memberId}`;
 const mobile = {
   id: "029d7bb8-d497-4ad1-b085-d3264e568faf",
   name: "Mobile app",
@@ -72,6 +90,12 @@ const props = (query: Record<string, string | string[] | undefined>) => ({
   params: Promise.resolve({ workspaceSlug: slug }),
   searchParams: Promise.resolve(query),
 });
+
+const evidencePage = (factory: string) =>
+  FailureValidationPage({
+    params: Promise.resolve({ workspaceSlug: slug, cohortId, memberId }),
+    searchParams: Promise.resolve({ factory }),
+  });
 
 describe("workspace scope route wiring", () => {
   beforeEach(() => {
@@ -164,5 +188,55 @@ describe("workspace scope route wiring", () => {
       "Resolved factory body",
     );
     expect(await Body.mock.calls[0]?.[0]?.searchParams).toEqual({ factory: mobile.id });
+  });
+
+  it.each([
+    ["missing", "Evidence unavailable"],
+    ["unavailable", "Evidence unavailable"],
+    ["withheld", "Evidence withheld"],
+  ])("keeps the authorized factory when validation evidence is %s", async (state, heading) => {
+    const member = { id: memberId };
+    mocks.failureCohort.mockResolvedValue(state === "missing" ? null : { members: [member] });
+    mocks.failureValidation.mockResolvedValue({ state, evidence: null });
+
+    const markup = await new Response(
+      await renderToReadableStream(await evidencePage(mobile.id.toUpperCase())),
+    ).text();
+
+    expect(markup).toContain(heading);
+    expect(markup).toContain(`href="${groupPath}?factory=${mobile.id}"`);
+    expect(markup).not.toContain("View technical receipt");
+    expect(mocks.failureCohort).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ factoryId: mobile.id }),
+      cohortId,
+      { memberId, revision: undefined },
+    );
+    if (state === "missing") expect(mocks.failureValidation).not.toHaveBeenCalled();
+    expect(mocks.scopeHandoff).toHaveBeenCalledExactlyOnceWith(
+      {
+        snapshot: expect.objectContaining({
+          locationKey: workspaceScopeLocationKey(validationPath),
+          picker: "locked",
+          scope: { kind: "factory", factory: mobile },
+        }),
+      },
+      undefined,
+    );
+  });
+
+  it("does not claim a factory or read evidence when the requested factory is not authorized", async () => {
+    const markup = await new Response(
+      await renderToReadableStream(await evidencePage("c10d32cd-7036-48f8-8c05-d7aa38f473c5")),
+    ).text();
+
+    expect(markup).toContain("Evidence unavailable");
+    expect(markup).toContain(`href="${groupPath}"`);
+    expect(mocks.failureCohort).not.toHaveBeenCalled();
+    expect(mocks.failureValidation).not.toHaveBeenCalled();
+    expect(mocks.scopeHandoff).toHaveBeenCalledExactlyOnceWith(
+      { snapshot: expect.objectContaining({ scope: { kind: "unavailable" } }) },
+      undefined,
+    );
   });
 });
