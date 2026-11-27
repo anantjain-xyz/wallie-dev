@@ -50,6 +50,8 @@ describe("Sessions ledger factory selection", () => {
     vi.clearAllMocks();
     mocked.context.mockResolvedValue({
       currentMember: { kind: "human", is_active: true, role: "member" },
+      user: { id: "viewer-id" },
+      workspace: { id: "workspace-id" },
     });
     mocked.load.mockResolvedValue({});
     mocked.page.mockImplementation(({ factorySelector }: { factorySelector: ReactNode }) => (
@@ -63,7 +65,11 @@ describe("Sessions ledger factory selection", () => {
   it.each(["owner", "admin"])(
     "links a workspace %s to Settings even with one factory",
     async (role) => {
-      mocked.context.mockResolvedValue({ currentMember: { kind: "human", is_active: true, role } });
+      mocked.context.mockResolvedValue({
+        currentMember: { kind: "human", is_active: true, role },
+        user: { id: "viewer-id" },
+        workspace: { id: "workspace-id" },
+      });
       mocked.factories.mockResolvedValue([defaultFactory]);
       const html = await renderRoute();
       expect(html).toContain(

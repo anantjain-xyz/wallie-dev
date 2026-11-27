@@ -1,12 +1,10 @@
 import { cookies } from "next/headers";
 import Link from "next/link";
 
+import { WorkspaceScopeHandoff } from "@/components/app-shell/workspace-scope-context";
+import { loadWorkspaceRouteScope } from "@/components/app-shell/workspace-scope.server";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
-import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
-import {
-  FACTORY_QUERY_PARAM,
-  resolveFactorySelection,
-} from "@/features/factories/factory-selection";
+import { FACTORY_QUERY_PARAM } from "@/features/factories/factory-selection";
 import { SessionsFactoryControls } from "@/features/sessions/components/sessions-factory-controls";
 import { SessionsViewTitle } from "@/features/sessions/components/sessions-view-navigation";
 import { loadSessionListPageData } from "@/features/sessions/list/data";
@@ -31,18 +29,13 @@ type SessionsPageProps = {
 
 export default async function SessionsRoutePage({ params, searchParams }: SessionsPageProps) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
-  const [factories, { currentMember }] = await Promise.all([
-    loadWorkspaceFactoryOptions(workspaceSlug),
+  const [snapshot, { currentMember }] = await Promise.all([
+    loadWorkspaceRouteScope({ route: "sessions", workspaceSlug, search }),
     loadAuthenticatedWorkspaceContext(workspaceSlug),
   ]);
   const requested = search[FACTORY_QUERY_PARAM];
-  const activeFactories = factories.filter((factory) => factory.status === "active");
-  const selection =
-    requested === undefined
-      ? activeFactories.length
-        ? resolveFactorySelection(activeFactories, undefined, { useFirstVisible: true })
-        : { kind: "all" as const }
-      : resolveFactorySelection(factories, requested);
+  const { factories, scope: selection } = snapshot;
+  const handoff = <WorkspaceScopeHandoff snapshot={snapshot} />;
   const canManageFactories = isWorkspaceOperator(currentMember);
   const factorySelector =
     factories.length > 0 || canManageFactories ? (
@@ -62,6 +55,7 @@ export default async function SessionsRoutePage({ params, searchParams }: Sessio
   if (selection.kind === "unavailable" || factories.length === 0)
     return (
       <PageContainer className="pt-5 sm:pt-10">
+        {handoff}
         <PageHeader
           actions={factorySelector}
           actionsRightOnDesktop
@@ -118,15 +112,18 @@ export default async function SessionsRoutePage({ params, searchParams }: Sessio
   const initialNow = new Date().toISOString();
 
   return (
-    <SessionsPage
-      factoryQuery={factoryQuery}
-      factoryId={factory?.id}
-      factoryName={factory?.name}
-      factorySelector={factorySelector}
-      initialData={data}
-      initialNow={initialNow}
-      readOnly={selection.kind === "all"}
-      showCreationOnboarding={!!factory?.isDefault && factory.status === "active"}
-    />
+    <>
+      {handoff}
+      <SessionsPage
+        factoryQuery={factoryQuery}
+        factoryId={factory?.id}
+        factoryName={factory?.name}
+        factorySelector={factorySelector}
+        initialData={data}
+        initialNow={initialNow}
+        readOnly={selection.kind === "all"}
+        showCreationOnboarding={!!factory?.isDefault && factory.status === "active"}
+      />
+    </>
   );
 }

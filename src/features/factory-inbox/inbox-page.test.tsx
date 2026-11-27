@@ -76,83 +76,96 @@ afterEach(() => {
 });
 
 describe("FactoryInboxPage", () => {
-  it("links to the exact review and clarification with factory and source context", () => {
-    renderInbox({
-      items: [
-        review,
+  it.each([false, true])(
+    "links to the exact review and clarification (All: %s)",
+    (allFactories) => {
+      renderInbox(
         {
-          ...review,
-          title: "Confirm the rollout",
-          sessionId: "77777777-7777-4777-8777-777777777777",
-          sessionNumber: 23,
-          kind: "clarification",
-          clarificationId,
-          hasBlockingFeedback: false,
+          items: [
+            review,
+            {
+              ...review,
+              title: "Confirm the rollout",
+              sessionId: "77777777-7777-4777-8777-777777777777",
+              sessionNumber: 23,
+              kind: "clarification",
+              clarificationId,
+              hasBlockingFeedback: false,
+            },
+          ],
+          counts: { review: 1, clarification: 1 },
+          nextCursor: null,
         },
-      ],
-      counts: { review: 1, clarification: 1 },
-      nextCursor: null,
-    });
+        happenedAt,
+        { allFactories },
+      );
+      const returnTo = encodeURIComponent(
+        `/w/acme/inbox?factory=${allFactories ? "all" : factoryId}`,
+      );
 
-    expect(screen.getByRole("link", { name: "All items 2" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
-    expect(screen.getByRole("link", { name: "Reviews 1" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "Clarifications 1" })).toBeVisible();
-    expect(screen.getByText("Blocking feedback")).toBeVisible();
-    expect(screen.getAllByText("Payments · Verify · Version 3")).toHaveLength(2);
-    expect(screen.getAllByText(/Release agent/)).toHaveLength(2);
-    const reviewLink = screen.getByRole("link", { name: "Payment integration" });
-    expect(reviewLink.closest("li")?.querySelectorAll("a")).toHaveLength(1);
-    expect(reviewLink).toHaveAttribute(
-      "href",
-      `/w/acme/sessions/22?artifactStage=verify&artifactId=${artifactId}&artifactVersion=3&reviewStageId=${stageId}&reviewRevision=7&returnTo=${encodeURIComponent(`/w/acme/inbox?factory=${factoryId}`)}`,
-    );
-    expect(screen.getByRole("link", { name: "Confirm the rollout" })).toHaveAttribute(
-      "href",
-      `/w/acme/sessions/23?artifactStage=verify&artifactId=${artifactId}&artifactVersion=3&reviewStageId=${stageId}&reviewRevision=7&clarificationId=${clarificationId}&returnTo=${encodeURIComponent(`/w/acme/inbox?factory=${factoryId}`)}`,
-    );
-  });
+      expect(screen.getByRole("link", { name: "All items 2" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+      expect(screen.getByRole("link", { name: "Reviews 1" })).toBeVisible();
+      expect(screen.getByRole("link", { name: "Clarifications 1" })).toBeVisible();
+      expect(screen.getByText("Blocking feedback")).toBeVisible();
+      expect(screen.getAllByText("Payments · Verify · Version 3")).toHaveLength(2);
+      expect(screen.getAllByText(/Release agent/)).toHaveLength(2);
+      const reviewLink = screen.getByRole("link", { name: "Payment integration" });
+      expect(reviewLink.closest("li")?.querySelectorAll("a")).toHaveLength(1);
+      expect(reviewLink).toHaveAttribute(
+        "href",
+        `/w/acme/sessions/22?artifactStage=verify&artifactId=${artifactId}&artifactVersion=3&reviewStageId=${stageId}&reviewRevision=7&returnTo=${returnTo}`,
+      );
+      expect(screen.getByRole("link", { name: "Confirm the rollout" })).toHaveAttribute(
+        "href",
+        `/w/acme/sessions/23?artifactStage=verify&artifactId=${artifactId}&artifactVersion=3&reviewStageId=${stageId}&reviewRevision=7&clarificationId=${clarificationId}&returnTo=${returnTo}`,
+      );
+    },
+  );
 
-  it("preserves the filter and cursor on the exact handoff and resets only the cursor when changing views", async () => {
-    const snapshot = {
-      items: [review],
-      counts: { review: 27, clarification: 1 },
-      nextCursor: "next",
-    };
-    const fetchInbox = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(snapshot));
-    renderInbox(snapshot, happenedAt, { cursor: "current", kind: "review" });
+  it.each([false, true])(
+    "preserves an exact Inbox handoff and resets only the cursor when changing views (All: %s)",
+    async (allFactories) => {
+      const snapshot = {
+        items: [review],
+        counts: { review: 27, clarification: 1 },
+        nextCursor: "next",
+      };
+      const fetchInbox = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(snapshot));
+      renderInbox(snapshot, happenedAt, { allFactories, cursor: "current", kind: "review" });
 
-    const inbox = `/w/acme/inbox?factory=${factoryId}`;
-    const href = screen.getByRole("link", { name: review.title }).getAttribute("href")!;
-    expect(new URL(href, "http://localhost").searchParams.get("returnTo")).toBe(
-      `${inbox}&kind=review&cursor=current`,
-    );
-    expect(screen.getByRole("link", { name: "Reviews 27" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
-    expect(screen.getByRole("link", { name: "Clarifications 1" })).toHaveAttribute(
-      "href",
-      `${inbox}&kind=clarification`,
-    );
-    expect(screen.getByRole("link", { name: "All items 28" })).toHaveAttribute("href", inbox);
-    expect(screen.getByRole("link", { name: "Next page" })).toHaveAttribute(
-      "href",
-      `${inbox}&kind=review&cursor=next`,
-    );
-    expect(screen.getByRole("link", { name: "Back to newest" })).toHaveAttribute(
-      "href",
-      `${inbox}&kind=review`,
-    );
-    const signal = new AbortController().signal;
-    await act(() => recoverySource().refresh(signal));
-    expect(fetchInbox).toHaveBeenCalledWith(
-      `/api/factories/inbox?workspaceId=${workspaceId}&factoryId=${factoryId}&kind=review&cursor=current`,
-      { cache: "no-store", signal },
-    );
-  });
+      const inbox = `/w/acme/inbox?factory=${allFactories ? "all" : factoryId}`;
+      const href = screen.getByRole("link", { name: review.title }).getAttribute("href")!;
+      expect(new URL(href, "http://localhost").searchParams.get("returnTo")).toBe(
+        `${inbox}&kind=review&cursor=current`,
+      );
+      expect(screen.getByRole("link", { name: "Reviews 27" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+      expect(screen.getByRole("link", { name: "Clarifications 1" })).toHaveAttribute(
+        "href",
+        `${inbox}&kind=clarification`,
+      );
+      expect(screen.getByRole("link", { name: "All items 28" })).toHaveAttribute("href", inbox);
+      expect(screen.getByRole("link", { name: "Next page" })).toHaveAttribute(
+        "href",
+        `${inbox}&kind=review&cursor=next`,
+      );
+      expect(screen.getByRole("link", { name: "Back to newest" })).toHaveAttribute(
+        "href",
+        `${inbox}&kind=review`,
+      );
+      const signal = new AbortController().signal;
+      await act(() => recoverySource().refresh(signal));
+      expect(fetchInbox).toHaveBeenCalledWith(
+        `/api/factories/inbox?workspaceId=${workspaceId}${allFactories ? "" : `&factoryId=${factoryId}`}&kind=review&cursor=current`,
+        { cache: "no-store", signal },
+      );
+    },
+  );
 
   it("offers separate recovery for an empty factory, older page and all-factory queue", () => {
     const view = renderInbox(empty, happenedAt, { cursor: "older", kind: "clarification" });
@@ -160,14 +173,14 @@ describe("FactoryInboxPage", () => {
     expect(screen.getByRole("link", { name: "Back to newest" })).toBeVisible();
     expect(screen.getByRole("link", { name: "View all factories" })).toHaveAttribute(
       "href",
-      "/w/acme/inbox?kind=clarification",
+      "/w/acme/inbox?factory=all&kind=clarification",
     );
     view.unmount();
     renderInbox(empty, happenedAt, { allFactories: true });
     expect(screen.getByText("You’re all caught up.")).toBeVisible();
     expect(screen.getByRole("link", { name: "View sessions" })).toHaveAttribute(
       "href",
-      "/w/acme/sessions",
+      "/w/acme/sessions?factory=all",
     );
   });
 
@@ -176,7 +189,7 @@ describe("FactoryInboxPage", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Factory unavailable.");
     expect(screen.getByRole("link", { name: "View all factories" })).toHaveAttribute(
       "href",
-      "/w/acme/inbox?kind=review",
+      "/w/acme/inbox?factory=all&kind=review",
     );
   });
 

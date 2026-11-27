@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { scopeFactoryIndex } from "@/components/app-shell/workspace-factory-page.server";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { MemoryPageView } from "@/features/factory-content/memory-page-view";
 import { loadMemoryPage, parseMemoryQuery } from "@/features/factory-content/content-data";
@@ -18,7 +19,7 @@ const MEMORY_FACTORY_RESET_PARAMS = [
   "before",
 ] as const;
 
-export default async function MemoryPage({
+async function MemoryPage({
   params,
   searchParams,
 }: {
@@ -88,3 +89,9 @@ export default async function MemoryPage({
     />
   );
 }
+
+export default scopeFactoryIndex(MemoryPage, {
+  route: "memory",
+  title: "Memory",
+  resetParams: MEMORY_FACTORY_RESET_PARAMS,
+});

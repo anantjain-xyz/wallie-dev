@@ -4,8 +4,13 @@ import Link from "next/link";
 import { useId, type ComponentProps, type ReactNode, type Ref } from "react";
 
 import { WorkspaceNavigation } from "@/components/app-shell/navigation-motion";
+import type { WorkspaceDestination } from "@/components/app-shell/workspace-location";
 import { workspaceNavSections, type WorkspaceNavItem } from "@/lib/routes";
 import { cn } from "@/lib/utils";
+
+export type ShellNavItem = Omit<WorkspaceNavItem, "id"> & {
+  id: WorkspaceNavItem["id"] | WorkspaceDestination;
+};
 
 const navIconPaths = {
   sessions: "M5 4h8M5 8h8m-8 4h8M2.5 4h.1m-.1 4h.1m-.1 4h.1",
@@ -25,8 +30,10 @@ const navIconPaths = {
   workflows: "M2.5 7h3v3h-3zM10.5 3.5h3v3h-3zM10.5 10.5h3v3h-3zM5.5 8.5H8V5h2.5M8 8.5V12h2.5",
   automations: "M8.5 2.5 4 8.5h3l-.5 5 5.5-6h-3l.5-5z",
   "factory-definition": "M4 2.5h5l3 3v8H4zM9 2.5v3h3M6 8.5h4m-4 2h4",
+  insights: "M3 3.5v9h10.5M5.5 10l2.3-3 2 1.5 3.2-4",
+  factory: "M2.5 13V6.5L6 8V5l3.5 2 1-4h2l1 10zM5 10h.1m2.9 0h.1m2.9 0h.1",
   settings: "M3 4.5h10m-10 7h10M6 3v3m4 4v3",
-} satisfies Record<WorkspaceNavItem["id"], string>;
+} satisfies Record<ShellNavItem["id"], string>;
 
 function NavigationIcon({ children }: { children: ReactNode }) {
   return (
@@ -54,19 +61,21 @@ export function NavigationMenuIcon() {
 }
 
 type WorkspaceNavLinksProps = {
-  activeItem: WorkspaceNavItem | undefined;
+  activeItem: ShellNavItem | undefined;
   getLinkProps: (
-    item: WorkspaceNavItem,
+    item: ShellNavItem,
   ) => Pick<
     ComponentProps<typeof Link>,
     "href" | "onClick" | "onFocus" | "onPointerEnter" | "prefetch"
   > & { scopeNote?: string };
-  items: WorkspaceNavItem[];
+  items: ShellNavItem[];
+  grouped?: boolean;
 };
 
 export function WorkspaceNavLinks({
   activeItem,
   getLinkProps,
+  grouped,
   items,
   mobile = false,
 }: WorkspaceNavLinksProps & { mobile?: boolean }) {
@@ -78,8 +87,10 @@ export function WorkspaceNavLinks({
     const footer = section === "Footer";
     return (
       <div key={section} className={cn(footer && "mt-auto border-t border-border pt-2")}>
-        {footer ? null : <p className="px-2.5 pb-1.5 type-label text-muted">{section}</p>}
-        <ul aria-label={footer ? undefined : section} className="space-y-0.5">
+        {footer || grouped ? null : (
+          <p className="px-2.5 pb-1.5 type-label text-muted">{section}</p>
+        )}
+        <ul aria-label={footer || grouped ? undefined : section} className="space-y-0.5">
           {sectionItems.map((item) => {
             const active = item.id === activeItem?.id;
             const { scopeNote, ...linkProps } = getLinkProps(item);
@@ -125,6 +136,7 @@ export function WorkspaceNavLinks({
 export function WorkspaceSidebar({
   activeItem,
   getLinkProps,
+  grouped,
   items,
   pathname,
   sidebarRef,
@@ -145,7 +157,12 @@ export function WorkspaceSidebar({
     >
       <div className="flex h-full flex-col overflow-y-auto overscroll-contain p-2 pt-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pl-[max(0.5rem,env(safe-area-inset-left))]">
         <WorkspaceNavigation pathname={pathname} className="flex flex-1 flex-col gap-4">
-          <WorkspaceNavLinks activeItem={activeItem} getLinkProps={getLinkProps} items={items} />
+          <WorkspaceNavLinks
+            activeItem={activeItem}
+            getLinkProps={getLinkProps}
+            grouped={grouped}
+            items={items}
+          />
         </WorkspaceNavigation>
       </div>
     </aside>

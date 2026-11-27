@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { scopeFactoryIndex } from "@/components/app-shell/workspace-factory-page.server";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { FactorySelector } from "@/features/factories/factory-selector";
@@ -70,7 +71,7 @@ function UnavailableFactory({
   );
 }
 
-export default async function FailureGroupsPage({
+async function FailureGroupsPage({
   params,
   searchParams,
 }: {
@@ -272,3 +273,9 @@ export default async function FailureGroupsPage({
     </PageContainer>
   );
 }
+
+export default scopeFactoryIndex(FailureGroupsPage, {
+  route: "failures",
+  title: "Failure groups",
+  resetParams: FAILURE_GROUPS_FACTORY_RESET_PARAMS,
+});

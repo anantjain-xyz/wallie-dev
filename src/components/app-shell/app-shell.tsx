@@ -16,6 +16,7 @@ type AppShellProps = {
   onboarding: OnboardingResumeState | null;
   /** Fixture/test override so chrome can render active nav off real routes. */
   pathnameOverride?: string;
+  scopedNavigation?: boolean;
   viewerAvatarUrl: string | null;
   viewerEmail: string | null;
   viewerId: string;
@@ -32,6 +33,7 @@ export function AppShell({
   children,
   onboarding,
   pathnameOverride,
+  scopedNavigation,
   viewerAvatarUrl,
   viewerEmail,
   viewerId,
@@ -52,11 +54,13 @@ export function AppShell({
   return (
     <div className="min-h-[100svh] min-w-0 bg-canvas" data-app-shell="">
       <ShellHeader
+        canManageFactoryDefinition={canManageFactoryDefinition}
         creationFactory={creationFactory}
         factories={factories}
         navItems={navItems}
         onboarding={onboarding}
         pathnameOverride={pathnameOverride}
+        scopedNavigation={scopedNavigation}
         viewerAvatarUrl={viewerAvatarUrl}
         viewerEmail={viewerEmail}
         viewerId={viewerId}

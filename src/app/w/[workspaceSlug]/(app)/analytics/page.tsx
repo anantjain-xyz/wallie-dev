@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 
+import { scopeFactoryIndex } from "@/components/app-shell/workspace-factory-page.server";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import {
   loadAnalyticsEvidence,
@@ -54,7 +55,7 @@ const ANALYTICS_FACTORY_RESET_PARAMS = [
   "cursor",
 ] as const;
 
-export default async function AnalyticsPage({
+async function AnalyticsPage({
   params,
   searchParams,
 }: {
@@ -279,3 +280,9 @@ async function AnalyticsDetails({
     />
   );
 }
+
+export default scopeFactoryIndex(AnalyticsPage, {
+  route: "analytics",
+  title: "Analytics",
+  resetParams: ANALYTICS_FACTORY_RESET_PARAMS,
+});

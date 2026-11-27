@@ -1,8 +1,5 @@
-import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
-import {
-  FACTORY_QUERY_PARAM,
-  resolveFactorySelection,
-} from "@/features/factories/factory-selection";
+import { WorkspaceScopeHandoff } from "@/components/app-shell/workspace-scope-context";
+import { loadWorkspaceRouteScope } from "@/components/app-shell/workspace-scope.server";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { parseBoardStatus } from "@/features/pipeline/board-browse-history";
 import { loadPipelineDashboardData } from "@/features/pipeline/data";
@@ -25,11 +22,17 @@ const boardFactoryResetParams = ["status"] as const;
 
 export default async function WorkspaceHomePage({ params, searchParams }: WorkspaceHomePageProps) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
-  const [factories, { currentMember, user }] = await Promise.all([
-    loadWorkspaceFactoryOptions(workspaceSlug),
+  const [snapshot, { currentMember, user }] = await Promise.all([
+    loadWorkspaceRouteScope({
+      route: "board",
+      workspaceSlug,
+      search,
+      resetParams: boardFactoryResetParams,
+    }),
     loadAuthenticatedWorkspaceContext(workspaceSlug),
   ]);
-  const selection = resolveFactorySelection(factories, search[FACTORY_QUERY_PARAM]);
+  const { factories, scope: selection } = snapshot;
+  const handoff = <WorkspaceScopeHandoff snapshot={snapshot} />;
   const factorySelector = (
     <SessionsFactoryControls
       canManageFactories={isWorkspaceOperator(currentMember)}
@@ -41,20 +44,23 @@ export default async function WorkspaceHomePage({ params, searchParams }: Worksp
   );
   if (selection.kind === "unavailable")
     return (
-      <FactoryUnavailable
-        actions={
-          <>
-            <SessionsViewNavigation
-              factory="unavailable"
-              view="board"
-              workspaceSlug={workspaceSlug}
-            />
-            {factorySelector}
-          </>
-        }
-        title="Sessions"
-        workspaceSlug={workspaceSlug}
-      />
+      <>
+        {handoff}
+        <FactoryUnavailable
+          actions={
+            <>
+              <SessionsViewNavigation
+                factory="unavailable"
+                view="board"
+                workspaceSlug={workspaceSlug}
+              />
+              {factorySelector}
+            </>
+          }
+          title="Sessions"
+          workspaceSlug={workspaceSlug}
+        />
+      </>
     );
 
   const factory = selection.kind === "factory" ? selection.factory : undefined;
@@ -62,19 +68,22 @@ export default async function WorkspaceHomePage({ params, searchParams }: Worksp
   const initialNow = new Date().toISOString();
 
   return (
-    <PipelinePageClient
-      factorySelector={factorySelector}
-      initialData={{
-        ...data,
-        aggregateFactories: selection.kind === "all",
-        creationFactoryName: factories.find(
-          ({ isDefault, status }) => isDefault && status === "active",
-        )?.name,
-        showCreationOnboarding: !!factory?.isDefault && factory.status === "active",
-      }}
-      initialNow={initialNow}
-      initialStatus={parseBoardStatus(search.status)}
-      viewerId={user.id}
-    />
+    <>
+      {handoff}
+      <PipelinePageClient
+        factorySelector={factorySelector}
+        initialData={{
+          ...data,
+          aggregateFactories: selection.kind === "all",
+          creationFactoryName: factories.find(
+            ({ isDefault, status }) => isDefault && status === "active",
+          )?.name,
+          showCreationOnboarding: !!factory?.isDefault && factory.status === "active",
+        }}
+        initialNow={initialNow}
+        initialStatus={parseBoardStatus(search.status)}
+        viewerId={user.id}
+      />
+    </>
   );
 }

@@ -20,6 +20,7 @@ import {
   AutomationSchedulePreview,
   type AutomationScheduleEvidence,
 } from "@/features/factory-automations/automation-schedule-preview";
+import { scopeFactoryIndex } from "@/components/app-shell/workspace-factory-page.server";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { resolveGovernanceFactorySelection } from "@/features/factories/factory-selection";
 import {
@@ -145,7 +146,7 @@ async function ScheduleAndSample({
   );
 }
 
-export default async function AutomationSettingsPage({
+async function AutomationSettingsPage({
   params,
   searchParams,
 }: {
@@ -489,3 +490,9 @@ export default async function AutomationSettingsPage({
     </AutomationDraftNavigation>
   );
 }
+
+export default scopeFactoryIndex(AutomationSettingsPage, {
+  route: "automations",
+  title: "Automations",
+  picker: "leaf",
+});

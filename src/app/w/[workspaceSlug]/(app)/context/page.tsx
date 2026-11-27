@@ -1,3 +1,4 @@
+import { scopeFactoryIndex } from "@/components/app-shell/workspace-factory-page.server";
 import { ContextPageView } from "@/features/factory-content/context-page-view";
 import { loadContextPage, parseContextQuery } from "@/features/factory-content/content-data";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
@@ -14,7 +15,7 @@ const CONTEXT_FACTORY_RESET_PARAMS = [
   "repoAfter",
 ] as const;
 
-export default async function ContextPage({
+async function ContextPage({
   params,
   searchParams,
 }: {
@@ -58,3 +59,9 @@ export default async function ContextPage({
     />
   );
 }
+
+export default scopeFactoryIndex(ContextPage, {
+  route: "context",
+  title: "Context",
+  resetParams: CONTEXT_FACTORY_RESET_PARAMS,
+});

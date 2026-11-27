@@ -344,7 +344,7 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
     await expect(main.getByText("No pending clarifications in this factory.")).toBeVisible();
     await expect(main.getByRole("link", { name: "View all factories" })).toHaveAttribute(
       "href",
-      `${workspacePath}/inbox?kind=clarification`,
+      `${workspacePath}/inbox?factory=all&kind=clarification`,
     );
     await page.screenshot({
       animations: "disabled",

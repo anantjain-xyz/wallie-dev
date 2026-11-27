@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { z } from "zod";
 
+import { scopeFactoryIndex } from "@/components/app-shell/workspace-factory-page.server";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { FactorySelector } from "@/features/factories/factory-selector";
@@ -26,7 +27,7 @@ const dateFormat = new Intl.DateTimeFormat("en", {
   timeZone: "UTC",
 });
 
-export default async function BenchmarksPage({
+async function BenchmarksPage({
   params,
   searchParams,
 }: {
@@ -227,3 +228,9 @@ export default async function BenchmarksPage({
     </PageContainer>
   );
 }
+
+export default scopeFactoryIndex(BenchmarksPage, {
+  route: "benchmarks",
+  title: "Benchmarks",
+  resetParams: ["newSuite"],
+});

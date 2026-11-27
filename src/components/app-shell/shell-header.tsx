@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -16,6 +17,10 @@ import {
 } from "react";
 
 import { AccountMenu } from "@/components/app-shell/account-menu";
+import {
+  getGroupedWorkspaceNavigation,
+  WorkspaceGroupTabs,
+} from "@/components/app-shell/grouped-workspace-navigation";
 import { RouteEntrance } from "@/components/app-shell/navigation-motion";
 import {
   readSessionLaunchActivation,
@@ -26,8 +31,22 @@ import {
   withoutSessionLaunch,
 } from "@/components/app-shell/shell-navigation";
 import { ThemeToggle } from "@/components/app-shell/theme-toggle";
+import { WorkspaceFactoryPicker } from "@/components/app-shell/workspace-factory-picker";
+import {
+  matchWorkspaceLocation,
+  readFactoryRequest,
+  workspaceScopeHref,
+  workspaceScopeLocationKey,
+  workspaceScopeOptions,
+} from "@/components/app-shell/workspace-location";
+import {
+  useRememberedWorkspaceScope,
+  useWorkspaceScopeSnapshot,
+  WorkspaceScopeContext,
+} from "@/components/app-shell/workspace-scope-context";
 import {
   NavigationMenuIcon,
+  type ShellNavItem,
   WorkspaceNavLinks,
   WorkspaceSidebar,
 } from "@/components/app-shell/workspace-sidebar";
@@ -67,6 +86,7 @@ export type CreationFactory = {
 };
 
 type ShellHeaderProps = {
+  canManageFactoryDefinition?: boolean;
   creationFactory: CreationFactory | null;
   factories?: readonly FactorySelectionOption[];
   children?: ReactNode;
@@ -74,6 +94,7 @@ type ShellHeaderProps = {
   onboarding: OnboardingResumeState | null;
   /** Fixture/test override so chrome can render active nav off real routes. */
   pathnameOverride?: string;
+  scopedNavigation?: boolean;
   viewerAvatarUrl: string | null;
   viewerEmail: string | null;
   viewerId: string;
@@ -292,12 +313,14 @@ export function prefetchShellNavHrefOnIntent(
 }
 
 export function ShellHeader({
+  canManageFactoryDefinition = false,
   creationFactory,
   factories = creationFactory ? [{ ...creationFactory, isDefault: true, status: "active" }] : [],
   children,
   navItems,
   onboarding,
   pathnameOverride,
+  scopedNavigation = false,
   viewerAvatarUrl,
   viewerEmail,
   viewerId,
@@ -308,6 +331,8 @@ export function ShellHeader({
   const routedPathname = usePathname();
   const pathname = pathnameOverride ?? routedPathname ?? workspaceBasePath(workspace.slug);
   const searchParams = useSearchParams();
+  const returnValues = searchParams?.getAll("returnTo");
+  const returnParam = returnValues?.length === 1 ? returnValues[0] : null;
   const locationHash = useSyncExternalStore(
     subscribeToLocationHash,
     () => window.location.hash,
@@ -327,7 +352,49 @@ export function ShellHeader({
   const sessionsHref = workspaceSessionsPath(workspace.slug);
   const sessionsNavItem = navItems.find((item) => item.id === "sessions");
   const boardNavItem = sessionsNavItem && { ...sessionsNavItem, href: pipelineHref };
-  const activeNavItem = navItems.find((item) => isActiveNavItem(pathname, workspace.slug, item));
+  const legacyActiveItem = navItems.find((item) => isActiveNavItem(pathname, workspace.slug, item));
+  const location = scopedNavigation ? matchWorkspaceLocation(pathname, workspace.slug) : undefined;
+  const factoryRequest = readFactoryRequest(searchParams);
+  const { snapshot, publish } = useWorkspaceScopeSnapshot(
+    viewerId,
+    workspace.id,
+    workspaceScopeLocationKey(pathname, location?.detail ? undefined : factoryRequest),
+  );
+  const currentFactories = snapshot?.factories ?? factories;
+  const scoped = snapshot?.scope ?? { kind: "global" };
+  const globalScope = location?.mode === "global";
+  const remembered = useRememberedWorkspaceScope({
+    factories: currentFactories,
+    snapshot: scopedNavigation ? snapshot : null,
+    viewerId,
+    workspaceId: workspace.id,
+  });
+  const scopedNav = scopedNavigation
+    ? getGroupedWorkspaceNavigation({
+        canManageDefinition: canManageFactoryDefinition,
+        factories: currentFactories,
+        hash: locationHash,
+        pathname,
+        preferRememberedScope: globalScope,
+        returnTo: returnParam,
+        scope: globalScope ? remembered : scoped,
+        workspaceSlug: workspace.slug,
+      })
+    : null;
+  const activeNavItem = scopedNav ? scopedNav.activeItem : legacyActiveItem;
+  const visibleNavItems = scopedNav?.sidebar ?? navItems;
+  const [guardedPickerTarget, setGuardedPickerTarget] = useState<HTMLDivElement | null>(null);
+  const scopeContext = useMemo(
+    () =>
+      scopedNavigation
+        ? {
+            guardedPicker: snapshot?.picker === "guarded" ? { target: guardedPickerTarget } : null,
+            ownsPicker: snapshot?.picker === "header",
+            publish,
+          }
+        : null,
+    [guardedPickerTarget, publish, scopedNavigation, snapshot?.picker],
+  );
   const [drawerLocation, setDrawerLocation] = useState<string | null>(null);
   const drawerOpen = drawerLocation === locationKey;
   if (drawerLocation !== null && !drawerOpen) setDrawerLocation(null);
@@ -366,22 +433,26 @@ export function ShellHeader({
   // dialog stays closed outside that factory's explicit scope.
   const scope = shellFactoryScope({
     factories,
-    item: pathname === pipelineHref ? boardNavItem : activeNavItem,
+    item: pathname === pipelineHref ? boardNavItem : legacyActiveItem,
     pathname,
     query: searchParams?.getAll(FACTORY_QUERY_PARAM) ?? [],
     slug: workspace.slug,
   });
+  const sessionsBrowse =
+    !location?.detail && (location?.route === "board" || location?.route === "sessions");
   const isDirectCreationScope =
     creationFactory !== null &&
-    (scope.kind === "none" ||
-      (scope.kind === "factory" && scope.factory.id === creationFactory.id));
+    (scopedNavigation
+      ? sessionsBrowse &&
+        snapshot?.scope.kind === "factory" &&
+        snapshot.scope.factory.id === creationFactory.id
+      : scope.kind === "none" ||
+        (scope.kind === "factory" && scope.factory.id === creationFactory.id));
   const createFromUrl = searchParams?.get("create") === "1";
   const urlWorkflowActivation = createFromUrl
     ? readSessionLaunchActivation(searchParams)
     : undefined;
-  const returnValues = searchParams?.getAll("returnTo");
-  const returnTo =
-    returnValues?.length === 1 ? resolveSessionReturnTo(returnValues[0], workspace.slug) : null;
+  const returnTo = resolveSessionReturnTo(returnParam, workspace.slug);
   const [userCreateOpen, setUserCreateOpen] = useState(false);
   const [recoverableWorkflowLaunch, setRecoverableWorkflowLaunch] = useState<{
     location: string;
@@ -572,11 +643,17 @@ export function ShellHeader({
     };
   }
 
-  function navLinkProps(item: WorkspaceNavItem, mobile = false) {
+  function navLinkProps(item: ShellNavItem, mobile = false) {
+    const legacyItem = navItems.find(({ id }) => item.id === id);
     const destination =
-      boardNavItem && item.id === "sessions" && pathname === pipelineHref ? boardNavItem : item;
-    const { href, scopeNote } = shellNavDestination(destination, workspace.slug, factories, scope);
-    const skipPrefetch = item.id === "inbox" || item.id === "analytics";
+      boardNavItem && item.id === "sessions" && pathname === pipelineHref
+        ? boardNavItem
+        : legacyItem;
+    const { href, scopeNote } =
+      scopedNavigation || !destination
+        ? { href: item.href, scopeNote: undefined }
+        : shellNavDestination(destination, workspace.slug, factories, scope);
+    const skipPrefetch = item.id === "inbox" || item.id === "analytics" || item.id === "insights";
     return {
       href,
       scopeNote,
@@ -592,11 +669,14 @@ export function ShellHeader({
       ...(skipPrefetch ? {} : navPrefetchHandlers(href)),
     };
   }
-  const scopedPipelineHref = boardNavItem
-    ? shellNavDestination(boardNavItem, workspace.slug, factories, scope).href
-    : pipelineHref;
+  const scopedPipelineHref = scopedNavigation
+    ? workspaceScopeHref("board", workspace.slug, globalScope ? remembered : scoped, globalScope)
+    : boardNavItem
+      ? shellNavDestination(boardNavItem, workspace.slug, factories, scope).href
+      : pipelineHref;
 
   function renderPrimaryAction() {
+    if (scopedNavigation && !sessionsBrowse) return null;
     if (shouldResumeSetup) {
       return (
         <Link className="ui-button-primary min-h-9 px-2.5 text-[13px]" href={onboardingHref}>
@@ -606,6 +686,7 @@ export function ShellHeader({
       );
     }
     if (!creationFactory) return null;
+    if (scopedNavigation && !isDirectCreationScope) return null;
 
     const createActionClassName =
       "ui-button-primary inline-flex size-9 items-center justify-center gap-2 whitespace-nowrap px-0 lg:min-h-9 lg:w-auto lg:px-3";
@@ -667,7 +748,7 @@ export function ShellHeader({
   }
 
   return (
-    <>
+    <WorkspaceScopeContext.Provider value={scopeContext}>
       <div className="flex min-h-[100svh] min-w-0 flex-col bg-sheet">
         <header
           className="ui-shell-header sticky top-0 z-20 min-w-0 border-b border-border bg-sheet"
@@ -688,6 +769,17 @@ export function ShellHeader({
                 }}
                 options={workspaceOptions}
               />
+              {scopedNavigation && location && snapshot ? (
+                <WorkspaceFactoryPicker
+                  allowAll={location.mode === "aggregate" && !location.detail}
+                  choices={workspaceScopeOptions(location, currentFactories)}
+                  guardTarget={snapshot.picker === "guarded" ? setGuardedPickerTarget : undefined}
+                  locked={snapshot.picker !== "header"}
+                  resetParams={snapshot.resetParams}
+                  scope={scoped}
+                  visibleFactoryCount={currentFactories.length}
+                />
+              ) : null}
               {activeNavItem ? (
                 <span
                   aria-hidden="true"
@@ -708,12 +800,17 @@ export function ShellHeader({
                     type="button"
                     aria-label={`Workspace navigation: ${activeNavItem?.label ?? "Pages"}`}
                     className={cn(
-                      "ui-shell-nav-link ui-shell-nav-link-active min-h-11 max-w-full gap-1.5 whitespace-normal px-2 text-left",
+                      "ui-shell-nav-link min-h-11 max-w-full gap-1.5 whitespace-normal px-2 text-left",
+                      scopedNavigation
+                        ? "order-first min-w-10 justify-center"
+                        : "ui-shell-nav-link-active",
                       wideContent ? "xl:hidden" : "lg:hidden",
                     )}
                   >
                     <NavigationMenuIcon />
-                    <span className="min-w-0 truncate">{activeNavItem?.label ?? "Pages"}</span>
+                    {scopedNavigation ? null : (
+                      <span className="min-w-0 truncate">{activeNavItem?.label ?? "Pages"}</span>
+                    )}
                   </button>
                 </DialogTrigger>
                 <DialogContent
@@ -730,10 +827,20 @@ export function ShellHeader({
                   variant="navigation"
                 >
                   <nav aria-label="Workspace navigation" className="flex flex-1 flex-col gap-4">
+                    {scopedNavigation &&
+                    snapshot &&
+                    (scoped.kind === "all" ||
+                      (scoped.kind === "factory" && currentFactories.length > 1)) ? (
+                      <p className="min-w-0 px-2.5 type-secondary break-words text-muted">
+                        {workspace.name} /{" "}
+                        {scoped.kind === "all" ? "All factories" : scoped.factory.name}
+                      </p>
+                    ) : null}
                     <WorkspaceNavLinks
                       activeItem={activeNavItem}
                       getLinkProps={(item) => navLinkProps(item, true)}
-                      items={navItems}
+                      grouped={scopedNavigation}
+                      items={visibleNavItems}
                       mobile
                     />
                   </nav>
@@ -752,7 +859,8 @@ export function ShellHeader({
           <WorkspaceSidebar
             activeItem={activeNavItem}
             getLinkProps={navLinkProps}
-            items={navItems}
+            grouped={scopedNavigation}
+            items={visibleNavItems}
             pathname={pathname}
             sidebarRef={sidebarRef}
             wideContent={wideContent}
@@ -764,6 +872,13 @@ export function ShellHeader({
             ref={mainRef}
           >
             <RouteEntrance pathname={pathname} />
+            {scopedNav?.activeItem ? (
+              <WorkspaceGroupTabs
+                label={scopedNav.activeItem.label}
+                tabs={scopedNav.tabs}
+                sections={scopedNav.sections}
+              />
+            ) : null}
             {visibleCreationPreview?.content}
             <div
               className={visibleCreationPreview ? "hidden" : "contents"}
@@ -797,6 +912,6 @@ export function ShellHeader({
           }
         />
       ) : null}
-    </>
+    </WorkspaceScopeContext.Provider>
   );
 }
