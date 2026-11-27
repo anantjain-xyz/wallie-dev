@@ -48,7 +48,8 @@ export function FactorySandboxProviderSettings({
   return (
     <div className="space-y-3 rounded-[6px] border border-border bg-sheet p-4">
       <p className="text-xs leading-5 text-muted">
-        Choose the provider new sessions use after publishing.
+        This sets the sandbox for new sessions after you publish the default factory draft. It
+        doesn’t change the workspace connection.
       </p>
       <div className="flex flex-wrap items-end gap-3">
         <SelectField

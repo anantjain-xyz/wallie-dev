@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
 import { Status } from "@/components/ui/status";
 import type { SettingsPageData } from "@/features/settings/data";
@@ -8,6 +10,7 @@ import { Section } from "@/features/settings/settings-ui";
 
 type GitHubInstallSectionProps = {
   canManage: boolean;
+  feedback?: ReactNode;
   github: SettingsPageData["github"];
   onGithubChange?: (github: SettingsPageData["github"]) => void;
   setFlashMessage: (message: FlashMessage) => void;
@@ -16,6 +19,7 @@ type GitHubInstallSectionProps = {
 
 export function GitHubInstallSection({
   canManage,
+  feedback,
   github,
   onGithubChange,
   setFlashMessage,
@@ -32,12 +36,8 @@ export function GitHubInstallSection({
   );
 
   return (
-    <Section
-      anchorId="github"
-      statusBadge={statusBadge}
-      tagline="Connect GitHub to create PRs and track their status."
-      title="GitHub"
-    >
+    <Section anchorId="github" heading="h3" statusBadge={statusBadge} title="GitHub">
+      {feedback}
       <GitHubConnectionPanel
         canManage={canManage}
         github={github}

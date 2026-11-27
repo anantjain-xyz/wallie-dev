@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { z } from "zod";
 
+import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { AutomationPreviewLink } from "@/features/settings/automation-preview-link";
 import { ConnectorSettingsSection } from "@/features/settings/connector-settings/section";
 import { PersonalOAuthConnections } from "@/features/settings/personal-oauth-connections";
@@ -53,6 +54,16 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
             />
           </Suspense>
         ) : undefined
+      }
+      defaultFactoryName={
+        category === "integrations"
+          ? loadWorkspaceFactoryOptions(workspaceSlug)
+              .then(
+                (factories) =>
+                  factories.find(({ isDefault, status }) => isDefault && status === "active")?.name,
+              )
+              .catch(() => undefined)
+          : undefined
       }
       initialData={initialData}
       personalConnections={

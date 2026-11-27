@@ -26,6 +26,7 @@ type ProviderAccessPanelProps = {
   sandboxConnectionLabel?: string;
   sandboxConnectionReady?: boolean;
   selectedModel?: string;
+  showHeading?: boolean;
   variant?: "card" | "embedded";
   workspaceId?: string;
 };
@@ -81,6 +82,7 @@ export function ProviderAccessPanel({
   sandboxConnectionLabel,
   sandboxConnectionReady,
   selectedModel,
+  showHeading = true,
   variant = "card",
   workspaceId,
 }: ProviderAccessPanelProps) {
@@ -88,13 +90,16 @@ export function ProviderAccessPanel({
     variant === "card"
       ? "rounded-[6px] border border-border bg-sheet p-4"
       : "border-t border-border pt-4";
+  const heading = showHeading ? (
+    <h3 className="text-[14px] font-semibold text-foreground">Provider access</h3>
+  ) : null;
 
   switch (provider) {
     case "codex":
       return (
         <div className={className}>
           <div className="mb-3 min-w-0">
-            <h3 className="text-[14px] font-semibold text-foreground">Provider access</h3>
+            {heading}
             <p className="mt-1 text-xs leading-5 text-muted">
               Sessions run with the Codex credential saved by the session creator.
             </p>
@@ -116,7 +121,7 @@ export function ProviderAccessPanel({
       return (
         <div className={className}>
           <div className="mb-3 min-w-0">
-            <h3 className="text-[14px] font-semibold text-foreground">Provider access</h3>
+            {heading}
             <p className="mt-1 text-[13px] leading-5 text-muted">
               Sessions run with the Anthropic API key saved by the session creator.
             </p>
@@ -131,7 +136,7 @@ export function ProviderAccessPanel({
       return (
         <div className={className}>
           <div className="mb-3 min-w-0">
-            <h3 className="text-[14px] font-semibold text-foreground">Provider access</h3>
+            {heading}
             <p className="mt-1 text-xs leading-5 text-muted">
               Sessions use the connected user&apos;s Cursor plan through an expiring user API key.
             </p>
@@ -147,7 +152,7 @@ export function ProviderAccessPanel({
       return (
         <div className={className}>
           <div className="mb-3 min-w-0">
-            <h3 className="text-[14px] font-semibold text-foreground">Provider access</h3>
+            {heading}
             <p className="mt-1 text-xs leading-5 text-muted">
               Sessions run with the OpenCode API key saved by the session creator. Zen models use
               the OpenCode Zen key; custom provider ids need a matching provider key.

@@ -13,6 +13,7 @@ import type { WorkspaceOnboardingStep } from "@/lib/onboarding/contracts";
 
 type VerifySetupSectionProps = {
   data: SettingsPageData;
+  defaultFactoryName?: string;
   setData: Dispatch<SetStateAction<SettingsPageData>>;
   setFlashMessage: (message: FlashMessage) => void;
 };
@@ -40,10 +41,63 @@ const stepLabel: Record<WorkspaceOnboardingStep, string> = {
 const sandboxLabel = { daytona: "Daytona", e2b: "E2B", vercel: "Vercel Sandbox" } as const;
 
 function checklistItemHref(item: ReturnType<typeof buildVerifyChecklist>[number]) {
-  return item.id === "vercel-sandbox" ? "#sandbox" : `#${stepAnchor[item.step]}`;
+  if (item.id === "provider-credentials") return "#provider-access";
+  return `#${stepAnchor[item.step]}`;
 }
 
-export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySetupSectionProps) {
+function ReadinessChecks({ items }: { items: ReturnType<typeof buildVerifyChecklist> }) {
+  return (
+    <ul className="divide-y divide-border border-y border-border">
+      {items.map((item) => (
+        <li
+          className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:justify-between"
+          key={item.id}
+        >
+          <div className="min-w-0">
+            <p className="type-secondary font-medium text-foreground">
+              {item.id === "linear"
+                ? "Linear API key and session routing"
+                : item.id === "sandbox"
+                  ? "Workspace sandbox capability"
+                  : item.label}
+            </p>
+            <p className="mt-0.5 break-words text-xs leading-5 text-muted">{item.detail}</p>
+            {item.id === "linear" ? (
+              <a
+                className="mt-1 inline-block text-xs font-medium text-accent underline"
+                href="#connector-resources"
+              >
+                Open Factory connector resources
+              </a>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
+            <Status
+              label={item.statusLabel ?? (item.passed ? "Ready" : "Blocked")}
+              value={configurationStatusFromTone(
+                item.statusTone ?? (item.passed ? "success" : "warning"),
+              )}
+            />
+            {!item.passed && item.step !== "verify" ? (
+              <a className="ui-button" href={checklistItemHref(item)}>
+                {item.id === "provider-credentials"
+                  ? "Open provider access"
+                  : `Open ${stepLabel[item.step]} settings`}
+              </a>
+            ) : null}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function VerifySetupSection({
+  data,
+  defaultFactoryName,
+  setData,
+  setFlashMessage,
+}: VerifySetupSectionProps) {
   const settings = useFactorySettings();
   const snapshot = settings?.snapshot;
   const definition = snapshot?.draft ?? snapshot?.published;
@@ -61,6 +115,8 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
     mode: "settings",
     onboarding: data.onboarding,
   });
+  const needsAttention = checklist.filter((item) => !item.passed);
+  const passing = checklist.filter((item) => item.passed);
   const preferredRepositoryId =
     data.setupHealth.primaryRepositoryProfile.repositoryId ??
     data.setupHealth.selectedRepository.repositoryId;
@@ -88,44 +144,21 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
               These results apply to the workspace defaults, not to a factory definition.
             </p>
           </div>
-          {checklist.map((item) => (
-            <div
-              className="flex flex-col gap-3 rounded-[6px] border border-border bg-sheet px-4 py-3 sm:flex-row sm:items-start sm:justify-between"
-              key={item.id}
-            >
-              <div className="min-w-0">
-                <p className="text-[13px] font-medium text-foreground">
-                  {item.id === "linear"
-                    ? "Linear API key and session routing"
-                    : item.id === "sandbox"
-                      ? "Workspace sandbox capability"
-                      : item.label}
-                </p>
-                <p className="mt-0.5 text-xs leading-5 text-muted">{item.detail}</p>
-                {item.id === "linear" ? (
-                  <a
-                    className="mt-1 inline-block text-xs font-medium text-accent underline"
-                    href="#connector-resources"
-                  >
-                    Open Factory connector resources
-                  </a>
-                ) : null}
+          {needsAttention.length ? (
+            <ReadinessChecks items={needsAttention} />
+          ) : (
+            <Status label="All workspace checks ready" value="healthy" />
+          )}
+          {passing.length ? (
+            <details className="type-secondary text-muted">
+              <summary className="w-fit cursor-pointer hover:text-foreground">
+                Passing checks ({passing.length})
+              </summary>
+              <div className="mt-2">
+                <ReadinessChecks items={passing} />
               </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <Status
-                  label={item.statusLabel ?? (item.passed ? "Ready" : "Blocked")}
-                  value={configurationStatusFromTone(
-                    item.statusTone ?? (item.passed ? "success" : "warning"),
-                  )}
-                />
-                {!item.passed && item.step !== "verify" ? (
-                  <a className="ui-button" href={checklistItemHref(item)}>
-                    Open {stepLabel[item.step]} settings
-                  </a>
-                ) : null}
-              </div>
-            </div>
-          ))}
+            </details>
+          ) : null}
         </div>
 
         <div className="border-t border-border pt-6">
@@ -139,8 +172,10 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
             </h3>
             <p className="mt-1 text-xs leading-5 text-muted">
               {definitionTarget && snapshot
-                ? `${factoryRepository ?? "Factory repository unavailable"} · ${sandboxLabel[snapshot.sandboxProvider]}. This check does not update workspace readiness.`
-                : "Run the check against the selected repository to update workspace readiness."}
+                ? `${defaultFactoryName ?? "Default factory"} · ${factoryRepository ?? "Factory repository unavailable"} · ${sandboxLabel[snapshot.sandboxProvider]}. This check does not update workspace readiness.`
+                : data.canManage
+                  ? "Run the check against the selected repository to update workspace readiness."
+                  : "Workspace admins can run this check to update readiness."}
             </p>
           </div>
           <SandboxCapabilitySection

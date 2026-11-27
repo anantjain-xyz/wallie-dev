@@ -2,6 +2,7 @@ import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-option
 import {
   resolveFactorySelection,
   resolveGovernanceFactorySelection,
+  type FactorySelectionOption,
 } from "@/features/factories/factory-selection";
 import { FactorySelector } from "@/features/factories/factory-selector";
 import { Section } from "@/features/settings/settings-ui";
@@ -18,12 +19,34 @@ export async function ConnectorSettingsSection({
   workspaceSlug: string;
 }) {
   const options = await loadWorkspaceFactoryOptions(workspaceSlug).catch(() => null);
+  return (
+    <ConnectorSettingsPanel
+      options={options}
+      requestedFactory={requestedFactory}
+      workspaceId={workspaceId}
+      workspaceSlug={workspaceSlug}
+    />
+  );
+}
+
+export function ConnectorSettingsPanel({
+  options,
+  requestedFactory,
+  workspaceId,
+  workspaceSlug,
+}: {
+  options: FactorySelectionOption[] | null;
+  requestedFactory?: string | string[];
+  workspaceId: string;
+  workspaceSlug: string;
+}) {
   const factories = options ?? [];
   const managedDefault = resolveGovernanceFactorySelection(factories, undefined);
   const selection =
     requestedFactory === undefined && managedDefault.kind === "factory"
       ? managedDefault
       : resolveFactorySelection(factories, requestedFactory, { useFirstVisible: true });
+  const factory = selection.kind === "factory" ? selection.factory : null;
 
   return (
     <Section
@@ -38,9 +61,19 @@ export async function ConnectorSettingsSection({
       }
       anchorId="connector-resources"
       tagline={
-        selection.kind === "factory" && !selection.factory.canManage
-          ? "Manage your Slack account link for this factory."
-          : "Map provider resources and inspect the deliveries associated with this factory."
+        factory ? (
+          <>
+            <strong className="font-medium text-foreground">
+              Selected factory: {factory.name}
+              {factory.status === "archived" ? " (archived)" : ""}.
+            </strong>{" "}
+            {factory.canManage
+              ? "Mappings and deliveries here are separate from workspace connections."
+              : "Your Slack account link is the only connector setting you can manage here."}
+          </>
+        ) : (
+          "Choose a factory to see its connector settings."
+        )
       }
       title="Connector resources"
     >
@@ -51,11 +84,12 @@ export async function ConnectorSettingsSection({
         >
           Connector resources are unavailable. Refresh the page to try again.
         </p>
-      ) : selection.kind === "factory" ? (
+      ) : factory ? (
         <ConnectorResources
-          canManage={selection.factory.canManage === true}
-          factoryId={selection.factory.id}
-          key={selection.factory.id}
+          archived={factory.status === "archived"}
+          canManage={factory.canManage === true}
+          factoryId={factory.id}
+          key={factory.id}
           workspaceId={workspaceId}
           workspaceSlug={workspaceSlug}
         />

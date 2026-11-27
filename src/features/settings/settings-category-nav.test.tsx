@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -11,11 +11,12 @@ import {
 import { SETTINGS_CATEGORY_LINKS } from "@/features/settings/settings-categories";
 
 const replace = vi.fn();
+const router = { replace };
 let searchParams = new URLSearchParams("category=advanced");
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/w/acme/settings",
-  useRouter: () => ({ replace }),
+  useRouter: () => router,
   useSearchParams: () => searchParams,
 }));
 
@@ -73,7 +74,12 @@ describe("resolveSettingsHashRoute", () => {
       anchor: "maintenance",
       category: "advanced",
     });
+    expect(resolveSettingsHashRoute("#vercel")).toEqual({
+      anchor: "sandbox",
+      category: "integrations",
+    });
     expect(resolveSettingsHashRoute("#unknown")).toBeNull();
+    expect(resolveSettingsHashRoute("#toString")).toBeNull();
   });
 });
 
@@ -84,7 +90,7 @@ describe("SettingsCategoryNav hash routing", () => {
       "workspace",
       "advanced",
     ]);
-    expect(SETTINGS_CATEGORY_LINKS.at(-1)?.description).toBe("Usage, Maintenence, and Rate Limits");
+    expect(SETTINGS_CATEGORY_LINKS.at(-1)?.description).toContain("maintenance");
   });
 
   it("sticks below the shell header on desktop without covering mobile anchors", () => {
@@ -97,11 +103,11 @@ describe("SettingsCategoryNav hash routing", () => {
     expect(nav.className).toContain("lg:sticky");
     expect(nav.className).toContain("lg:top-[calc(var(--shell-scroll-padding)+16px)]");
     expect(nav).toHaveClass("self-start");
-    expect(container.querySelector("ul")).toHaveClass("grid", "grid-cols-2");
+    expect(container.querySelector("ul")).toHaveClass("grid", "grid-cols-3");
     expect(container.querySelector("ul")).not.toHaveClass("overflow-x-auto");
   });
 
-  it("renders every integration section link as an indented submenu", () => {
+  it("keeps links in one desktop submenu that opens on demand on mobile", () => {
     searchParams = new URLSearchParams("category=integrations");
     const { getByRole } = render(
       <SettingsCategoryNav activeCategory="integrations" canManage workspaceSlug="acme" />,
@@ -110,21 +116,27 @@ describe("SettingsCategoryNav hash routing", () => {
     const links = [
       ["GitHub", "#github"],
       ["Repositories", "#repository"],
+      ["Factory connectors", "#connector-resources"],
+      ["Default factory", "#factory-configuration"],
       ["Pipeline", "#pipeline"],
       ["Linear", "#linear"],
-      ["Sandbox", "#sandbox"],
-      ["Agent", "#runtime"],
+      ["Sandbox connections", "#sandbox"],
+      ["Workspace secrets", "#workspace-secrets"],
+      ["Agent runtime", "#runtime"],
+      ["Your provider access", "#provider-access"],
       ["Verify setup", "#verify"],
     ];
     for (const [name, href] of links) {
       expect(getByRole("link", { name })).toHaveAttribute("href", href);
     }
-    expect(getByRole("link", { name: "GitHub" }).closest("ul")).toHaveClass(
-      "flex-wrap",
-      "lg:border-l",
-      "lg:pl-2",
-    );
-    expect(getByRole("link", { name: "GitHub" }).closest("ul")).not.toHaveClass("hidden");
+    const submenu = getByRole("link", { name: "GitHub" }).closest("ul");
+    const jump = getByRole("button", { name: "Jump to a section" });
+    expect(submenu).toHaveClass("hidden", "lg:block", "border-l");
+    expect(jump).toHaveAttribute("aria-controls", submenu?.id);
+    expect(jump).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(jump);
+    expect(jump).toHaveAttribute("aria-expanded", "true");
+    expect(submenu).not.toHaveClass("hidden");
   });
 
   it("highlights only the active subsection, not its parent category", async () => {
@@ -150,7 +162,8 @@ describe("SettingsCategoryNav hash routing", () => {
       category: "workspace" as const,
       links: [
         ["Workspace", "#workspace"],
-        ["Members", "#members"],
+        ["Team access", "#members"],
+        ["Your profile", "#profile"],
         ["Danger zone", "#danger-zone"],
       ],
     },
@@ -158,7 +171,7 @@ describe("SettingsCategoryNav hash routing", () => {
       category: "advanced" as const,
       links: [
         ["Usage", "#usage"],
-        ["Run history", "#run-history"],
+        ["Retention and exports", "#run-history"],
         ["Maintenance", "#maintenance"],
         ["Rate limits", "#rate-limits"],
       ],
@@ -189,14 +202,14 @@ describe("SettingsCategoryNav hash routing", () => {
     });
   });
 
-  it("hides Run history and Maintenance for ordinary members", () => {
+  it("hides retention and maintenance links for ordinary members", () => {
     searchParams = new URLSearchParams("category=advanced");
     const { queryByRole } = render(
       <SettingsCategoryNav activeCategory="advanced" canManage={false} workspaceSlug="acme" />,
     );
 
     expect(queryByRole("link", { name: "Maintenance" })).toBeNull();
-    expect(queryByRole("link", { name: "Run history" })).toBeNull();
+    expect(queryByRole("link", { name: "Retention and exports" })).toBeNull();
   });
 
   it.each(["maintenance", "run-history"])("does not route non-managers to %s", async (anchor) => {
@@ -231,7 +244,7 @@ describe("SettingsCategoryNav hash routing", () => {
     target.remove();
   });
 
-  it("scrolls to a hash target when a suspended section mounts", async () => {
+  it("focuses and scrolls to the real heading when a suspended section mounts", async () => {
     searchParams = new URLSearchParams("category=integrations");
     window.history.replaceState(null, "", "/w/acme/settings?category=integrations#pipeline");
     render(<SettingsCategoryNav activeCategory="integrations" canManage workspaceSlug="acme" />);
@@ -239,9 +252,11 @@ describe("SettingsCategoryNav hash routing", () => {
     const target = document.createElement("section");
     target.id = "pipeline";
     target.scrollIntoView = vi.fn();
+    target.innerHTML = '<h3 data-settings-heading tabindex="-1">Pipeline</h3>';
     document.body.appendChild(target);
 
     await waitFor(() => expect(target.scrollIntoView).toHaveBeenCalledWith({ block: "start" }));
+    expect(target.querySelector("h3")).toHaveFocus();
     target.remove();
   });
 
@@ -252,19 +267,26 @@ describe("SettingsCategoryNav hash routing", () => {
     window.dispatchEvent(new HashChangeEvent("hashchange"));
 
     await waitFor(() => {
-      expect(replace).toHaveBeenCalledWith("/w/acme/settings?category=integrations#github");
+      expect(replace).toHaveBeenCalledWith("/w/acme/settings?category=integrations#github", {
+        scroll: false,
+      });
     });
   });
 
   it("rewrites legacy hashes to their current anchors", async () => {
-    searchParams = new URLSearchParams("category=integrations");
+    searchParams = new URLSearchParams(
+      "category=integrations&factory=support&codex_connect=success",
+    );
     render(<SettingsCategoryNav activeCategory="integrations" canManage workspaceSlug="acme" />);
 
     window.history.replaceState(null, "", "/w/acme/settings?category=integrations#coding-agent");
     window.dispatchEvent(new HashChangeEvent("hashchange"));
 
     await waitFor(() => {
-      expect(replace).toHaveBeenCalledWith("/w/acme/settings?category=integrations#runtime");
+      expect(replace).toHaveBeenCalledWith(
+        "/w/acme/settings?category=integrations&factory=support&codex_connect=success#runtime",
+        { scroll: false },
+      );
     });
   });
 

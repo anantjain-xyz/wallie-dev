@@ -2,7 +2,6 @@ import "server-only";
 
 import Link from "next/link";
 
-import { PageSection } from "@/components/ui/page-shell";
 import {
   ConnectionSupportDetails,
   DisconnectPersonalClient,
@@ -12,6 +11,7 @@ import {
   type PersonalOAuthGrant,
 } from "@/features/settings/personal-oauth-data";
 import { WorkspaceSettingsLoadError } from "@/features/settings/workspace-settings-load-error";
+import { Section } from "@/features/settings/settings-ui";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
 import { factoryCommandLabels } from "@/lib/factory-machine-tokens/contracts";
 import { workspaceSettingsPath } from "@/lib/routes";
@@ -75,16 +75,21 @@ export async function PersonalOAuthConnections({
     });
   } catch {
     return (
-      <PageSection anchorId="connected-clients" title="Connected clients">
+      <Section anchorId="connected-clients" heading="h3" title="Connected clients">
         <WorkspaceSettingsLoadError label="connected clients" />
-      </PageSection>
+      </Section>
     );
   }
 
   const pageHref = (showHistory: boolean, after?: string) =>
     `${workspaceSettingsPath(workspace.slug, { category: "workspace", oauthView: showHistory ? "history" : undefined, afterOAuthGrant: after })}#connected-clients`;
   return (
-    <PageSection anchorId="connected-clients" title="Connected clients">
+    <Section
+      anchorId="connected-clients"
+      heading="h3"
+      tagline={`Clients you’ve authorized to act as you in ${workspace.name}, within the factory permissions listed below.`}
+      title="Connected clients"
+    >
       <nav aria-label="Connected client views" className="flex flex-wrap gap-2">
         <Link
           aria-current={!history ? "page" : undefined}
@@ -107,9 +112,9 @@ export async function PersonalOAuthConnections({
             <li className="space-y-3 p-4 sm:p-5" key={grant.id}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0 space-y-1">
-                  <h3 className="font-semibold text-foreground [overflow-wrap:anywhere]">
+                  <h4 className="font-semibold text-foreground [overflow-wrap:anywhere]">
                     {grant.clientName}
-                  </h3>
+                  </h4>
                   <ConnectionMetadata grant={grant} />
                 </div>
                 {grant.status === "Active" ? (
@@ -155,6 +160,6 @@ export async function PersonalOAuthConnections({
           )}
         </div>
       )}
-    </PageSection>
+    </Section>
   );
 }

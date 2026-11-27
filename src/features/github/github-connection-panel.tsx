@@ -100,6 +100,10 @@ export function GitHubConnectionPanel({
   const latestInstallationRef = useRef(githubInstallation);
   const latestRepositoriesRef = useRef(repositories);
   const hasGitHubAppConfig = github.missingAppKeys.length === 0;
+  const webhookKeys = github.missingWebhookKeys.filter(
+    (key) => !github.missingAppKeys.includes(key),
+  );
+  const syncBlocked = github.missingAppKeys.some((key) => github.missingWebhookKeys.includes(key));
 
   useEffect(() => {
     latestGithubRef.current = github;
@@ -186,10 +190,62 @@ export function GitHubConnectionPanel({
     successText: "GitHub repositories refreshed.",
   });
 
+  const settingsDiagnostics = source === "settings" &&
+    (!hasGitHubAppConfig ||
+      github.missingWebhookKeys.length > 0 ||
+      Boolean(githubInstallation)) && (
+      <div className="space-y-2 type-secondary text-muted">
+        {!hasGitHubAppConfig ? (
+          <p className="text-warning">
+            {githubInstallation && syncBlocked
+              ? "Repository sync and new installations are"
+              : "GitHub App installation is"}{" "}
+            blocked by missing server configuration.{" "}
+            <a
+              className="font-medium underline"
+              href={GITHUB_APP_SETUP_DOCS_URL}
+              rel="noreferrer"
+              target="_blank"
+            >
+              GitHub App setup guide
+            </a>
+          </p>
+        ) : null}
+        {github.missingWebhookKeys.length ? (
+          <p className="text-warning">
+            GitHub delivery updates are off until webhooks are configured.
+          </p>
+        ) : null}
+        <details>
+          <summary className="w-fit cursor-pointer hover:text-foreground">
+            GitHub deployment details
+          </summary>
+          <div className="mt-2 space-y-1 [overflow-wrap:anywhere]">
+            {!hasGitHubAppConfig ? (
+              <p>App configuration: {github.missingAppKeys.join(", ")}</p>
+            ) : null}
+            {webhookKeys.length ? <p>Webhook configuration: {webhookKeys.join(", ")}</p> : null}
+            {githubInstallation ? (
+              <p>
+                Installation #{githubInstallation.installationId} · last synced{" "}
+                {dateFormatter.format(new Date(githubInstallation.updatedAt))}
+              </p>
+            ) : null}
+          </div>
+        </details>
+      </div>
+    );
+  const onboardingDiagnostics = source === "onboarding" && (
+    <>
+      <ConfigState missingKeys={github.missingAppKeys} title="GitHub install flow disabled" />
+      <ConfigState missingKeys={webhookKeys} title="GitHub webhook sync disabled" />
+    </>
+  );
+
   if (!githubInstallation) {
     return (
-      <div className="space-y-6">
-        {hasGitHubAppConfig ? null : (
+      <div className={source === "settings" ? "space-y-3" : "space-y-6"}>
+        {hasGitHubAppConfig || source !== "onboarding" ? null : (
           <div className="space-y-3 rounded-[6px] border border-border bg-control-hover px-5 py-4">
             <p className="text-[14px] font-semibold text-foreground">
               Wallie needs a GitHub App to read your repositories
@@ -213,21 +269,16 @@ export function GitHubConnectionPanel({
             </p>
           </div>
         )}
-        <ConfigState missingKeys={github.missingAppKeys} title="GitHub install flow disabled" />
-        <ConfigState
-          missingKeys={github.missingWebhookKeys.filter(
-            (key) => !github.missingAppKeys.includes(key),
-          )}
-          title="GitHub webhook sync disabled"
-        />
+        {onboardingDiagnostics}
+        {settingsDiagnostics}
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <p className="max-w-2xl text-[13px] leading-6 text-muted">
-            {hasGitHubAppConfig
-              ? "The app requests read and write access to repository contents and pull requests, plus read access to metadata. This lets Wallie prepare your repository and publish changes on the repos you select during install."
-              : source === "onboarding"
-                ? "Once these variables are set and the app restarts, the install button turns on. You cannot finish this step or continue until the App is installed and a repository is connected."
-                : "Once these variables are set and the app restarts, the install button turns on."}
-          </p>
+          {hasGitHubAppConfig || source === "onboarding" ? (
+            <p className="max-w-2xl text-[13px] leading-6 text-muted">
+              {hasGitHubAppConfig
+                ? "The app requests read and write access to repository contents and pull requests, plus read access to metadata. This lets Wallie prepare your repository and publish changes on the repos you select during install."
+                : "Once these variables are set and the app restarts, the install button turns on. You cannot finish this step or continue until the App is installed and a repository is connected."}
+            </p>
+          ) : null}
           <button
             className="ui-button-primary"
             disabled={!canManage || !hasGitHubAppConfig || launchInstall.isBusy}
@@ -241,33 +292,45 @@ export function GitHubConnectionPanel({
           >
             {launchInstall.isBusy ? "Preparing install…" : "Install GitHub App"}
           </button>
+          {source === "settings" && !canManage ? (
+            <p className="type-secondary text-muted">
+              A workspace admin can install the GitHub App.
+            </p>
+          ) : null}
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <ConfigState missingKeys={github.missingAppKeys} title="GitHub install flow disabled" />
-      <ConfigState
-        missingKeys={github.missingWebhookKeys.filter(
-          (key) => !github.missingAppKeys.includes(key),
-        )}
-        title="GitHub webhook sync disabled"
-      />
+    <div className={source === "settings" ? "space-y-3" : "space-y-6"}>
+      {onboardingDiagnostics}
 
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-1">
+        <div className={source === "settings" ? "min-w-0 space-y-1" : "space-y-1"}>
           <p className="text-[14px] font-medium text-foreground">
-            Connected to{" "}
+            {source === "settings" && githubInstallation.suspended
+              ? "Installation for"
+              : "Connected to"}{" "}
             {githubInstallation.targetType.charAt(0).toUpperCase() +
               githubInstallation.targetType.slice(1).toLowerCase()}{" "}
-            <span className="font-mono">{githubInstallation.targetName}</span>
+            <span
+              className={source === "settings" ? "font-mono [overflow-wrap:anywhere]" : "font-mono"}
+            >
+              {githubInstallation.targetName}
+            </span>
           </p>
-          <p className="text-xs leading-5 text-muted">
-            Installation #{githubInstallation.installationId} · last synced{" "}
-            {dateFormatter.format(new Date(githubInstallation.updatedAt))}
-          </p>
+          {source === "onboarding" ? (
+            <p className="text-xs leading-5 text-muted">
+              Installation #{githubInstallation.installationId} · last synced{" "}
+              {dateFormatter.format(new Date(githubInstallation.updatedAt))}
+            </p>
+          ) : null}
+          {source === "settings" && githubInstallation.suspended ? (
+            <p className="type-secondary text-warning">
+              Restore the suspended installation on GitHub before trying to refresh repositories.
+            </p>
+          ) : null}
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -289,6 +352,7 @@ export function GitHubConnectionPanel({
           </Link>
         </div>
       </div>
+      {settingsDiagnostics}
     </div>
   );
 }

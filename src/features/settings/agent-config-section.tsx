@@ -56,6 +56,7 @@ type AgentConfigSectionProps = {
   anchorId?: string;
   canManage: boolean;
   codexConnectFlash?: string | null;
+  defaultFactoryName?: string;
   extraContent?: ReactNode;
   initialAgentConfig: AgentConfigMap;
   initialClaudeCodeStatus?: ClaudeCodeConnectionStatus;
@@ -71,7 +72,6 @@ type AgentConfigSectionProps = {
   sandboxConnectionLabel?: string;
   sandboxConnectionReady?: boolean;
   setFlashMessage: (message: FlashMessage) => void;
-  tagline?: ReactNode;
   title?: string;
   workspaceId: string;
 };
@@ -181,6 +181,7 @@ export function AgentConfigSection({
   anchorId = "coding-agent",
   canManage,
   codexConnectFlash,
+  defaultFactoryName,
   extraContent,
   initialAgentConfig,
   initialClaudeCodeStatus,
@@ -196,7 +197,6 @@ export function AgentConfigSection({
   sandboxConnectionLabel,
   sandboxConnectionReady,
   setFlashMessage,
-  tagline = "Configure agents for all workspace sessions.",
   title = "Coding agent",
   workspaceId,
 }: AgentConfigSectionProps) {
@@ -328,19 +328,6 @@ export function AgentConfigSection({
       null;
     return { field, draft, isDirty, validation, validationError };
   });
-  const providerFieldStatuses = fieldStatuses.filter(
-    (status) =>
-      status.field.configKey === "agent_provider" ||
-      status.field.configKey === "agent_model" ||
-      status.field.configKey === "agent_effort",
-  );
-  const executionFieldStatuses = fieldStatuses.filter(
-    (status) =>
-      status.field.configKey !== "agent_provider" &&
-      status.field.configKey !== "agent_model" &&
-      status.field.configKey !== "agent_effort",
-  );
-
   const hasErrors = fieldStatuses.some((status) => status.validationError !== null);
   const dirtyFields = fieldStatuses.filter((status) => status.isDirty);
   const saveableFields = dirtyFields.filter((status) => status.validation?.ok === true);
@@ -451,46 +438,90 @@ export function AgentConfigSection({
   }
 
   return (
-    <Section anchorId={anchorId} tagline={tagline} title={title}>
-      <div className={canManage ? "space-y-6" : "space-y-4"}>
-        {canManage && !blocked ? (
+    <div className="space-y-10 sm:space-y-12">
+      <Section
+        anchorId={anchorId}
+        heading="h3"
+        tagline={
           <>
-            {stale && revision ? (
-              <FactorySettingsFormConflict
-                discard={() => {
-                  setDrafts(toDrafts(agentConfig));
-                  setServerFieldErrors({});
-                  revision.setDirty(false);
-                }}
-                section="agent"
-              />
-            ) : null}
-            <div className="space-y-6">
-              {providerFieldStatuses.map((status) => (
-                <AgentConfigField
-                  key={status.field.configKey}
-                  description={status.field.description}
-                  disabled={editorBusy}
-                  draft={status.draft}
-                  emptyOption={status.field.emptyOption}
-                  error={status.validationError}
-                  label={status.field.label}
-                  onChange={(next) => handleFieldChange(status.field.configKey, next)}
-                  options={status.field.options}
-                  placeholder={status.field.placeholder}
-                  type={status.field.type}
-                />
-              ))}
-            </div>
+            {revision
+              ? canManage
+                ? `${defaultFactoryName ?? "Default factory"} draft. Publish it to change how new sessions run.`
+                : `Published runtime for ${defaultFactoryName ?? "the default factory"}.`
+              : blocked
+                ? "Factory runtime settings aren’t available yet."
+                : "Live workspace defaults for new sessions."}{" "}
+            <a className="font-medium text-accent underline" href="#workspace-secrets">
+              Workspace secrets
+            </a>{" "}
+            are configured separately.
           </>
-        ) : (
-          <p className="text-[13px] leading-6 text-muted">
-            {canManage
-              ? "Coding agent settings will appear when factory configuration is available."
-              : "Workspace admins can configure coding agent settings from this page."}
-          </p>
-        )}
-
+        }
+        title={title}
+      >
+        <div className={canManage ? "space-y-6" : "space-y-4"}>
+          {canManage && !blocked ? (
+            <>
+              {stale && revision ? (
+                <FactorySettingsFormConflict
+                  discard={() => {
+                    setDrafts(toDrafts(agentConfig));
+                    setServerFieldErrors({});
+                    revision.setDirty(false);
+                  }}
+                  section="agent"
+                />
+              ) : null}
+              <div className="space-y-6">
+                {fieldStatuses.map((status) => (
+                  <AgentConfigField
+                    key={status.field.configKey}
+                    description={status.field.description}
+                    disabled={editorBusy}
+                    draft={status.draft}
+                    emptyOption={status.field.emptyOption}
+                    error={status.validationError}
+                    label={status.field.label}
+                    onChange={(next) => handleFieldChange(status.field.configKey, next)}
+                    options={status.field.options}
+                    placeholder={status.field.placeholder}
+                    type={status.field.type}
+                  />
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+                <p className="text-xs text-muted">
+                  {dirtyFields.length === 0
+                    ? "No unsaved changes."
+                    : `${dirtyFields.length} unsaved change${dirtyFields.length === 1 ? "" : "s"}.`}
+                </p>
+                <button
+                  className="ui-button-primary"
+                  disabled={!canSave}
+                  onClick={() => void handleSaveAll()}
+                  type="button"
+                >
+                  <ActionButtonLabel
+                    idle={revision ? "Save agent draft" : "Save changes"}
+                    pending={isSaving}
+                    pendingLabel="Saving…"
+                  />
+                </button>
+              </div>
+            </>
+          ) : !canManage ? (
+            <p className="type-secondary text-muted">
+              Only workspace admins can change the agent runtime.
+            </p>
+          ) : null}
+          {extraContent}
+        </div>
+      </Section>
+      <Section
+        anchorId="provider-access"
+        tagline="Credentials saved here belong to your account. They don’t change the factory runtime or workspace connections."
+        title="Your provider access"
+      >
         <ProviderAccessPanel
           connectFlash={codexConnectFlash}
           initialClaudeCodeStatus={initialClaudeCodeStatus}
@@ -504,56 +535,15 @@ export function AgentConfigSection({
             onCursorStatusChange?.(status);
           }}
           onOpenCodeStatusChange={onOpenCodeStatusChange}
-          selectedModel={drafts.agent_model}
           provider={selectedAgentProvider}
           sandboxConnectionHref={sandboxConnectionHref}
           sandboxConnectionLabel={sandboxConnectionLabel}
           sandboxConnectionReady={sandboxConnectionReady}
+          selectedModel={drafts.agent_model}
+          showHeading={false}
           workspaceId={workspaceId}
         />
-        {canManage && !blocked ? (
-          <>
-            <div className="space-y-6">
-              {executionFieldStatuses.map((status) => (
-                <AgentConfigField
-                  key={status.field.configKey}
-                  description={status.field.description}
-                  disabled={editorBusy}
-                  draft={status.draft}
-                  emptyOption={status.field.emptyOption}
-                  error={status.validationError}
-                  label={status.field.label}
-                  onChange={(next) => handleFieldChange(status.field.configKey, next)}
-                  options={status.field.options}
-                  placeholder={status.field.placeholder}
-                  type={status.field.type}
-                />
-              ))}
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
-              <p className="text-xs text-muted">
-                {dirtyFields.length === 0
-                  ? "No unsaved changes."
-                  : `${dirtyFields.length} unsaved change${dirtyFields.length === 1 ? "" : "s"}.`}
-              </p>
-              <button
-                className="ui-button-primary"
-                disabled={!canSave}
-                onClick={() => void handleSaveAll()}
-                type="button"
-              >
-                <ActionButtonLabel
-                  idle={revision ? "Save agent draft" : "Save changes"}
-                  pending={isSaving}
-                  pendingLabel="Saving…"
-                />
-              </button>
-            </div>
-          </>
-        ) : null}
-        {extraContent}
-      </div>
-    </Section>
+      </Section>
+    </div>
   );
 }

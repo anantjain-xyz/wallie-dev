@@ -326,6 +326,7 @@ export function RepositoryAnalysisSection({
   return (
     <Section
       anchorId="repository"
+      heading="h3"
       tagline="Install skills and save repository profiles."
       title="Repositories"
     >
@@ -352,11 +353,11 @@ export function RepositoryAnalysisSection({
               const showActionRow = showSetupControls || showProfileAction;
 
               return (
-                <li className="flex flex-col gap-4 px-5 py-4" key={repository.id}>
+                <li className="flex flex-col gap-3 px-4 py-3 sm:px-5" key={repository.id}>
                   <div className="min-w-0 space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <a
-                        className="truncate text-[14px] font-semibold text-foreground transition-colors duration-150 hover:text-accent"
+                        className="min-w-0 text-[14px] font-semibold text-foreground transition-colors duration-150 [overflow-wrap:anywhere] hover:text-accent"
                         href={repository.htmlUrl}
                         rel="noreferrer"
                         target="_blank"
@@ -365,10 +366,6 @@ export function RepositoryAnalysisSection({
                       </a>
                       <RepositorySetupStatus status={repository.onboarding.status} />
                     </div>
-                    <RepositoryMetadata repository={repository} />
-                    {repository.description ? (
-                      <p className="text-[13px] leading-5 text-muted">{repository.description}</p>
-                    ) : null}
                   </div>
 
                   {showActionRow ? (
@@ -408,6 +405,17 @@ export function RepositoryAnalysisSection({
                     </div>
                   ) : null}
                   <RepositorySetupMessages repository={repository} />
+                  <details className="type-secondary text-muted">
+                    <summary className="w-fit cursor-pointer hover:text-foreground">
+                      Repository details
+                    </summary>
+                    <div className="mt-2 space-y-1">
+                      <RepositoryMetadata repository={repository} />
+                      {repository.description ? (
+                        <p className="break-words">{repository.description}</p>
+                      ) : null}
+                    </div>
+                  </details>
                   {showProfileEditor && profileDraft ? (
                     <RepositoryProfileEditor
                       canManage={data.canManage && !profileBusy}

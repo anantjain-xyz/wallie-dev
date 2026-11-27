@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
+import { PageSection } from "@/components/ui/page-shell";
 import { Status } from "@/components/ui/status";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
@@ -66,6 +67,8 @@ export function SandboxProviderSection({
   vercelConnection,
   workspaceId,
 }: Props) {
+  const SectionLayout = variant === "settings" ? Section : PageSection;
+  const ProviderHeading = variant === "settings" ? "h4" : "h3";
   const [apiKeys, setApiKeys] = useState<Record<"daytona" | "e2b", string>>({
     daytona: "",
     e2b: "",
@@ -245,7 +248,7 @@ export function SandboxProviderSection({
         workspaceId={workspaceId}
       />
     ) : provider === "e2b" ? (
-      <ProviderForm title="E2B">
+      <ProviderForm heading={ProviderHeading} title="E2B">
         <SecretInput
           label="API key"
           onChange={(value) => setApiKeys((current) => ({ ...current, e2b: value }))}
@@ -258,7 +261,7 @@ export function SandboxProviderSection({
         />
       </ProviderForm>
     ) : (
-      <ProviderForm title="Daytona">
+      <ProviderForm heading={ProviderHeading} title="Daytona">
         <SecretInput
           disabled={isPending}
           label="API key"
@@ -298,10 +301,15 @@ export function SandboxProviderSection({
     selectedConfigured && selectedProvider !== null && replacingProvider === selectedProvider;
 
   return (
-    <Section
+    <SectionLayout
       anchorId="sandbox"
-      tagline="Choose where agents run. Switching keeps connections; jobs use only the selected provider."
-      title="Sandbox"
+      heading="h3"
+      tagline={
+        variant === "settings"
+          ? "Connect sandbox providers or change the workspace default. Switching keeps saved connections and doesn’t edit a factory draft."
+          : "Choose where agents run. Switching keeps connections; jobs use only the selected provider."
+      }
+      title={variant === "settings" ? "Sandbox connections" : "Sandbox"}
     >
       <div className="space-y-5">
         <div className="space-y-6">
@@ -368,6 +376,7 @@ export function SandboxProviderSection({
                     setDisconnectProvider(open ? selectedProvider : null);
                   }}
                   onReplace={() => startReplace(selectedProvider)}
+                  heading={ProviderHeading}
                   provider={selectedProvider}
                   activeProvider={settings.activeProvider}
                   showCapabilityLink={variant === "settings"}
@@ -377,9 +386,9 @@ export function SandboxProviderSection({
                 <>
                   <div className="flex flex-col items-start gap-3 sm:flex-row sm:justify-between">
                     <div className="min-w-0">
-                      <h3 className="text-[13px] font-semibold text-foreground">
+                      <ProviderHeading className="text-[13px] font-semibold text-foreground">
                         Configure {providerLabel(selectedProvider)}
-                      </h3>
+                      </ProviderHeading>
                       <p className="mt-1 text-xs text-muted">
                         Enter the connection details for the provider you selected.
                       </p>
@@ -416,11 +425,12 @@ export function SandboxProviderSection({
           )}
         </div>
       </div>
-    </Section>
+    </SectionLayout>
   );
 }
 
 function SavedConnectionSummary({
+  heading: Heading,
   activeProvider,
   canManage,
   disabled,
@@ -435,6 +445,7 @@ function SavedConnectionSummary({
   showCapabilityLink,
   status,
 }: {
+  heading: "h3" | "h4";
   activeProvider: SandboxProvider;
   canManage: boolean;
   disabled: boolean;
@@ -460,9 +471,9 @@ function SavedConnectionSummary({
     <div className="space-y-3">
       <div className="flex flex-col items-start gap-3 sm:flex-row sm:justify-between">
         <div className="min-w-0 space-y-1">
-          <h3 className="text-[13px] font-semibold text-foreground">
+          <Heading className="text-[13px] font-semibold text-foreground">
             {providerLabel(provider)} {status.connected ? "connected" : "saved"}
-          </h3>
+          </Heading>
           <p className="font-mono text-xs text-muted">{secretPreview(provider, connection)}</p>
           <p className="text-xs text-muted">
             Updated {connectionUpdatedAtFormatter.format(new Date(connection.updatedAt))}
@@ -635,10 +646,18 @@ function ProviderDisconnectGuidance({ visible }: { visible: boolean }) {
   );
 }
 
-function ProviderForm({ children, title }: { children: ReactNode; title: string }) {
+function ProviderForm({
+  children,
+  heading: Heading,
+  title,
+}: {
+  children: ReactNode;
+  heading: "h3" | "h4";
+  title: string;
+}) {
   return (
     <div className="space-y-3">
-      <h3 className="text-[13px] font-semibold text-foreground">Connect {title}</h3>
+      <Heading className="text-[13px] font-semibold text-foreground">Connect {title}</Heading>
       {children}
     </div>
   );

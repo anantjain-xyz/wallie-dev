@@ -724,7 +724,7 @@ describe("SandboxProviderSection saved connections", () => {
       }),
     });
 
-    expect(screen.getByRole("heading", { level: 2, name: "Sandbox" })).toBeVisible();
+    expect(screen.getByRole("heading", { level: 3, name: "Sandbox connections" })).toBeVisible();
     const heading = screen.getByRole("heading", { name: "Vercel Sandbox connected" });
     const testCapabilities = screen.getByRole("link", { name: "Test capabilities" });
     const replaceConnection = screen.getByRole("button", { name: "Replace connection" });

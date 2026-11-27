@@ -43,11 +43,13 @@ export function resourceLabel(resource: ConnectorResource) {
 }
 
 export function ConnectorResources({
+  archived = false,
   canManage,
   factoryId,
   workspaceId,
   workspaceSlug,
 }: {
+  archived?: boolean;
   canManage: boolean;
   factoryId: string;
   workspaceId: string;
@@ -124,6 +126,7 @@ export function ConnectorResources({
         </div>
       ) : inventory ? (
         <ProviderResources
+          archived={archived}
           factoryEndpoint={factoryEndpoint}
           inventory={inventory}
           key={provider}
@@ -143,6 +146,7 @@ export function ConnectorResources({
 }
 
 function ProviderResources({
+  archived,
   factoryEndpoint,
   inventory,
   onChanged,
@@ -151,6 +155,7 @@ function ProviderResources({
   slackResult,
   workspaceSlug,
 }: {
+  archived: boolean;
   factoryEndpoint: string;
   inventory: ConnectorInventory;
   onChanged: () => void;
@@ -291,7 +296,11 @@ function ProviderResources({
           </p>
         ) : null}
         {!inventory.canConfigure ? (
-          <p className="text-sm text-muted">Workspace admins can change connector setup.</p>
+          <p className="text-sm text-muted">
+            {archived
+              ? "Connector setup is read-only for archived factories."
+              : "Workspace admins can change connector setup."}
+          </p>
         ) : null}
       </div>
       {resource ? (

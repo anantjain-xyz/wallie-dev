@@ -41,17 +41,19 @@ function WorkspaceSettingsLoading({ label }: { label: string }) {
 export function WorkspaceMemberSettings({
   initialData,
   invitations,
-  profile,
   setup,
 }: {
   initialData: SettingsInitialData;
   invitations: Promise<WorkspaceInvitationsSnapshot>;
-  profile?: Promise<SettingsWorkspaceProfile>;
   setup: Promise<SettingsSetupData>;
 }) {
   const { canManage, currentMember, workspace } = initialData;
   return (
-    <Section anchorId="members" tagline="Manage workspace access and your profile." title="Members">
+    <Section
+      anchorId="members"
+      tagline={`See who has access to ${workspace.name}.`}
+      title="Team access"
+    >
       <div className="space-y-6">
         <div className="space-y-3">
           <h3 className="text-[14px] font-semibold text-foreground">Active members</h3>
@@ -70,18 +72,6 @@ export function WorkspaceMemberSettings({
             />
           </Suspense>
         </div>
-        {profile && (
-          <div className="space-y-3">
-            <h3 className="text-[14px] font-semibold text-foreground">Your profile</h3>
-            <Suspense fallback={<WorkspaceSettingsLoading label="your profile" />}>
-              <WorkspaceSettingsRead
-                data={profile}
-                error={<WorkspaceSettingsLoadError label="your profile" />}
-                render={(value) => <WorkspaceProfileSection initialProfile={value} />}
-              />
-            </Suspense>
-          </div>
-        )}
         {canManage && (
           <Suspense
             fallback={
@@ -104,6 +94,24 @@ export function WorkspaceMemberSettings({
           </Suspense>
         )}
       </div>
+    </Section>
+  );
+}
+
+export function WorkspacePersonalProfile({
+  profile,
+}: {
+  profile: Promise<SettingsWorkspaceProfile>;
+}) {
+  return (
+    <Section anchorId="profile" heading="h3" title="Your profile">
+      <Suspense fallback={<WorkspaceSettingsLoading label="your profile" />}>
+        <WorkspaceSettingsRead
+          data={profile}
+          error={<WorkspaceSettingsLoadError label="your profile" />}
+          render={(value) => <WorkspaceProfileSection initialProfile={value} />}
+        />
+      </Suspense>
     </Section>
   );
 }

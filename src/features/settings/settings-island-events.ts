@@ -17,14 +17,18 @@ export type SettingsDataChangedDetail = {
   workspaceId: string;
 };
 
-export type SettingsDataReplayConsumer = "repository" | "verify-setup";
+export type SettingsDataReplayConsumer = "repository" | "runtime-sandbox" | "verify-setup";
 
 type SettingsDataChangeRecord = {
   pendingConsumers: Set<SettingsDataReplayConsumer>;
   update: SettingsDataUpdate;
 };
 
-const SETTINGS_DATA_REPLAY_CONSUMERS: SettingsDataReplayConsumer[] = ["repository", "verify-setup"];
+const SETTINGS_DATA_REPLAY_CONSUMERS: SettingsDataReplayConsumer[] = [
+  "repository",
+  "runtime-sandbox",
+  "verify-setup",
+];
 const activeSettingsDataConsumers = new Map<string, Set<SettingsDataReplayConsumer>>();
 const settingsDataChangeHistory = new Map<string, SettingsDataChangeRecord[]>();
 

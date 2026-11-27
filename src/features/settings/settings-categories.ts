@@ -10,17 +10,17 @@ export const SETTINGS_CATEGORY_LINKS: ReadonlyArray<{
   label: string;
 }> = [
   {
-    description: "GitHub, repositories, pipeline, Linear, sandbox, agents, and setup health",
+    description: "Connections, factory configuration, and setup checks",
     id: "integrations",
     label: "Integrations",
   },
   {
-    description: "Identity, members, invitations, and deletion",
+    description: "Workspace identity, team access, and personal settings",
     id: "workspace",
     label: "Workspace",
   },
   {
-    description: "Usage, Maintenence, and Rate Limits",
+    description: "Usage, retention, maintenance, and API limits",
     id: "advanced",
     label: "Advanced",
   },

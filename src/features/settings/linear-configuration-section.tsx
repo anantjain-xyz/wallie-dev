@@ -45,14 +45,15 @@ export function LinearConfigurationSection({
   return (
     <Section
       anchorId="linear"
+      heading="h3"
       statusBadge={canManage ? statusBadge : null}
-      tagline="Connect Linear and map workflow states to stages."
+      tagline="Connect Linear and route workspace sessions to pipeline stages. This is separate from factory connector mappings."
       title="Linear"
     >
       <div className="space-y-8">
         <div className="space-y-4">
           <div className="min-w-0">
-            <h3 className="text-[14px] font-semibold text-foreground">Linear API key</h3>
+            <h4 className="text-[14px] font-semibold text-foreground">Linear API key</h4>
             <p className="mt-1 text-xs leading-5 text-muted">
               Used for reading issues referenced in sessions and syncing status updates.
             </p>
@@ -73,7 +74,7 @@ export function LinearConfigurationSection({
 
         <div className="space-y-4 border-t border-border pt-6">
           <div className="min-w-0">
-            <h3 className="text-[14px] font-semibold text-foreground">Linear routing</h3>
+            <h4 className="text-[14px] font-semibold text-foreground">Linear routing</h4>
             <p className="mt-1 text-xs leading-5 text-muted">
               Map Linear workflow states to pipeline stages so Wallie syncs status correctly.
             </p>
