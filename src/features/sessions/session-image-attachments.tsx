@@ -14,7 +14,7 @@ export type SessionImageDraft = {
   fileName: string;
   previewUrl: string;
   sizeBytes: number;
-  status: "error" | "ready" | "removing" | "uploading";
+  status: "error" | "local" | "ready" | "removing" | "uploading";
 };
 
 type SessionImageAttachmentsProps = {
@@ -141,6 +141,8 @@ function statusLabel(status: SessionImageDraft["status"]) {
   switch (status) {
     case "error":
       return "Needs attention";
+    case "local":
+      return "Will reupload";
     case "ready":
       return "Ready";
     case "removing":

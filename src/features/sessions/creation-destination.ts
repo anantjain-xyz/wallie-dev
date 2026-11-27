@@ -17,13 +17,19 @@ export function useSessionCreationDestination(
   workspaceId: string,
 ) {
   const [catalog, setCatalog] = useState<
-    | { factories: SessionCreationFactory[]; error?: never }
-    | { factories?: never; error: string }
+    | { revision: number; factories: SessionCreationFactory[]; error?: never }
+    | { revision: number; factories?: never; error: string }
     | null
   >(null);
   const [choice, setChoice] = useState<{ id: string; manual: boolean }>();
   const [revision, setRevision] = useState(0);
   const loadAll = scope?.kind === "all" && open;
+  const [wasLoadingAll, setWasLoadingAll] = useState(loadAll);
+  if (loadAll !== wasLoadingAll) {
+    setWasLoadingAll(loadAll);
+    if (loadAll) setRevision((value) => value + 1);
+  }
+  const currentCatalog = catalog?.revision === revision ? catalog : null;
 
   useEffect(() => {
     if (!loadAll) return;
@@ -31,15 +37,18 @@ export function useSessionCreationDestination(
     void loadSessionCreationFactoriesFromClient({ workspaceId, signal: controller.signal }).then(
       (factories) => {
         if (controller.signal.aborted) return;
-        setCatalog({ factories });
+        setCatalog({ factories, revision });
         if (factories.length === 1) {
-          setChoice((current) => current ?? { id: factories[0].id, manual: false });
+          setChoice((current) =>
+            current?.manual ? current : { id: factories[0].id, manual: false },
+          );
         }
       },
       (error: unknown) => {
         if (!controller.signal.aborted) {
           setCatalog({
             error: error instanceof Error ? error.message : "Couldn’t load factories.",
+            revision,
           });
         }
       },
@@ -48,7 +57,8 @@ export function useSessionCreationDestination(
   }, [loadAll, revision, workspaceId]);
 
   return {
-    catalog,
+    catalog: currentCatalog,
+    catalogIsCurrent: !loadAll || currentCatalog !== null,
     choose(id: string) {
       setChoice({ id, manual: true });
     },
@@ -62,7 +72,6 @@ export function useSessionCreationDestination(
             )
           : undefined,
     reload() {
-      setCatalog(null);
       setRevision((value) => value + 1);
     },
   };

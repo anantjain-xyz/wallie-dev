@@ -191,22 +191,111 @@ describe("factory session composer", () => {
     );
   });
 
-  it("requires a choice if a second factory appears after using a single available destination", async () => {
+  it("blocks cached singleton options on reopen and requires a choice when the catalog grows", async () => {
     const all = { kind: "all" } as const;
+    const user = userEvent.setup();
+    const pending = Promise.withResolvers<(typeof bench)[]>();
     clientMocks.loadSessionCreationFactoriesFromClient.mockResolvedValue([central]);
     clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue(centralOptions);
     const view = render(renderScope(all));
     expect(await screen.findByText(central.name)).toBeVisible();
+    await user.type(screen.getByLabelText("Prompt"), "Preserve the draft");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled(),
+    );
     view.rerender(renderScope(all, false));
-    clientMocks.loadSessionCreationFactoriesFromClient.mockResolvedValue([bench, central]);
+    clientMocks.loadSessionCreationFactoriesFromClient.mockReturnValue(pending.promise);
     view.rerender(renderScope(all));
+
+    expect(screen.getByText("Loading factories…")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+    expect(screen.queryByLabelText("Add images")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Linear issue URL")).not.toBeInTheDocument();
+    await user.click(screen.getByLabelText("Prompt"));
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    expect(clientMocks.createSessionFromClient).not.toHaveBeenCalled();
+    await act(async () => pending.resolve([bench, central]));
 
     expect(await screen.findByRole("combobox", { name: "Factory" })).toHaveTextContent(
       "Choose a factory",
     );
+    expect(screen.getByLabelText("Prompt")).toHaveValue("Preserve the draft");
     expect(screen.queryByRole("combobox", { name: "Repository" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
   });
+
+  it.each(["success", "unconfirmed"] as const)(
+    "preserves draft files after an earlier scope’s %s response without reusing its upload IDs",
+    async (outcome) => {
+      const user = userEvent.setup();
+      const all = { kind: "all" } as const;
+      const pending = Promise.withResolvers<{ canonicalUrl: string; number: number }>();
+      const file = new File(["proof"], "proof.png", { type: "image/png" });
+      const upload = { fileName: file.name, contentType: file.type, sizeBytes: file.size };
+      clientMocks.loadSessionCreationFactoriesFromClient.mockResolvedValue([bench]);
+      clientMocks.loadSessionRepositoryOptionsFromClient.mockImplementation(({ factoryId }) =>
+        Promise.resolve(factoryId === central.id ? centralOptions : benchOptions),
+      );
+      clientMocks.uploadSessionAttachmentFromClient
+        .mockResolvedValueOnce({ ...upload, id: "bench-image" })
+        .mockResolvedValueOnce({ ...upload, id: "central-image" });
+      clientMocks.createSessionFromClient.mockImplementationOnce(() => pending.promise);
+      const view = render(renderScope(all));
+      await user.upload(await screen.findByLabelText("Add images"), file);
+      await screen.findByText(/Ready/);
+      await user.type(screen.getByLabelText("Prompt"), "Preserve the draft and its image");
+      await user.type(screen.getByLabelText("Title (optional)"), "Proof title");
+      await user.click(screen.getByRole("button", { name: "Start session" }));
+      expect(clientMocks.createSessionFromClient).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ factoryId: bench.id, attachmentIds: ["bench-image"] }),
+      );
+
+      view.rerender(renderScope(all, false));
+      clientMocks.loadSessionCreationFactoriesFromClient.mockResolvedValue([central]);
+      view.rerender(renderScope(all));
+      expect(await screen.findByText(central.name)).toBeVisible();
+      expect(screen.queryByRole("combobox", { name: "Factory" })).not.toBeInTheDocument();
+      if (outcome === "success") {
+        await act(async () => pending.resolve({ canonicalUrl: "/w/acme/sessions/42", number: 42 }));
+        expect(router.push).not.toHaveBeenCalled();
+      } else {
+        await act(async () => pending.reject(new TypeError("Lost the response")));
+        expect(screen.getByText(/A session may already exist/)).toBeVisible();
+        expect(screen.queryByText("Session creation needs attention.")).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Retry creation" })).toBeDisabled();
+        await user.click(
+          await screen.findByRole("button", { name: "Use draft for a new session" }),
+        );
+      }
+
+      expect(screen.getByLabelText("Prompt")).toHaveValue("Preserve the draft and its image");
+      expect(screen.getByLabelText("Title (optional)")).toHaveValue("Proof title");
+      expect(screen.getByText(/Will reupload/)).toBeVisible();
+      expect(clientMocks.deletePendingSessionAttachmentFromClient).not.toHaveBeenCalled();
+      expect(clientMocks.uploadSessionAttachmentFromClient).toHaveBeenCalledOnce();
+      await user.click(screen.getByRole("button", { name: "Start session" }));
+      expect(clientMocks.createSessionFromClient).toHaveBeenCalledOnce();
+      await screen.findByText(/Ready/);
+      expect(clientMocks.uploadSessionAttachmentFromClient).toHaveBeenNthCalledWith(2, {
+        file,
+        workspaceId,
+      });
+      clientMocks.createSessionFromClient.mockResolvedValueOnce({
+        canonicalUrl: "/w/acme/sessions/43",
+        number: 43,
+      });
+      await user.click(screen.getByRole("button", { name: "Start session" }));
+      const [original, next] = clientMocks.createSessionFromClient.mock.calls.map(
+        ([input]) => input,
+      );
+      expect(next).toMatchObject({
+        factoryId: central.id,
+        attachmentIds: ["central-image"],
+        title: "Proof title",
+      });
+      expect(next.requestId).not.toBe(original.requestId);
+    },
+  );
 
   it("keeps the selected target and draft when another factory’s options arrive late", async () => {
     const user = userEvent.setup();
