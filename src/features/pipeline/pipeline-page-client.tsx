@@ -95,6 +95,7 @@ type PendingCardFocus = {
 
 type DashboardCardStatus = SessionDisplayStatus;
 type LanePaginationState = "idle" | "loading" | "blocked";
+type LaneSelection = { key: string; origin: "default" | "restored" | "manual" | "automatic" };
 type StatusFilter = PipelineStatusFilter;
 
 const CARD_FOCUSABLE_SELECTOR =
@@ -295,8 +296,11 @@ function PipelinePageContent({
     createPipelineBoardState,
   );
   const firstLaneKey = initialData.lanes[0] ? pipelineLaneKey(initialData.lanes[0]) : "";
-  const [activeLaneKey, setActiveLaneKey] = useState(firstLaneKey);
-  const preferredLaneKey = useRef<string | undefined>(undefined);
+  const [laneSelection, setLaneSelection] = useState<LaneSelection>({
+    key: firstLaneKey,
+    origin: "default",
+  });
+  const activeLaneKey = laneSelection.key;
   const [loadingLaneKey, setLoadingLaneKey] = useState<string | null>(null);
   const [laneErrors, setLaneErrors] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState("");
@@ -317,8 +321,10 @@ function PipelinePageContent({
       if (!entry) return;
       setSearchQuery(entry.searchQuery);
       setStatusFilter(entry.status);
-      preferredLaneKey.current = entry.laneKey;
-      setActiveLaneKey(entry.laneKey ?? firstLaneKey);
+      setLaneSelection({
+        key: entry.laneKey ?? firstLaneKey,
+        origin: entry.laneKey ? "restored" : "default",
+      });
     };
     restore();
     window.addEventListener("popstate", restore);
@@ -329,12 +335,13 @@ function PipelinePageContent({
     };
   }, [firstLaneKey, historyScope, routeSearch]);
 
+  useEffect(() => {
+    if (historyScope && (laneSelection.origin === "manual" || laneSelection.origin === "automatic"))
+      writeBoardBrowseHistory(historyScope, { laneKey: laneSelection.key || undefined });
+  }, [historyScope, laneSelection]);
+
   function selectStage(key: string) {
-    setActiveLaneKey(key);
-    if (historyScope) {
-      preferredLaneKey.current = key;
-      writeBoardBrowseHistory(historyScope, { laneKey: key });
-    }
+    setLaneSelection({ key, origin: "manual" });
   }
 
   const trimmedSearchQuery = searchQuery.trim();
@@ -458,13 +465,14 @@ function PipelinePageContent({
         }
         const match = nextBoard.lanes.find((lane) => lane.totalCount > 0);
         if (!previous && match) {
-          const preferred = preferredLaneKey.current;
-          setActiveLaneKey((key) => {
+          setLaneSelection((selection) => {
+            const preferred = selection.origin === "manual" || selection.origin === "restored";
             return nextBoard.lanes.some(
-              (lane) => pipelineLaneKey(lane) === key && (lane.totalCount > 0 || key === preferred),
+              (lane) =>
+                pipelineLaneKey(lane) === selection.key && (lane.totalCount > 0 || preferred),
             )
-              ? key
-              : pipelineLaneKey(match);
+              ? selection
+              : { key: pipelineLaneKey(match), origin: "automatic" };
           });
         }
         setFilterResult({ href: filterHref, revision: requestRevision, board: nextBoard });
@@ -522,7 +530,8 @@ function PipelinePageContent({
           return;
         const focusTargetLaneKey = pendingCardFocus.current?.targetLaneKey;
         startRefresh(() => {
-          if (focusTargetLaneKey) setActiveLaneKey(focusTargetLaneKey);
+          if (focusTargetLaneKey)
+            setLaneSelection({ key: focusTargetLaneKey, origin: "automatic" });
           dispatch({ lanes: snapshot.lanes, changes, type: "recover" });
         });
         if (snapshot.hasAnySession) setHasObservedSession(true);
@@ -567,7 +576,8 @@ function PipelinePageContent({
 
   useEffect(() => {
     if (board.lanes.some((lane) => pipelineLaneKey(lane) === activeLaneKey)) return;
-    setActiveLaneKey(board.lanes[0] ? pipelineLaneKey(board.lanes[0]) : "");
+    const key = board.lanes[0] ? pipelineLaneKey(board.lanes[0]) : "";
+    if (key !== activeLaneKey) setLaneSelection({ key, origin: "automatic" });
   }, [activeLaneKey, board.lanes]);
 
   useEffect(() => {
@@ -755,7 +765,8 @@ function PipelinePageContent({
                       existing.currentStageId !== next.currentStageId);
                   if (moved) {
                     startTransition(() => {
-                      if (focus) setActiveLaneKey(focus.targetLaneKey);
+                      if (focus)
+                        setLaneSelection({ key: focus.targetLaneKey, origin: "automatic" });
                       dispatch({
                         card: next,
                         isInsert: payload.eventType === "INSERT",

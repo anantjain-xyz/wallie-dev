@@ -214,6 +214,33 @@ test("Back keeps the saved Board stage even if another stage has the only match"
   await expect(build).toHaveAttribute("aria-selected", "true");
 });
 
+test("Back keeps the automatically selected Board stage after widening a search", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page, boardPath);
+  await status(page).click();
+  await page.getByRole("option", { name: "Awaiting review", exact: true }).click();
+  const search = page.getByRole("searchbox", { name: "Search active board" });
+  await search.fill("Supabase Realtime");
+  await expect(page.getByRole("tab", { name: "Build, 1 matching session" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+
+  await search.fill("");
+  const plan = page.getByRole("tab", { name: /^Plan, [1-9]\d* matching sessions?$/ });
+  const build = page.getByRole("tab", { name: /^Build, [1-9]\d* matching sessions?$/ });
+  await expect(plan).toBeVisible();
+  await expect(build).toHaveAttribute("aria-selected", "true");
+
+  await views(page).getByRole("link", { name: "List" }).click();
+  await expect(currentView(page)).toHaveText("List");
+  await page.goBack();
+  await expect(plan).toBeVisible();
+  await expect(build).toHaveAttribute("aria-selected", "true");
+});
+
 test("another account cannot recover the previous Board search in the same tab", async ({
   page,
   baseURL,
