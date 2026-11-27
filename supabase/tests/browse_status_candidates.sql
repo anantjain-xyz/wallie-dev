@@ -96,7 +96,9 @@ create temporary table browse_active_page as
 select public.get_session_list_page('acme-corp', session_scope => 'active', page_limit => 1,
   search_query => 'Browse status candidate proof', status_filter => 'awaiting_review') as first_page;
 
-select is(jsonb_build_array(first_page#>'{sessions,0,number}', first_page->'hasMore'), '[102,true]'::jsonb,
+select is(
+  jsonb_build_array(jsonb_path_query_array(first_page, '$.sessions[*].number'), first_page->'hasMore'),
+  '[[102],true]'::jsonb,
   'Ledger limits the first filtered active page and sets hasMore')
 from browse_active_page;
 select is(
