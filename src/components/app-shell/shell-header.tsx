@@ -25,6 +25,7 @@ import { RouteEntrance } from "@/components/app-shell/navigation-motion";
 import {
   readSessionLaunchActivation,
   resolveSessionReturnTo,
+  sessionLaunchHref,
   withoutSessionLaunch,
 } from "@/components/app-shell/shell-navigation";
 import { ThemeToggle } from "@/components/app-shell/theme-toggle";
@@ -53,6 +54,7 @@ import {
 } from "@/components/app-shell/workspace-switcher";
 import { PlusIcon } from "@/components/shared/icons/plus-icon";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import type { FactorySelectionOption } from "@/features/factories/factory-selection";
 import {
   shouldShowOnboardingResumeCta,
@@ -306,6 +308,7 @@ export function ShellHeader({
     () => "",
   );
   const router = useRouter();
+  const { startNavigation } = useOptionalRouteProgress();
   const shouldResumeSetup = shouldShowOnboardingResumeCta(onboarding);
   const onboardingHref = workspaceOnboardingPath(workspace.slug);
   const headerRef = useRef<HTMLElement>(null);
@@ -400,22 +403,25 @@ export function ShellHeader({
   const urlWorkflowActivation = createFromUrl
     ? readSessionLaunchActivation(searchParams)
     : undefined;
-  const returnTo = resolveSessionReturnTo(returnParam, workspace.slug);
   const [userCreateOpen, setUserCreateOpen] = useState(false);
-  const [recoverableWorkflowLaunch, setRecoverableWorkflowLaunch] = useState<{
+  const [recoverableLaunch, setRecoverableLaunch] = useState<{
     location: string;
-    activationId: string | null;
+    activationId?: string | null;
+    returnTo: string | null;
   } | null>(null);
-  if (
-    recoverableWorkflowLaunch &&
-    !createFromUrl &&
-    recoverableWorkflowLaunch.location !== locationKey
-  ) {
-    setRecoverableWorkflowLaunch(null);
+  if (recoverableLaunch && !createFromUrl && recoverableLaunch.location !== locationKey) {
+    setRecoverableLaunch(null);
   }
-  const createScope = `${viewerId}:${workspace.id}`;
+  const launchOnLocation = recoverableLaunch?.location === locationKey ? recoverableLaunch : null;
+  const returnTo = createFromUrl
+    ? resolveSessionReturnTo(returnParam, workspace.slug)
+    : (launchOnLocation?.returnTo ?? null);
+  const workflowLaunchActivationId = createFromUrl
+    ? urlWorkflowActivation
+    : launchOnLocation?.activationId;
+  const composerKey = `${viewerId}:${workspace.id}`;
   const createUrlKey = JSON.stringify([
-    createScope,
+    composerKey,
     pathname,
     creationFactoryQuery,
     urlWorkflowActivation,
@@ -429,40 +435,58 @@ export function ShellHeader({
     creationScope !== null &&
     !shouldResumeSetup &&
     (userCreateOpen || (createFromUrl && dismissedCreateUrlKey !== createUrlKey));
+  const previewLocationKey =
+    creationFactoryQuery && !shouldResumeSetup
+      ? JSON.stringify([composerKey, pathname, creationFactoryQuery])
+      : null;
   const [creationPreview, setCreationPreview] = useState<{
-    scope: string;
-    pathname: string;
+    locationKey: string;
     preview: SessionCreationPreview;
   } | null>(null);
   const creationPreviewRef = useRef(creationPreview);
   const visibleCreationPreview =
-    creationPreview?.scope === createScope && creationPreview.pathname === pathname
-      ? creationPreview.preview
-      : null;
-  if (creationPreview && creationPreview.pathname !== pathname) setCreationPreview(null);
+    creationPreview?.locationKey === previewLocationKey ? creationPreview.preview : null;
+  if (creationPreview && !visibleCreationPreview) setCreationPreview(null);
   const handleCreationPreview = useCallback(
     (preview: SessionCreationPreview | null) => {
-      const next = preview ? { scope: createScope, pathname, preview } : null;
+      const next =
+        preview && previewLocationKey ? { locationKey: previewLocationKey, preview } : null;
       creationPreviewRef.current = next;
       setCreationPreview(next);
     },
-    [createScope, pathname],
+    [previewLocationKey],
   );
-  const handleCreateReopen = useCallback(() => setUserCreateOpen(true), []);
+  const handleCreateReopen = useCallback(
+    (submittedFactoryId?: string) => {
+      if (!submittedFactoryId) {
+        setUserCreateOpen(true);
+        return;
+      }
+      const href = sessionLaunchHref(
+        workspace.slug,
+        submittedFactoryId,
+        returnTo ?? undefined,
+        workflowLaunchActivationId ?? undefined,
+      );
+      setDismissedCreateUrlKey(null);
+      startNavigation(href);
+      router.push(href);
+    },
+    [returnTo, router, startNavigation, workflowLaunchActivationId, workspace.slug],
+  );
   const [mountedComposer, setMountedComposer] = useState<{
     key: string;
     scope: SessionCreationScope;
   } | null>(null);
   if (
     creationScope &&
-    (createOpen || mountedComposer?.key === createScope) &&
-    (mountedComposer?.key !== createScope || mountedComposer.scope !== creationScope)
+    (createOpen || mountedComposer?.key === composerKey) &&
+    (mountedComposer?.key !== composerKey || mountedComposer.scope !== creationScope)
   )
-    setMountedComposer({ key: createScope, scope: creationScope });
+    setMountedComposer({ key: composerKey, scope: creationScope });
   const createTriggerRef = useRef<HTMLButtonElement | null>(null);
   const pendingFocusHref = useRef<string | null>(null);
   const committedLocation = useRef(locationKey);
-  const previewReturn = useRef<{ location: string; href: string } | null>(null);
   const createDialogPreloads = useRef<Set<string> | null>(null);
   const prefetchedNavKeysRef = useRef<Set<string> | null>(null);
   useEffect(() => {
@@ -484,60 +508,45 @@ export function ShellHeader({
 
   useEffect(() => {
     committedLocation.current = locationKey;
-    if (
-      previewReturn.current &&
-      previewReturn.current.location !== locationKey &&
-      createFromUrl === false
-    ) {
-      previewReturn.current = null;
-    }
     if (pendingFocusHref.current !== locationKey) return;
     const frame = requestAnimationFrame(restoreCreateFocus);
     return () => cancelAnimationFrame(frame);
-  }, [createFromUrl, locationKey, restoreCreateFocus]);
+  }, [locationKey, restoreCreateFocus]);
 
   const handleCreateClose = useCallback(() => {
     setUserCreateOpen(false);
-    const previewActive =
-      creationPreviewRef.current?.scope === createScope &&
-      creationPreviewRef.current.pathname === pathname;
+    const previewActive = creationPreviewRef.current?.locationKey === previewLocationKey;
     const cleanHref = withoutSessionLaunch(pathname, search);
     if (createFromUrl) {
       setDismissedCreateUrlKey(createUrlKey);
     }
     if (previewActive) {
       if (createFromUrl) {
-        setRecoverableWorkflowLaunch(
-          urlWorkflowActivation === undefined
-            ? null
-            : { location: cleanHref, activationId: urlWorkflowActivation },
-        );
-        previewReturn.current = returnTo ? { location: cleanHref, href: returnTo } : null;
+        setRecoverableLaunch({
+          location: cleanHref,
+          activationId: urlWorkflowActivation,
+          returnTo,
+        });
         router.replace(cleanHref, { scroll: false });
       }
       return;
     }
     const destination =
-      (createFromUrl
-        ? returnTo
-        : previewReturn.current?.location === locationKey
-          ? previewReturn.current.href
-          : null) ??
+      returnTo ??
       (createFromUrl && pathname !== sessionsHref
         ? workspaceSessionsPath(workspace.slug, { factory: creationFactoryQuery })
         : cleanHref + window.location.hash);
-    setRecoverableWorkflowLaunch(null);
-    previewReturn.current = null;
+    setRecoverableLaunch(null);
     pendingFocusHref.current = destination.split("#", 1)[0];
     if (!createFromUrl && pendingFocusHref.current === locationKey) return;
     router.replace(destination, { scroll: destination.split(/[?#]/u, 1)[0] !== pathname });
   }, [
     createFromUrl,
-    createScope,
     createUrlKey,
     creationFactoryQuery,
     locationKey,
     pathname,
+    previewLocationKey,
     returnTo,
     router,
     search,
@@ -621,7 +630,7 @@ export function ShellHeader({
         aria-label="New session"
         onClick={() => {
           startInteraction("open_create_dialog", interactionRouteTemplateForPath(pathname));
-          setRecoverableWorkflowLaunch(null);
+          setRecoverableLaunch(null);
           setUserCreateOpen(true);
         }}
         onFocus={preloadCreateDialog}
@@ -761,9 +770,9 @@ export function ShellHeader({
         </div>
       </div>
 
-      {mountedComposer?.key === createScope ? (
+      {mountedComposer?.key === composerKey ? (
         <CreateSessionDialog
-          key={createScope}
+          key={composerKey}
           creationScope={mountedComposer.scope}
           open={createOpen}
           onClose={handleCreateClose}
@@ -773,13 +782,7 @@ export function ShellHeader({
           userId={viewerId}
           workspaceId={workspace.id}
           workspaceSlug={workspace.slug}
-          workflowLaunchActivationId={
-            createFromUrl
-              ? urlWorkflowActivation
-              : recoverableWorkflowLaunch?.location === locationKey
-                ? recoverableWorkflowLaunch.activationId
-                : undefined
-          }
+          workflowLaunchActivationId={workflowLaunchActivationId}
         />
       ) : null}
     </WorkspaceScopeContext.Provider>

@@ -5,26 +5,21 @@ import { signIn } from "./helpers/auth";
 
 const workspacePath = "/w/acme-corp";
 
-test("cancel and browser Back return from the named launcher to the original factory view", async ({
+test("cancel and browser Back return from a direct launch to the original factory view", async ({
   page,
 }) => {
   const origin = `${workspacePath}/activity?factory=all#main-content`;
+  const launch = `${workspacePath}/sessions?${new URLSearchParams({ create: "1", returnTo: origin })}`;
   await page.goto(origin);
-
-  const launcher = page.getByRole("link", { name: /^New session in / });
-  await expect(launcher).toHaveAttribute(
-    "href",
-    new RegExp(`returnTo=${encodeURIComponent(origin)}$`),
-  );
-  await launcher.press("Enter");
+  await page.goto(launch);
   const dialog = page.getByRole("dialog", { name: "Start a new session" });
   await expect(dialog).toBeVisible();
   expect(new URL(page.url()).searchParams.get("returnTo")).toBe(origin);
   await page.keyboard.press("Escape");
   await expect(page).toHaveURL(origin);
-  await expect(launcher).toBeFocused();
+  await expect(page.getByRole("main")).toBeFocused();
 
-  await launcher.press("Enter");
+  await page.goto(launch);
   await expect(dialog).toBeVisible();
   await page.goBack();
   await expect(page).toHaveURL(origin);
@@ -61,12 +56,18 @@ test("workspace switcher navigation wins while its route response is delayed", a
   await page.getByRole("button", { name: "Start session" }).click();
   await expect(page.locator("[data-session-creation]")).toBeVisible();
   await page.getByRole("button", { name: "Switch workspace: Acme Corp", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Acme Corp Current workspace", exact: true }).click();
+  const currentWorkspace = page.getByRole("menuitem", {
+    name: "Acme Corp Current workspace",
+    exact: true,
+  });
+  const boardHref = await currentWorkspace.getAttribute("href");
+  if (!boardHref) throw new Error("Missing the active workspace's Board link.");
+  await currentWorkspace.click();
   createGate.release();
   await expect(page.getByText("Session #1 created.", { exact: true })).toBeVisible();
   expect(canonicalRequests).toHaveLength(0);
   navigationGate.release();
-  await expect(page).toHaveURL(workspacePath);
+  await expect(page).toHaveURL(boardHref);
   await expect(
     page.getByRole("navigation", { name: "Sessions views" }).locator('[aria-current="page"]'),
   ).toHaveText("Board");
@@ -145,29 +146,34 @@ test("creation from a deep link closes immediately and lets navigation win over 
   await expect(page).toHaveURL(`${workspacePath}/sessions`);
   await page
     .getByRole("navigation", { name: "Workspace navigation" })
-    .getByRole("link", { name: "Analytics", exact: true })
+    .getByRole("link", { name: "Insights", exact: true })
     .click();
-  await expect(page).toHaveURL(`${workspacePath}/analytics`);
+  await expect(page).toHaveURL((url) => url.pathname === `${workspacePath}/analytics`);
+  const insights = page.url();
   createGate.release();
   await expect(page.getByText("Session #1 created.", { exact: true })).toBeVisible();
-  await expect(page).toHaveURL(`${workspacePath}/analytics`);
+  await expect(page).toHaveURL(insights);
   await page.getByRole("button", { name: "Open session", exact: true }).click();
   await expect(page).toHaveURL(`${workspacePath}/sessions/1`);
 });
 
 test.beforeEach(async ({ page }) => {
-  await page.route("**/api/workspaces/*/session-repositories", (route) =>
-    route.fulfill({
-      json: {
-        defaultGithubRepositoryId: "repo-fixture",
-        repositoryOptions: [{ id: "repo-fixture", fullName: "acme/wallie" }],
-        pipelineId: "pipeline-fixture",
-        stageOptions: [
-          { id: "plan-fixture", name: "Plan", position: 0, description: "Plan the work" },
-          { id: "build-fixture", name: "Build", position: 1, description: "Implement the plan" },
-        ],
-      },
-    }),
+  await page.route(
+    (url) => url.pathname.endsWith("/session-repositories"),
+    (route) =>
+      route.fulfill({
+        json: {
+          defaultGithubRepositoryId: "repo-fixture",
+          factoryId: new URL(route.request().url()).searchParams.get("factoryId"),
+          linearIssueLinking: true,
+          repositoryOptions: [{ id: "repo-fixture", fullName: "acme/wallie" }],
+          pipelineId: "pipeline-fixture",
+          stageOptions: [
+            { id: "plan-fixture", name: "Plan", position: 0, description: "Plan the work" },
+            { id: "build-fixture", name: "Build", position: 1, description: "Implement the plan" },
+          ],
+        },
+      }),
   );
   await signIn(page);
 });

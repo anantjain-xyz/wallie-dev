@@ -7,6 +7,7 @@ import { createPortal } from "react-dom";
 import { workspaceFactorySwitchHref } from "@/components/app-shell/workspace-location";
 import { WorkspaceScopeContext } from "@/components/app-shell/workspace-scope-context";
 import { FilterSelectTrigger } from "@/components/ui/filter-controls";
+import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { SELECT_FIT_CONTENT_CLASS } from "@/components/ui/select-popup";
 import {
@@ -43,6 +44,7 @@ export function FactorySelector({
   const pathname = usePathname();
   const router = useRouter();
   const search = useSearchParams();
+  const { startNavigation } = useOptionalRouteProgress();
   const [pending, startTransition] = useTransition();
   const chrome = useContext(WorkspaceScopeContext);
   const guarded = onSwitch ? chrome?.guardedPicker : null;
@@ -78,7 +80,10 @@ export function FactorySelector({
               window.location.hash,
             )
           : factorySwitchHref(pathname, search.toString(), value, resetParams);
-        const navigate = () => startTransition(() => router.push(href, { scroll: false }));
+        const navigate = () => {
+          if (presentation === "header") startNavigation(href);
+          startTransition(() => router.push(href, { scroll: false }));
+        };
         if (onSwitch) {
           const factory = factories.find((option) => option.id === value);
           onSwitch(navigate, factory ? factoryOptionLabel(factory) : "All factories");

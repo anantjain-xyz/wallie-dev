@@ -82,7 +82,7 @@ type CreateSessionDialogProps = {
   onClose: () => void;
   onCloseAutoFocus?: () => void;
   onPreviewChange?: (preview: SessionCreationPreview | null) => void;
-  onReopen?: () => void;
+  onReopen?: (submittedFactoryId?: string) => void;
   open: boolean;
   userId: string;
   workspaceId: string;
@@ -234,7 +234,7 @@ function CreateSessionDialogBody({
     }
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (sessionCommittedRef.current) onReset();
     if (previewVisibleRef.current) {
       previewVisibleRef.current = false;
@@ -989,7 +989,7 @@ function CreateSessionDialogBody({
           action: {
             label: "Open draft",
             altText: "Recover the session creation draft",
-            onClick: () => onReopen?.(),
+            onClick: () => onReopen?.(attempt.input.factoryId),
           },
         });
       }

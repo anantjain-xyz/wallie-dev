@@ -171,6 +171,155 @@ async function capture(page: Page, info: TestInfo, name: string) {
   await info.attach(name, { contentType: "image/png", path });
 }
 
+test("a factory switch wins before its route commits and an unconfirmed draft retries in its original factory", async ({
+  page,
+  baseURL,
+}, info) => {
+  test.skip(
+    process.env.WALLIE_FACTORY_QUALIFICATION !== "1",
+    "Requires a disposable local Supabase stack.",
+  );
+  const app = localUrl(baseURL);
+  const url = localUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  const key = process.env.SUPABASE_SECRET_KEY;
+  if (!key) throw new Error("Export the disposable local Supabase keys.");
+  const admin = createClient<Database>(url, key, { auth: { persistSession: false } });
+  const slug = `draft-recovery-${randomUUID().slice(0, 8)}`;
+  const email = `${slug}-owner@example.test`;
+  const ownerId = await createUser(admin, email);
+  let workspaceId: string | undefined;
+  const createResponse = Promise.withResolvers<void>();
+  const archiveRequest = Promise.withResolvers<void>();
+  const archiveResponse = Promise.withResolvers<void>();
+  try {
+    const workspace = await read(
+      admin.rpc("create_workspace", {
+        actor_user_id: ownerId,
+        actor_email: email,
+        requested_slug: slug,
+        workspace_name: "Studio North",
+      }),
+    );
+    workspaceId = workspace.id;
+    await write(
+      admin
+        .from("workspace_onboarding")
+        .update({ status: "completed" })
+        .eq("workspace_id", workspaceId),
+    );
+    const original = await read(
+      admin
+        .from("factories")
+        .select("id,name")
+        .eq("workspace_id", workspaceId)
+        .eq("is_default", true)
+        .single(),
+    );
+    const archive = await read(
+      admin.rpc("create_factory", {
+        p_workspace_id: workspaceId,
+        p_actor_user_id: ownerId,
+        p_name: "Legacy studio",
+        p_slug: "legacy-studio",
+      }),
+    );
+    await write(
+      admin.rpc("archive_factory", {
+        p_workspace_id: workspaceId,
+        p_factory_id: archive.id,
+        p_actor_user_id: ownerId,
+        p_reason: "Verify draft recovery from read-only browsing",
+      }),
+    );
+    await seedFactoryWork(admin, {
+      workspaceId,
+      factoryId: original.id,
+      title: "Studio brief",
+      isDefault: true,
+      count: 1,
+      firstNumber: 1,
+    });
+
+    const sessions = `/w/${slug}/sessions`;
+    const source = `${sessions}?factory=${original.id}`;
+    const archived = `${sessions}?factory=${archive.id}`;
+    const canonicalUrl = `${sessions}/1`;
+    const prompt = "Write the next studio brief";
+    const requests: unknown[] = [];
+    await page.route(
+      (target) => target.pathname === `/api/workspaces/${workspaceId}/session-repositories`,
+      (route) =>
+        route.fulfill({
+          json: {
+            defaultGithubRepositoryId: "repo-fixture",
+            factoryId: original.id,
+            linearIssueLinking: false,
+            pipelineId: "pipeline-fixture",
+            repositoryOptions: [{ id: "repo-fixture", fullName: "studio-north/briefs" }],
+            stageOptions: [{ id: "plan-fixture", name: "Plan", position: 0, description: "" }],
+          },
+        }),
+    );
+    await page.route("**/api/sessions", async (route) => {
+      requests.push(route.request().postDataJSON());
+      if (requests.length === 1) {
+        await createResponse.promise;
+        await route.abort("failed");
+      } else {
+        await route.fulfill({ status: 201, json: { canonicalUrl, number: 1 } });
+      }
+    });
+    await page.route(
+      (target) => target.pathname === sessions && target.searchParams.get("factory") === archive.id,
+      async (route) => {
+        archiveRequest.resolve();
+        await archiveResponse.promise;
+        await route.continue();
+      },
+    );
+    await signInViaMagicLink(page, source, { baseURL: app, email });
+    await page.getByRole("button", { name: "New session", exact: true }).click();
+    const composer = page.getByRole("dialog", { name: "Start a new session", exact: true });
+    await composer.getByLabel("Prompt", { exact: true }).fill(prompt);
+    await composer.getByRole("button", { name: "Start session", exact: true }).click();
+    const preview = page.locator("[data-session-creation]");
+    await expect(preview).toBeVisible();
+    await selectFactory(page, "Legacy studio (archived)");
+    await archiveRequest.promise;
+    await expect(page).toHaveURL(source);
+    await expect(preview).toBeHidden();
+    createResponse.resolve();
+    const recover = page.getByRole("button", { name: "Open draft", exact: true });
+    await expect(recover).toBeVisible();
+    await expect(composer).toBeHidden();
+    archiveResponse.resolve();
+
+    await expect(page).toHaveURL(archived);
+    await expect(page.getByRole("combobox", { name: "Factory", exact: true })).toHaveText(
+      "Legacy studio (archived)",
+    );
+    await expect(page.getByRole("button", { name: "New session", exact: true })).toHaveCount(0);
+    await expect(preview).toBeHidden();
+    await capture(page, info, "archived-browse-with-draft-recovery");
+
+    await recover.click();
+    await expect(page).toHaveURL(`${source}&create=1`);
+    await expect(composer.getByLabel("Prompt", { exact: true })).toHaveValue(prompt);
+    await expect(composer.getByText(original.name, { exact: true })).toBeVisible();
+    await capture(page, info, "recovered-original-factory-draft");
+    await composer.getByRole("button", { name: "Retry creation", exact: true }).click();
+    await expect(page).toHaveURL(canonicalUrl);
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toMatchObject({ factoryId: original.id, promptMd: prompt });
+    expect(requests[1]).toEqual(requests[0]);
+  } finally {
+    createResponse.resolve();
+    archiveResponse.resolve();
+    if (workspaceId) await write(admin.from("workspaces").delete().eq("id", workspaceId));
+    await write(admin.auth.admin.deleteUser(ownerId));
+  }
+});
+
 test("Activity searches actors and pages filtered results within factory access", async ({
   page,
   baseURL,
