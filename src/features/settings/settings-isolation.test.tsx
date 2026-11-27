@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen } from "@testing-library/react";
-import { Profiler } from "react";
+import { Profiler, useLayoutEffect } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { SettingsPageData } from "@/features/settings/data";
@@ -213,6 +213,29 @@ describe("Settings client-island isolation", () => {
     );
 
     expect(screen.getByText("Linear stages design, build")).not.toBeNull();
+  });
+
+  it("applies a sandbox update published between runtime render and subscription", () => {
+    const initialData = data();
+    initialData.workspace.id = "workspace-mount-race";
+
+    function SaveBeforeRuntimeEffect() {
+      useLayoutEffect(() => {
+        screen.getByRole("button", { name: "Vercel initial" }).click();
+      }, []);
+      return null;
+    }
+
+    render(
+      <>
+        <VercelIntegrationIsland initialData={initialData} />
+        <RuntimeIntegrationIsland codexStatus={null} initialData={initialData} />
+        <SaveBeforeRuntimeEffect />
+      </>,
+    );
+
+    expect(screen.getByRole("button", { name: "Vercel updated" })).not.toBeNull();
+    expect(screen.getByText("Sandbox E2B ready")).not.toBeNull();
   });
 
   it("does not rerender a sibling integration when local section state changes", () => {

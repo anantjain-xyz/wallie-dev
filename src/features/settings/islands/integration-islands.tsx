@@ -33,13 +33,13 @@ import {
   dispatchSettingsEvent,
   registerSettingsDataReplayConsumer,
   replaySettingsDataChanges,
+  subscribeToSettingsSandboxChanges,
   SETTINGS_GITHUB_CHANGED,
   SETTINGS_PIPELINE_CHANGED,
   SETTINGS_SANDBOX_CHANGED,
   SETTINGS_SECRETS_CHANGED,
   type GithubChangedDetail,
   type PipelineChangedDetail,
-  type SandboxChangedDetail,
   type SecretsChangedDetail,
 } from "@/features/settings/settings-island-events";
 
@@ -273,25 +273,15 @@ export function RuntimeIntegrationIsland({
   defaultFactoryName?: string;
   initialData: SettingsPageData;
 }) {
-  const [sandboxData, setSandboxData] = useState(() =>
-    replaySettingsDataChanges(initialData, "runtime-sandbox"),
-  );
+  const [sandboxData, setSandboxData] = useState(initialData);
   const { feedback, setMessage } = useIslandFeedback();
-  useEffect(() => {
-    const unregister = registerSettingsDataReplayConsumer(
-      initialData.workspace.id,
-      "runtime-sandbox",
-    );
-    const handleSandboxChange = (event: Event) =>
-      setSandboxData((current) =>
-        applySandboxSettingsToData(current, (event as CustomEvent<SandboxChangedDetail>).detail),
-      );
-    window.addEventListener(SETTINGS_SANDBOX_CHANGED, handleSandboxChange);
-    return () => {
-      unregister();
-      window.removeEventListener(SETTINGS_SANDBOX_CHANGED, handleSandboxChange);
-    };
-  }, [initialData.workspace.id]);
+  useEffect(
+    () =>
+      subscribeToSettingsSandboxChanges(initialData, (settings) =>
+        setSandboxData((current) => applySandboxSettingsToData(current, settings)),
+      ),
+    [initialData],
+  );
 
   return (
     <>

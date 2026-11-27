@@ -41,7 +41,7 @@ const HASH_ROUTES: Record<string, SettingsHashRoute> = {
   "run-history": { anchor: "run-history", category: "advanced" },
   runtime: { anchor: "runtime", category: "integrations" },
   sandbox: { anchor: "sandbox", category: "integrations" },
-  secrets: { anchor: "runtime", category: "integrations" },
+  secrets: { anchor: "workspace-secrets", category: "integrations" },
   usage: { anchor: "usage", category: "advanced" },
   vercel: { anchor: "sandbox", category: "integrations" },
   verify: { anchor: "verify", category: "integrations" },

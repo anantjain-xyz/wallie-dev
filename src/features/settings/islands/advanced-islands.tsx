@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 
 import type { SettingsPageData } from "@/features/settings/data";
@@ -12,6 +13,19 @@ import {
 } from "@/features/settings/settings-island-events";
 import { MaintenancePanel } from "@/features/settings/maintenance-panel";
 import { VerifySetupSection } from "@/features/settings/verify-setup-section";
+
+export const RunHistoryIsland = dynamic(
+  () =>
+    import("@/features/settings/run-history-controls").then((module) => module.RunHistoryControls),
+  {
+    ssr: false,
+    loading: () => (
+      <p aria-busy="true" className="ui-sheet px-4 py-3 type-body text-muted" role="status">
+        Loading retention and exports…
+      </p>
+    ),
+  },
+);
 
 export function VerifySetupIsland({
   defaultFactoryName,

@@ -14,7 +14,11 @@ import {
   FactorySettingsPanel,
   FactorySettingsProvider,
 } from "@/features/settings/factory-settings";
-import { MaintenanceIsland, VerifySetupIsland } from "@/features/settings/islands/advanced-islands";
+import {
+  MaintenanceIsland,
+  RunHistoryIsland,
+  VerifySetupIsland,
+} from "@/features/settings/islands/advanced-islands";
 import {
   GithubIntegrationIsland,
   LinearIntegrationIsland,
@@ -28,7 +32,6 @@ import {
   DangerActionsIsland,
   WorkspaceIdentityIsland,
 } from "@/features/settings/islands/workspace-islands";
-import { RunHistoryControls } from "@/features/settings/run-history-controls";
 import { SettingsCategoryNav } from "@/features/settings/settings-category-nav";
 import type { SettingsCategory } from "@/features/settings/settings-categories";
 import { Section, UsageSummary } from "@/features/settings/settings-ui";
@@ -261,7 +264,7 @@ function AdvancedCategory(props: SettingsServerShellProps) {
             tagline="Set how long this workspace keeps run content, or request a private export. Shorter limits can permanently remove older content and expire affected exports."
             title="Retention and exports"
           >
-            <RunHistoryControls workspaceId={props.initialData.workspace.id} />
+            <RunHistoryIsland workspaceId={props.initialData.workspace.id} />
           </Section>
           <Section
             anchorId="maintenance"

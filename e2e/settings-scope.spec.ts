@@ -96,6 +96,19 @@ test("legacy URLs keep their scope and mobile jump links focus the destination",
   await expect(page.getByRole("combobox", { name: "Factory", exact: true })).toBeFocused();
 });
 
+test("both the canonical secrets destination and legacy alias focus Workspace secrets", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const target of ["#workspace-secrets", "?category=workspace#secrets"]) {
+    await page.goto(`/dev/settings${target}`);
+    await expect(page).toHaveURL((url) => url.hash === "#workspace-secrets");
+    await expect(
+      page.getByRole("heading", { name: "Workspace secrets", exact: true }),
+    ).toBeFocused();
+  }
+});
+
 test("changing connector selection never retargets or drops the default factory edit", async ({
   page,
 }) => {

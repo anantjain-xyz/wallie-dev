@@ -18,6 +18,7 @@ vi.mock("@/features/settings/islands/pipeline-island", () => ({
 }));
 vi.mock("@/features/settings/islands/advanced-islands", () => ({
   MaintenanceIsland: () => <p>Maintenance island</p>,
+  RunHistoryIsland: () => <p>Run history island</p>,
   VerifySetupIsland: () => <p>Verify setup island</p>,
 }));
 vi.mock("@/features/settings/islands/workspace-islands", () => ({

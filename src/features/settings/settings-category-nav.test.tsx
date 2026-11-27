@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -63,7 +63,7 @@ describe("resolveSettingsHashRoute", () => {
       category: "integrations",
     });
     expect(resolveSettingsHashRoute("#secrets")).toEqual({
-      anchor: "runtime",
+      anchor: "workspace-secrets",
       category: "integrations",
     });
     expect(resolveSettingsHashRoute("#github")).toEqual({
@@ -219,7 +219,7 @@ describe("SettingsCategoryNav hash routing", () => {
     );
 
     window.history.replaceState(null, "", `/w/acme/settings?category=integrations#${anchor}`);
-    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    act(() => window.dispatchEvent(new HashChangeEvent("hashchange")));
 
     await waitFor(() => {
       expect(replace).not.toHaveBeenCalled();
@@ -264,7 +264,7 @@ describe("SettingsCategoryNav hash routing", () => {
     render(<SettingsCategoryNav activeCategory="advanced" canManage workspaceSlug="acme" />);
 
     window.history.replaceState(null, "", "/w/acme/settings?category=advanced#github");
-    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    act(() => window.dispatchEvent(new HashChangeEvent("hashchange")));
 
     await waitFor(() => {
       expect(replace).toHaveBeenCalledWith("/w/acme/settings?category=integrations#github", {
@@ -280,7 +280,7 @@ describe("SettingsCategoryNav hash routing", () => {
     render(<SettingsCategoryNav activeCategory="integrations" canManage workspaceSlug="acme" />);
 
     window.history.replaceState(null, "", "/w/acme/settings?category=integrations#coding-agent");
-    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    act(() => window.dispatchEvent(new HashChangeEvent("hashchange")));
 
     await waitFor(() => {
       expect(replace).toHaveBeenCalledWith(

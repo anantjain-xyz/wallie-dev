@@ -86,7 +86,27 @@ export function registerSettingsDataReplayConsumer(
   };
 }
 
+export function subscribeToSettingsSandboxChanges(
+  initialData: SettingsPageData,
+  onChange: (settings: SandboxSettingsResponse) => void,
+) {
+  const handleChange = (event: Event) =>
+    onChange((event as CustomEvent<SandboxSettingsResponse>).detail);
+  window.addEventListener(SETTINGS_SANDBOX_CHANGED, handleChange);
+
+  const pending = replaySettingsDataChanges(initialData, "runtime-sandbox").sandboxSettings;
+  if (pending !== initialData.sandboxSettings) onChange(pending);
+  const unregister = registerSettingsDataReplayConsumer(
+    initialData.workspace.id,
+    "runtime-sandbox",
+  );
+
+  return () => {
+    unregister();
+    window.removeEventListener(SETTINGS_SANDBOX_CHANGED, handleChange);
+  };
+}
+
 export type GithubChangedDetail = SettingsPageData["github"];
 export type PipelineChangedDetail = NonNullable<SettingsPageData["pipeline"]>;
-export type SandboxChangedDetail = SandboxSettingsResponse;
 export type SecretsChangedDetail = WorkspaceSecretPreview[];
