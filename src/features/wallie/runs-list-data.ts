@@ -2,6 +2,7 @@ import "server-only";
 
 import { notFound } from "next/navigation";
 
+import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import {
   loadWorkspaceRunCatalogPage,
   RunCatalogCursorError,
@@ -31,6 +32,7 @@ export type RunsListData = {
   sessionOption?: RunSessionOption | null;
   stages?: RunStageOption[] | null;
   promptFilterLabel?: string | null;
+  factoryNames?: Record<string, string>;
 };
 
 export async function loadRunsListData(
@@ -42,7 +44,7 @@ export async function loadRunsListData(
   const parsed = parseRunsListQuery(searchParams);
   const scope = { supabase, workspaceId: workspace.id, factoryId };
   const query = parsed.data ?? {};
-  const [sessionOption, stages, promptFilterLabel] = await Promise.all([
+  const [sessionOption, stages, promptFilterLabel, factories] = await Promise.all([
     query.sessionId
       ? loadRunSessionOptions(scope, { sessionId: query.sessionId })
           .then(([option]) => option ?? null)
@@ -50,6 +52,7 @@ export async function loadRunsListData(
       : null,
     loadRunStageOptions(scope).catch(() => null),
     loadRunPromptFilterLabel(scope, query).catch(() => null),
+    factoryId === undefined ? loadWorkspaceFactoryOptions(workspaceSlug) : undefined,
   ]);
   const common = {
     workspaceId: workspace.id,
@@ -58,6 +61,7 @@ export async function loadRunsListData(
     sessionOption,
     stages,
     promptFilterLabel,
+    factoryNames: factories && Object.fromEntries(factories.map(({ id, name }) => [id, name])),
   };
   if (!parsed.success) return { ...common, state: { kind: "invalid-query" } };
   try {

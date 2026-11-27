@@ -103,14 +103,13 @@ describe("FactoryInboxPage", () => {
     expect(screen.getByText("Blocking feedback")).toBeVisible();
     expect(screen.getAllByText("Payments · Verify · Version 3")).toHaveLength(2);
     expect(screen.getAllByText(/Release agent/)).toHaveLength(2);
-    const reviewLink = screen.getByRole("link", { name: "Open review for Payment integration" });
+    const reviewLink = screen.getByRole("link", { name: "Payment integration" });
+    expect(reviewLink.closest("li")?.querySelectorAll("a")).toHaveLength(1);
     expect(reviewLink).toHaveAttribute(
       "href",
       `/w/acme/sessions/22?artifactStage=verify&artifactId=${artifactId}&artifactVersion=3&reviewStageId=${stageId}&reviewRevision=7&returnTo=${encodeURIComponent(`/w/acme/inbox?factory=${factoryId}`)}`,
     );
-    expect(
-      screen.getByRole("link", { name: "Answer clarification for Confirm the rollout" }),
-    ).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Confirm the rollout" })).toHaveAttribute(
       "href",
       `/w/acme/sessions/23?artifactStage=verify&artifactId=${artifactId}&artifactVersion=3&reviewStageId=${stageId}&reviewRevision=7&clarificationId=${clarificationId}&returnTo=${encodeURIComponent(`/w/acme/inbox?factory=${factoryId}`)}`,
     );
@@ -126,7 +125,7 @@ describe("FactoryInboxPage", () => {
     renderInbox(snapshot, happenedAt, { cursor: "current", kind: "review" });
 
     const inbox = `/w/acme/inbox?factory=${factoryId}`;
-    const href = screen.getByRole("link", { name: /Open review/ }).getAttribute("href")!;
+    const href = screen.getByRole("link", { name: review.title }).getAttribute("href")!;
     expect(new URL(href, "http://localhost").searchParams.get("returnTo")).toBe(
       `${inbox}&kind=review&cursor=current`,
     );

@@ -96,6 +96,30 @@ const evaluated = {
 } satisfies RunScore;
 
 describe("run score section", () => {
+  it.each([
+    [false, "No scorer evaluations recorded for this run."],
+    [true, "Scorer evaluations are unavailable."],
+  ] as const)(
+    "preserves a compact deep link for evaluation results (unavailable: %s)",
+    async (unavailable, message) => {
+      const load = vi.mocked(loadRunScores);
+      if (unavailable) load.mockRejectedValueOnce(new Error("No results"));
+      else load.mockResolvedValueOnce({ factoryId, scores: [] });
+
+      render(
+        await RunScoreSection({
+          workspaceSlug: "wallie",
+          sessionId,
+          sessionNumber: 2,
+          runId,
+          attempt: undefined,
+        }),
+      );
+      expect(screen.getByText(message).id).toBe("scorer-evaluations");
+      expect(screen.queryByRole("heading", { name: "Scorer evaluations" })).toBeNull();
+    },
+  );
+
   it("shows job cancellation while keeping an explicitly selected earlier failure", async () => {
     vi.mocked(loadRunScores).mockResolvedValue({
       factoryId,

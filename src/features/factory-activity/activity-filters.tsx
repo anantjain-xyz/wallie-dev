@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useOptimistic, useState, useTransition } from "react";
 
 import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
@@ -34,29 +34,32 @@ const statusOptions = [
 
 export function ActivityStatusFilter({ query, workspaceSlug }: FilterProps) {
   const router = useRouter();
-  const [pending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
+  const [status, showStatus] = useOptimistic(query.status);
 
   return (
     <SelectField
       className="min-w-0 max-w-full"
-      disabled={pending}
-      label="Status"
+      label="Run status"
       labelClassName="text-xs text-muted"
       name="status"
       onValueChange={(value) => {
         if (value && !Object.hasOwn(statuses, value)) return;
-        const status = (value || undefined) as ActivityRunStatus | undefined;
-        if (query.status === status) return;
+        const nextStatus = (value || undefined) as ActivityRunStatus | undefined;
+        if (status === nextStatus) return;
         const href = activityHref(workspaceSlug, {
           ...query,
-          status,
+          status: nextStatus,
           runsBefore: undefined,
         });
-        startTransition(() => router.push(href, { scroll: false }));
+        startTransition(() => {
+          showStatus(nextStatus);
+          router.push(href, { scroll: false });
+        });
       }}
       options={statusOptions}
       triggerClassName={`max-w-full ${FILTER_CONTROL_CLASS}`}
-      value={query.status ?? ""}
+      value={status ?? ""}
     />
   );
 }
@@ -70,12 +73,16 @@ export function ActivityActorFilter({
 
   return (
     <Dialog onOpenChange={setOpen} open={open}>
-      <DialogTrigger
-        className={`ui-button min-w-0 max-w-full gap-2 sm:max-w-64 ${FILTER_CONTROL_CLASS}`}
-      >
-        <span className="truncate">Actor: {label}</span>
-        <ChevronDownIcon aria-hidden="true" className="size-3.5 shrink-0" />
-      </DialogTrigger>
+      <div className="min-w-0 max-w-full space-y-1.5">
+        <span className="block text-xs text-muted">Actor</span>
+        <DialogTrigger
+          aria-label={`Actor: ${label}`}
+          className={`ui-button min-w-0 max-w-full gap-2 sm:max-w-64 ${FILTER_CONTROL_CLASS}`}
+        >
+          <span className="truncate">{label}</span>
+          <ChevronDownIcon aria-hidden="true" className="size-3.5 shrink-0" />
+        </DialogTrigger>
+      </div>
       <DialogContent
         description="Find people or systems with access or recorded activity in this factory scope."
         title="Filter by actor"

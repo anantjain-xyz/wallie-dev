@@ -290,13 +290,11 @@ export async function RunScoreSection({
     : null;
   if (!data || !data.scores.length) {
     return (
-      <PageSection anchorId="scorer-evaluations" title="Scorer evaluations">
-        <p className="ui-sheet type-secondary px-4 py-4 text-muted sm:px-5">
-          {data
-            ? "No scorer evaluations recorded for this run."
-            : "Scorer evaluations are unavailable."}
-        </p>
-      </PageSection>
+      <p className="scroll-mt-8 type-secondary text-muted" id="scorer-evaluations">
+        {data
+          ? "No scorer evaluations recorded for this run."
+          : "Scorer evaluations are unavailable."}
+      </p>
     );
   }
 

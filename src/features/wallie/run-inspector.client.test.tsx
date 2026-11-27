@@ -8,6 +8,7 @@ import type { RunCatalogRecovery } from "@/features/wallie/run-catalog-recovery"
 import { RunInspector } from "@/features/wallie/run-inspector";
 import type {
   RunInspectorArtifact,
+  RunInspectorContext,
   RunInspectorExecutionProfile,
   RunInspectorRoutingDecision,
   RunInspectorSkills,
@@ -142,7 +143,12 @@ function show(
   executionProfile?: RunInspectorExecutionProfile,
   routingDecision?: RunInspectorRoutingDecision,
   canOpenRoutingPolicy = false,
-  navigation: { newerRunHref?: string; returnTo?: { href: string; label: string } } = {},
+  options: {
+    executionProfileAttempt?: number;
+    frozenContext?: RunInspectorContext;
+    newerRunHref?: string;
+    returnTo?: { href: string; label: string };
+  } = {},
 ) {
   return render(
     <RunInspector
@@ -165,7 +171,7 @@ function show(
       workspaceId={workspaceId}
       workspaceSlug="wallie"
       transcript={<p>Exact attempt activity</p>}
-      {...navigation}
+      {...options}
     />,
   );
 }
@@ -285,12 +291,39 @@ describe("RunInspector", () => {
   });
 
   it.each([
-    ["unrecorded", "This attempt has no recorded routing decision."],
-    ["unavailable", "The routing decision is unavailable."],
+    ["unrecorded", "Not recorded"],
+    ["unavailable", "Unavailable"],
   ] as const)("shows a clear %s routing state", (kind, message) => {
     show({}, undefined, undefined, undefined, { kind });
-    expect(routingPanel().getByText(message)).toBeTruthy();
-    expect(routingPanel().queryByRole("link")).toBeNull();
+    const records = within(screen.getByRole("region", { name: "Diagnostic records" }));
+    const routing = records.getByText("Routing decision").parentElement;
+    expect(routing?.id).toBe("routing-decision");
+    expect(routing?.querySelector("dd")?.textContent).toBe(message);
+    expect(records.queryByRole("link")).toBeNull();
+  });
+
+  it("consolidates gaps in diagnostic records without conflating them or losing anchors", () => {
+    show(
+      {},
+      { kind: "none" },
+      { kind: "unavailable" },
+      { kind: "unrecorded" },
+      { kind: "unrecorded" },
+      false,
+      { executionProfileAttempt: 2, frozenContext: { kind: "unavailable" } },
+    );
+    const records = within(screen.getByRole("region", { name: "Diagnostic records" }));
+    expect(records.getAllByText("Unavailable")).toHaveLength(2);
+    expect(records.getAllByText("Not recorded")).toHaveLength(2);
+    expect(records.getByText("Frozen inputs").parentElement?.id).toBe("frozen-inputs");
+    expect(records.getByText("Execution profile (job attempt 2)").parentElement?.id).toBe(
+      "execution-profile",
+    );
+    expect(
+      records.getByText("Skill revisions").parentElement?.querySelector("dd")?.textContent,
+    ).toBe("Unavailable");
+    expect(screen.queryByRole("heading", { name: "Routing decision" })).toBeNull();
+    expect(screen.getByText("No artifact was accepted.")).toBeTruthy();
   });
 
   it("displays the recorded execution profile for this attempt", () => {
@@ -339,17 +372,17 @@ describe("RunInspector", () => {
     expect(screen.getByRole("link", { name: /Back to filtered runs/ }).getAttribute("href")).toBe(
       href,
     );
-    expect(
-      screen.getByRole("link", { name: `#42 · ${run.sessionTitle}` }).getAttribute("href"),
-    ).toBe(run.sessionRunHref);
-    expect(screen.getByRole("link", { name: "Open artifact" }).getAttribute("href")).toBe(
+    expect(screen.getByRole("link", { name: "Open session #42" }).getAttribute("href")).toBe(
+      run.sessionRunHref,
+    );
+    expect(screen.getByRole("link", { name: "build · Version 2" }).getAttribute("href")).toBe(
       artifact.href,
     );
     expect(screen.getByText("Exact attempt activity")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "View transcript" }).getAttribute("href")).toBe(
+    expect(screen.getByRole("link", { name: "Transcript" }).getAttribute("href")).toBe(
       "#run-transcript",
     );
-    expect(screen.getByRole("link", { name: "Inspect run evidence" }).getAttribute("href")).toBe(
+    expect(screen.getByRole("link", { name: "Evidence" }).getAttribute("href")).toBe(
       "#run-evidence",
     );
     expect(screen.getByText("Cost unavailable")).toBeTruthy();
@@ -401,6 +434,17 @@ describe("RunInspector", () => {
     expect(screen.getByText(digest)).toBeTruthy();
   });
 
+  it("distinguishes unrecorded skills from a recorded empty set", () => {
+    const view = show();
+    const records = within(screen.getByRole("region", { name: "Diagnostic records" }));
+    const skills = records.getByText("Skill revisions").parentElement;
+    expect(skills?.querySelector("dd")?.textContent).toBe("Not recorded");
+
+    view.unmount();
+    show({}, undefined, { kind: "recorded", revisions: [] });
+    expect(screen.queryByText("Skill revisions")).toBeNull();
+  });
+
   it("keeps cancellation visible even when a newer attempt exists", () => {
     const nextId = "00000000-0000-4000-8000-000000000006";
     const next = `/w/wallie/runs/${nextId}`;
@@ -423,9 +467,7 @@ describe("RunInspector", () => {
     expect(screen.getByLabelText("Canceled. Work was canceled.")).toBeTruthy();
     expect(screen.getByText("This attempt was canceled.")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "A newer attempt exists" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Inspect next attempt" }).getAttribute("href")).toBe(
-      next,
-    );
+    expect(screen.getByRole("link", { name: "Next attempt" }).getAttribute("href")).toBe(next);
     expect(screen.queryByLabelText("Running. Work is in progress.")).toBeNull();
   });
 

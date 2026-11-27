@@ -29,22 +29,11 @@ export function RunContextInspection({
   initialNow,
   memoryProposalHref,
 }: {
-  result: RunInspectorContext;
+  result: Extract<RunInspectorContext, { kind: "recorded" }>;
   workspaceSlug: string;
   initialNow: string;
   memoryProposalHref?: string | null;
 }) {
-  if (result.kind !== "recorded") {
-    return (
-      <PageSection anchorId="frozen-inputs" title="Frozen inputs">
-        <p className="ui-sheet type-secondary p-4 text-muted">
-          {result.kind === "unrecorded"
-            ? "This attempt has no recorded input manifest."
-            : "The input manifest is unavailable."}
-        </p>
-      </PageSection>
-    );
-  }
   const { factoryId, canManage, originRunId, manifestSha256, createdAt, manifest } = result.context;
   const memories = manifest.version === 2 ? manifest.memories : [];
   const omitted = manifest.conversation.messages.filter((message) => "reason" in message).length;

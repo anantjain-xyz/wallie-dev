@@ -27,23 +27,11 @@ export function RunRoutingDecisionInspection({
   names,
 }: {
   canOpenPolicy: boolean;
-  result: RunInspectorRoutingDecision;
+  result: Extract<RunInspectorRoutingDecision, { kind: "recorded" }>;
   workspaceSlug: string;
   execution?: { name: string; provider: string };
   names?: RunInspectorNames;
 }) {
-  if (result.kind !== "recorded") {
-    return (
-      <PageSection anchorId="routing-decision" title="Routing decision">
-        <p className="ui-sheet type-secondary p-4 text-muted">
-          {result.kind === "unrecorded"
-            ? "This attempt has no recorded routing decision."
-            : "The routing decision is unavailable."}
-        </p>
-      </PageSection>
-    );
-  }
-
   const { decision, factoryId, canManageFactory, taskClassName, benchmarkEvidence, override } =
     result.receipt;
   const selected = decision.disposition === "selected";

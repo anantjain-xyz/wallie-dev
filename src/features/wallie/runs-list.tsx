@@ -11,14 +11,14 @@ import type { RunsListData } from "@/features/wallie/runs-list-data";
 import { RunsListFilters, RunsListRefresh } from "@/features/wallie/runs-list-filters";
 import {
   RUN_PROVIDER_LABELS,
-  runCatalogActivityLabel,
+  runCatalogActivityWarning,
   runCatalogCostLabel,
   runCatalogRecoveryLabel,
   runFromListHref,
   runsListHasFilters,
   runsListPageHref,
 } from "@/features/wallie/runs-list-state";
-import { workspaceRunsPath, workspaceSessionsPath } from "@/lib/routes";
+import { workspaceSessionsPath } from "@/lib/routes";
 
 export function RunsList({
   data,
@@ -37,6 +37,7 @@ export function RunsList({
   const runs = state.kind === "ready" ? state.page.runs : [];
   const latestHref = runsListPageHref(workspaceSlug, query, undefined, factoryQuery);
   const sessionsHref = withFactoryQuery(workspaceSessionsPath(workspaceSlug), factoryQuery);
+  const filtered = runsListHasFilters(query);
 
   return (
     <PageContainer className="pt-5 sm:pt-10">
@@ -44,20 +45,17 @@ export function RunsList({
         actions={
           <>
             {factorySelector}
-            <RunsListRefresh />
+            {state.kind === "error" ? null : <RunsListRefresh />}
           </>
         }
         actionsRightOnDesktop
-        description={
-          factoryName
-            ? `Execution attempts in ${factoryName}. Open a run to inspect its outcome and activity.`
-            : "Execution attempts across all factories you can access. Open a run to inspect its outcome and activity."
-        }
+        className="mb-4 sm:mb-5"
         title="Runs"
       />
       <RunsListFilters
-        key={JSON.stringify({ factoryQuery, query })}
+        key={factoryQuery}
         factoryQuery={factoryQuery}
+        invalidQuery={state.kind === "invalid-query"}
         query={query}
         sessionOption={data.sessionOption}
         stages={data.stages}
@@ -75,91 +73,77 @@ export function RunsList({
           </h2>
           <p className="mt-2 text-sm text-muted">
             {state.kind === "error"
-              ? "Try again to load this page."
-              : "Start with the latest runs or adjust your filters."}
+              ? "Try again to load the runs."
+              : state.kind === "invalid-query"
+                ? "Clear the filters to load the latest runs."
+                : "Start with the latest runs for these filters."}
           </p>
           <div className="mt-5 flex flex-wrap justify-center gap-2">
             {state.kind === "error" ? <RunsListRefresh label="Try again" /> : null}
-            <Link className="ui-button" href={latestHref}>
-              Latest runs
-            </Link>
+            {state.kind === "invalid-cursor" ? (
+              <Link className="ui-button" href={latestHref}>
+                Latest runs
+              </Link>
+            ) : null}
           </div>
         </section>
       ) : runs.length === 0 ? (
         <section className="ui-sheet border-dashed px-6 py-14 text-center">
           <h2 className="text-sm font-semibold text-foreground">
-            {query.cursor
-              ? "No older runs"
-              : runsListHasFilters(query)
-                ? "No matching runs"
-                : "No runs yet"}
+            {query.cursor ? "No older runs" : filtered ? "No matching runs" : "No runs yet"}
           </h2>
-          <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-muted">
-            {query.cursor
-              ? "You’ve reached the end of this list."
-              : runsListHasFilters(query)
-                ? "Adjust the filters to find another execution attempt."
-                : "Runs appear here when a session starts work. Each attempt keeps its own activity and outcome."}
-          </p>
-          <Link
-            className="ui-button mt-5"
-            href={
-              query.cursor
-                ? latestHref
-                : runsListHasFilters(query)
-                  ? withFactoryQuery(workspaceRunsPath(workspaceSlug), factoryQuery)
-                  : sessionsHref
-            }
-          >
-            {query.cursor
-              ? "Latest runs"
-              : runsListHasFilters(query)
-                ? "Clear filters"
-                : "View sessions"}
-          </Link>
+          {query.cursor ? (
+            <Link className="ui-button mt-4" href={latestHref}>
+              Latest runs
+            </Link>
+          ) : filtered ? null : (
+            <>
+              <p className="mt-2 text-sm text-muted">
+                Runs appear here when a session starts work.
+              </p>
+              <Link className="ui-button mt-4" href={sessionsHref}>
+                View sessions
+              </Link>
+            </>
+          )}
         </section>
       ) : (
         <>
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
-            <p>
-              {runs.length} {runs.length === 1 ? "run" : "runs"} on this page
-            </p>
-            <p>Newest first{query.cursor ? " · Older runs" : ""}</p>
-          </div>
-          <ol aria-label="Runs" className="ui-sheet divide-y divide-border">
+          <p className="sr-only" role="status">
+            {runs.length} {runs.length === 1 ? "run" : "runs"} on this page
+          </p>
+          <ol
+            aria-label={factoryName ? `Runs in ${factoryName}` : "Runs"}
+            className="ui-sheet divide-y divide-border"
+          >
             {runs.map((run) => (
               <RunListRow
                 key={run.id}
+                factoryName={data.factoryNames?.[run.factoryId]}
                 initialNow={initialNow}
                 run={run}
                 href={runFromListHref(workspaceSlug, run.id, query, factoryQuery)}
               />
             ))}
           </ol>
-          <nav
-            aria-label="Run list pages"
-            className="mt-5 flex flex-wrap items-center justify-between gap-3"
-          >
-            <div className="text-xs text-muted">
+          {query.cursor || state.page.nextCursor ? (
+            <nav aria-label="Run list pages" className="mt-5 flex flex-wrap justify-end gap-2">
               {query.cursor ? (
-                <Link className="text-foreground underline underline-offset-4" href={latestHref}>
-                  Back to latest
+                <Link className="ui-button" href={latestHref} prefetch={false}>
+                  Latest runs
                 </Link>
-              ) : (
-                "Refresh to see new runs."
-              )}
-            </div>
-            {state.page.nextCursor ? (
-              <Link
-                className="ui-button"
-                href={runsListPageHref(workspaceSlug, query, state.page.nextCursor, factoryQuery)}
-              >
-                Older runs →
-              </Link>
-            ) : (
-              <span className="text-xs text-muted">End of list</span>
-            )}
-          </nav>
+              ) : null}
+              {state.page.nextCursor ? (
+                <Link
+                  className="ui-button"
+                  href={runsListPageHref(workspaceSlug, query, state.page.nextCursor, factoryQuery)}
+                  prefetch={false}
+                >
+                  Older runs
+                </Link>
+              ) : null}
+            </nav>
+          ) : null}
         </>
       )}
     </PageContainer>
@@ -167,10 +151,12 @@ export function RunsList({
 }
 
 function RunListRow({
+  factoryName,
   run,
   href,
   initialNow,
 }: {
+  factoryName?: string;
   run: WorkspaceRunCatalogItem;
   href: string;
   initialNow: string;
@@ -179,32 +165,35 @@ function RunListRow({
   const retryAt =
     run.recovery?.queue.state === "retry_scheduled" ? run.recovery.queue.scheduledAt : null;
   const attemptLabel = run.stageOrdinal === null ? null : `Attempt ${run.stageOrdinal}`;
+  const activityWarning = runCatalogActivityWarning(run);
+  const cost = runCatalogCostLabel(run);
   return (
-    <li className="grid min-w-0 gap-4 px-4 py-5 sm:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_auto] sm:px-5">
+    <li className="grid min-w-0 items-start gap-x-5 gap-y-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:px-5">
       <div className="min-w-0">
         <Link
-          className="text-[14px] font-semibold leading-6 text-foreground hover:underline [overflow-wrap:anywhere]"
+          aria-label={`${run.sessionTitle} — ${run.stageName ?? "Session"}, ${attemptLabel?.toLowerCase() ?? `created ${formatUtcTimestamp(run.createdAt)}`}`}
+          className="text-sm font-semibold text-foreground underline decoration-border-strong underline-offset-4 hover:decoration-current [overflow-wrap:anywhere]"
           href={href}
           prefetch={false}
         >
           {run.sessionTitle}
-          <span className="sr-only">
-            {" "}
-            — {run.stageName ?? "Session"},{" "}
-            {attemptLabel?.toLowerCase() ?? `created ${formatUtcTimestamp(run.createdAt)}`}
-          </span>
         </Link>
-        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
-          <Link className="font-mono hover:text-foreground" href={run.sessionRunHref}>
+        <p className="mt-1 text-xs text-muted [overflow-wrap:anywhere]">
+          <Link
+            aria-label={`Session #${run.sessionNumber}`}
+            className="font-mono underline underline-offset-2 hover:text-foreground"
+            href={run.sessionRunHref}
+          >
             #{run.sessionNumber}
           </Link>
-          <span aria-hidden="true">·</span>
-          <span>{run.stageName ?? "Session run"}</span>
-          <span aria-hidden="true">·</span>
-          <span>
-            {attemptLabel ?? <TimeDisplay initialNow={initialNow} value={run.createdAt} />}
-          </span>
-        </div>
+          {" · "}
+          {run.stageName ?? "Session run"}
+          {attemptLabel ? ` · ${attemptLabel}` : null}
+          {factoryName ? ` · ${factoryName}` : null}
+        </p>
+        <p className="mt-1 text-xs text-muted [overflow-wrap:anywhere]">
+          {RUN_PROVIDER_LABELS[run.modelProvider] ?? run.modelProvider} · {run.modelName}
+        </p>
         {run.status === "error" ? (
           <p className="mt-2 text-xs text-foreground">
             {run.failure?.categoryLabel ?? "Cause not recorded"}
@@ -221,8 +210,9 @@ function RunListRow({
             ) : null}
           </p>
         ) : null}
+        {activityWarning ? <p className="mt-1 text-xs text-muted">{activityWarning}</p> : null}
       </div>
-      <div className="min-w-0 space-y-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted sm:flex-col sm:items-end">
         <Status
           compact
           label={
@@ -230,24 +220,8 @@ function RunListRow({
           }
           value={agentRunStatusValue(run.status)}
         />
-        <p className="break-words text-xs text-muted">
-          {RUN_PROVIDER_LABELS[run.modelProvider] ?? run.modelProvider} · {run.modelName}
-        </p>
-        <p className="text-xs text-muted">{runCatalogActivityLabel(run)}</p>
-      </div>
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-xs text-muted sm:block sm:space-y-2 sm:text-right">
-        <div>
-          <TimeDisplay initialNow={initialNow} value={run.createdAt} variant="relative" />
-        </div>
-        <p className="tabular-nums">{runCatalogCostLabel(run)}</p>
-        <Link
-          className="inline-flex min-h-9 items-center text-foreground underline-offset-4 hover:underline"
-          href={href}
-          prefetch={false}
-          aria-label={`Inspect run for session ${run.sessionNumber}, ${run.stageName ?? "session"}, ${attemptLabel?.toLowerCase() ?? `created ${formatUtcTimestamp(run.createdAt)}`}`}
-        >
-          Inspect run →
-        </Link>
+        <TimeDisplay initialNow={initialNow} value={run.createdAt} variant="relative" />
+        {cost ? <p className="tabular-nums">{cost}</p> : null}
       </div>
     </li>
   );

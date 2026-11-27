@@ -10,21 +10,21 @@ const anySession: EditableComboboxOption = { value: "", label: "Any session" };
 
 export function RunSessionFilter({
   factory,
+  onSelect,
   selectedId,
   selectedOption,
   workspaceId,
 }: {
   factory: string;
+  onSelect: (option: RunSessionOption | null) => void;
   selectedId?: string;
   selectedOption?: RunSessionOption | null;
   workspaceId: string;
 }) {
   const id = useId();
-  const [selection, setSelection] = useState<EditableComboboxOption>(
-    selectedId
-      ? { value: selectedId, label: selectedOption?.label ?? "Session unavailable" }
-      : anySession,
-  );
+  const selection = selectedId
+    ? { value: selectedId, label: selectedOption?.label ?? "Session unavailable" }
+    : anySession;
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
   const [result, setResult] = useState<{ query: string; options: RunSessionOption[] } | null>(null);
@@ -79,7 +79,6 @@ export function RunSessionFilter({
       <label className="block text-xs text-muted" htmlFor={id}>
         Session
       </label>
-      <input name="sessionId" type="hidden" value={selection.value} />
       <EditableCombobox
         className={FILTER_CONTROL_CLASS}
         defaultActiveValue={query ? options[1]?.value : anySession.value}
@@ -94,7 +93,9 @@ export function RunSessionFilter({
             setFailedQuery(null);
           }
         }}
-        onOptionSelect={setSelection}
+        onOptionSelect={(option) =>
+          onSelect(option.value ? { id: option.value, label: option.label } : null)
+        }
         onValueChange={setSearch}
         open={open}
         options={options}
