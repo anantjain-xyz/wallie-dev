@@ -1,9 +1,10 @@
 import { z } from "zod";
 
 import {
-  archiveFactory,
+  archiveAdditionalFactory,
   factoryErrorStatus,
-  factoryStatusCommandSchema,
+  factoryManagementCommandSchema,
+  renameFactory,
   restoreFactory,
 } from "@/lib/factories/scope";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -27,36 +28,55 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   const access = await requireWorkspaceAccessById(workspaceId);
   if (!access.ok) return errorResponse(access.error, access.status);
 
-  const command = factoryStatusCommandSchema.safeParse(await request.json().catch(() => null));
+  const command = factoryManagementCommandSchema.safeParse(await request.json().catch(() => null));
   if (!command.success) {
-    return errorResponse("Use an archive or restore command.", 400);
+    return errorResponse("Use a rename, archive, or restore command.", 400);
   }
 
   try {
     const admin = createSupabaseAdminClient();
-    const factory =
-      command.data.action === "archive"
-        ? await archiveFactory(admin, {
-            workspaceId,
-            factoryId,
-            actorUserId: access.context.user.id,
-            reason: command.data.reason ?? null,
-          })
-        : await restoreFactory(admin, {
-            workspaceId,
-            factoryId,
-            actorUserId: access.context.user.id,
-          });
-    return Response.json({ factory }, { headers });
+    const input = { actorUserId: access.context.user.id, factoryId, workspaceId };
+    switch (command.data.action) {
+      case "archive":
+        return Response.json(
+          {
+            factory: await archiveAdditionalFactory(admin, {
+              ...input,
+              reason: command.data.reason ?? null,
+            }),
+          },
+          { headers },
+        );
+      case "restore":
+        return Response.json({ factory: await restoreFactory(admin, input) }, { headers });
+      case "rename":
+        return Response.json(
+          {
+            factory: await renameFactory(admin, {
+              ...input,
+              expectedName: command.data.expectedName,
+              name: command.data.name,
+            }),
+          },
+          { headers },
+        );
+    }
   } catch (error) {
     const code = (error as { code?: string } | null)?.code;
-    return errorResponse(
-      code === "PT409"
-        ? "The factory is already in the requested state."
-        : command.data.action === "archive"
-          ? "Could not archive the factory."
-          : "Could not restore the factory.",
-      factoryErrorStatus(code),
-    );
+    const action = command.data.action;
+    const status = factoryErrorStatus(code);
+    if (code === "PT409" && action === "rename") {
+      return errorResponse("The factory name changed. Reload and try again.", status);
+    }
+    if (code === "PT409") {
+      return errorResponse("The factory is already in the requested state.", status);
+    }
+    if (code === "23514" && action === "archive") {
+      return errorResponse("The workspace default factory cannot be archived.", status);
+    }
+    if (code === "P0011" && action === "rename") {
+      return errorResponse("Restore the factory before renaming it.", status);
+    }
+    return errorResponse(`Could not ${action} the factory.`, status);
   }
 }
