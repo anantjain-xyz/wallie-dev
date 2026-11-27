@@ -8,12 +8,16 @@ import { afterEach, expect, it, vi } from "vitest";
 import { recoverAnalyticsFilters } from "./analytics-query";
 import { AnalyticsReportingFilters } from "./analytics-reporting-filters";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+const { push } = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push, refresh: vi.fn() }) }));
 
 const factoryId = "58200000-0000-4000-8000-000000000001";
 const action = "/w/demo/analytics";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  push.mockClear();
+});
 
 it("keeps the applied factory and other dimensions in the native date form", () => {
   const { query } = recoverAnalyticsFilters({
@@ -64,8 +68,41 @@ it("offers loaded deployment environments in the Analytics form", () => {
     screen.queryByRole("combobox", { name: "Break down throughput by" }),
   ).not.toBeInTheDocument();
   fireEvent.click(environment);
-  expect(screen.getByRole("option", { name: "production" })).toBeVisible();
+  fireEvent.click(screen.getByRole("option", { name: "production" }));
+  expect(push).toHaveBeenCalledWith(
+    expect.stringMatching(/environment=production#time-to-delivery$/),
+    { scroll: false },
+  );
+  expect(screen.queryByRole("button", { name: "Apply environment" })).not.toBeInTheDocument();
   expect(screen.queryByText(/Could not load deployment environments/)).not.toBeInTheDocument();
+});
+
+it("resets dates and comparison without changing the applied environment or breakdown", () => {
+  const { query } = recoverAnalyticsFilters({
+    from: "2026-11-01",
+    to: "2026-11-08",
+    compare: "previous",
+    dimension: "model",
+    environment: "production",
+    metric: "throughput",
+    period: "compare",
+  });
+  render(
+    <AnalyticsReportingFilters
+      action={action}
+      factoryId={factoryId}
+      mode="period"
+      query={query}
+      scorerFields={{}}
+    />,
+  );
+  const reset = screen.getByRole("link", { name: "Reset dates" });
+  const params = new URL(reset.getAttribute("href")!, "http://localhost").searchParams;
+  expect(Object.fromEntries(params)).toEqual({
+    factory: factoryId,
+    dimension: "model",
+    environment: "production",
+  });
 });
 
 it("reports a failed environment read in the Analytics form without calling it stale", () => {
