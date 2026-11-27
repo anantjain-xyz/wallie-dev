@@ -71,6 +71,27 @@ afterEach(() => {
 });
 
 describe("Runs list", () => {
+  it("keeps the scoped Sessions recovery only in the unfiltered empty state", () => {
+    render(
+      <RunsList
+        factoryQuery={FACTORY_ID}
+        initialNow={now}
+        data={{
+          workspaceId: WORKSPACE_ID,
+          workspaceSlug: "acme",
+          query: {},
+          state: { kind: "ready", page: { runs: [], nextCursor: null } },
+        }}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Runs", level: 1 })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "← Sessions" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View sessions" })).toHaveAttribute(
+      "href",
+      `/w/acme/sessions?factory=${FACTORY_ID}`,
+    );
+  });
+
   it("links distinct attempts to inspectors and keeps the session activity link", () => {
     const earlier = {
       ...run,

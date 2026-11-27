@@ -53,12 +53,6 @@ export function RunsList({
             ? `Execution attempts in ${factoryName}. Open a run to inspect its outcome and activity.`
             : "Execution attempts across all factories you can access. Open a run to inspect its outcome and activity."
         }
-        eyebrow={
-          <Link className="hover:text-foreground" href={sessionsHref}>
-            ← Sessions
-          </Link>
-        }
-        eyebrowAsPlain
         title="Runs"
       />
       <RunsListFilters

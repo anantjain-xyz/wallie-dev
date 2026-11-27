@@ -263,15 +263,6 @@ export default async function AutomationSettingsPage({
       <PageContainer className="max-w-5xl">
         <PageHeader
           title="Automations"
-          eyebrowAsPlain
-          eyebrow={
-            <Link
-              className="underline underline-offset-4"
-              href={workspaceSettingsPath(workspaceSlug)}
-            >
-              Back to Settings
-            </Link>
-          }
           actionsRightOnDesktop
           actions={
             <div className="flex flex-wrap items-end gap-2">
