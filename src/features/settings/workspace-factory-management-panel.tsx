@@ -81,9 +81,9 @@ export function WorkspaceFactoryManagementPanel({
           <label className="block type-label" htmlFor={factoryNameId}>
             Factory name
           </label>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-center">
             <input
-              className="ui-input min-h-11 min-w-0 max-w-md flex-1 sm:min-h-9"
+              className="ui-input min-h-11 min-w-0 max-w-md sm:min-h-9 sm:flex-1"
               readOnly={busy}
               id={factoryNameId}
               maxLength={FACTORY_NAME_MAX_LENGTH}
@@ -98,7 +98,7 @@ export function WorkspaceFactoryManagementPanel({
               value={name}
             />
             <button
-              className="ui-button min-h-11 sm:min-h-9"
+              className="ui-button min-h-11 justify-self-start sm:min-h-9"
               disabled={busy || !changed}
               type="submit"
             >
@@ -241,14 +241,15 @@ function FactoryMembers({
   return (
     <div className="space-y-3 border-t border-border pt-4">
       <h4 className="type-label">Factory members</h4>
-      <p className="type-secondary text-muted">
-        Workspace owners and admins keep access through their workspace role.
-      </p>
+      <p className="type-secondary text-muted">Workspace owners and admins already have access.</p>
       {assigned.length ? (
         <ul className="divide-y divide-border rounded border border-border">
           {assigned.map((member) => (
-            <li className="flex min-w-0 flex-wrap items-center gap-2 p-3" key={member.id}>
-              <span className="min-w-0 flex-1 type-body [overflow-wrap:anywhere]">
+            <li
+              className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 p-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]"
+              key={member.id}
+            >
+              <span className="col-span-2 min-w-0 type-body [overflow-wrap:anywhere] sm:col-span-1">
                 {member.label}
               </span>
               <span className="type-label text-muted">{roleLabel[member.factoryRole]}</span>
@@ -278,8 +279,11 @@ function FactoryMembers({
       {archived ? (
         <p className="type-secondary text-muted">Restore the factory to change access.</p>
       ) : (
-        <form className="flex flex-wrap items-end gap-3" onSubmit={saveAccess}>
-          <div className="min-w-0 flex-[2] space-y-1.5">
+        <form
+          className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(7rem,1fr)_auto]"
+          onSubmit={saveAccess}
+        >
+          <div className="col-span-2 min-w-0 space-y-1.5 sm:col-span-1">
             <label className="block type-label" htmlFor={`${id}-member`}>
               Workspace member
             </label>
@@ -305,7 +309,7 @@ function FactoryMembers({
               ))}
             </select>
           </div>
-          <div className="min-w-28 flex-1 space-y-1.5">
+          <div className="min-w-0 space-y-1.5">
             <label className="block type-label" htmlFor={`${id}-role`}>
               Factory role
             </label>

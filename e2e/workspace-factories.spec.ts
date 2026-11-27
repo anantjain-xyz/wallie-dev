@@ -557,6 +557,9 @@ test("factory management changes only the selected factory and leaves workspace 
     const roleSelect = panel.getByRole("combobox", { name: "Factory role" });
     const saveAccess = panel.getByRole("button", { name: "Save access" });
     const rename = panel.getByRole("textbox", { name: "Factory name" });
+    expect(
+      await memberSelect.evaluate((field) => field.getBoundingClientRect().width),
+    ).toBeGreaterThan(180);
     await expect(memberSelect.getByRole("option", { name: /Alex Reed|Sam Quinn/ })).toHaveCount(0);
     await memberSelect.selectOption(manager.memberId);
     await expect(roleSelect.locator('option[value="member"]')).toBeDisabled();
