@@ -33,8 +33,24 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function footerButton(name: string) {
-  return within(screen.getByRole("contentinfo")).getByRole("button", { name });
+function verifyPanel() {
+  return within(screen.getByRole("region", { name: "Verify setup" }));
+}
+
+function verificationButton(name: string) {
+  return verifyPanel().getByRole("button", { name });
+}
+
+function desktopSteps() {
+  return within(screen.getByRole("complementary"));
+}
+
+function allChecks() {
+  return screen.getByText("All checks", { exact: true }).closest("details")!;
+}
+
+function diagnosticRow(label: string) {
+  return within(allChecks()).getByText(label, { exact: true }).closest("div")!;
 }
 
 describe("onboarding verification", () => {
@@ -42,7 +58,7 @@ describe("onboarding verification", () => {
     const data = verificationData();
     data.agentConfig = { agent_effort: "high" };
     render(<OnboardingPageClient initialData={data} />);
-    const agentSummary = screen.getByRole("button", { name: "Edit Agent" }).closest("li")!;
+    const agentSummary = diagnosticRow("Runtime completed");
     expect(agentSummary).toHaveTextContent("codex · gpt-5.6-sol");
     expect(agentSummary).not.toHaveTextContent("undefined");
   });
@@ -62,10 +78,10 @@ describe("onboarding verification", () => {
         values: data.agentConfig,
       };
       render(<OnboardingPageClient initialData={data} />);
-      const agentSummary = screen.getByRole("button", { name: "Edit Agent" }).closest("li")!;
-      expect(agentSummary).toHaveTextContent(configured ? "Configured" : "Skipped");
-      expect(agentSummary).not.toHaveTextContent(configured ? "Skipped" : "Configured");
-      if (!configured) expect(agentSummary).not.toHaveTextContent("codex");
+      const agentSummary = diagnosticRow("Runtime completed");
+      expect(agentSummary).toHaveTextContent(configured ? "Done" : "Defaults");
+      expect(agentSummary).not.toHaveTextContent(configured ? "Defaults" : "Done");
+      expect(agentSummary).toHaveTextContent("codex · gpt-5.6-sol");
     },
   );
 
@@ -79,32 +95,30 @@ describe("onboarding verification", () => {
       data.setupHealth.linearKey.configured = configured;
       data.setupHealth.linearRouting.configured = configured;
       render(<OnboardingPageClient initialData={data} />);
-      const linearSummary = screen
-        .getByRole("button", { name: "Edit Linear (optional)" })
-        .closest("li")!;
-      expect(linearSummary).toHaveTextContent(configured ? "Configured" : "Skipped");
-      expect(linearSummary).not.toHaveTextContent(configured ? "Skipped" : "Configured");
+      const linearSummary = diagnosticRow("Linear (optional)");
+      expect(linearSummary).toHaveTextContent(configured ? "Done" : "Not connected");
+      expect(linearSummary).not.toHaveTextContent(configured ? "Not connected" : "Done");
     },
   );
 
   it("keeps saved connections distinct from verification and collapses configuration", () => {
     render(<OnboardingPageClient initialData={verificationData()} />);
-    expect(screen.getByText("Your connections are saved")).toBeVisible();
+    expect(screen.getByText("Verification required")).toBeVisible();
     expect(screen.queryByText("Setup status")).not.toBeInTheDocument();
-    expect(screen.getByText("View configuration").closest("details")).not.toHaveAttribute("open");
-    expect(footerButton("Verify setup")).toBeEnabled();
+    expect(allChecks()).not.toHaveAttribute("open");
+    expect(verificationButton("Verify setup")).toBeEnabled();
     expect(
-      screen.queryByRole("button", { name: "Create your first task" }),
+      verifyPanel().queryByRole("button", { name: "Create your first task" }),
     ).not.toBeInTheDocument();
-    const linearStep = screen.getByRole("button", { name: /Linear.*optional.*Skipped/ });
+    const linearStep = desktopSteps().getByRole("button", { name: /Linear.*optional.*Skipped/ });
     expect(linearStep).not.toHaveTextContent("Completed");
-    expect(screen.getByRole("button", { name: "Verify", current: "step" })).not.toHaveTextContent(
-      "Completed",
-    );
+    expect(
+      desktopSteps().getByRole("button", { name: "Verify", current: "step" }),
+    ).not.toHaveTextContent("Completed");
   });
 
   it.each(["in_progress", "completed"] as const)(
-    "keeps the checkmark when selecting a completed step during %s setup",
+    "keeps progress history distinct from the selected step during %s setup",
     async (status) => {
       const data = verificationData();
       data.onboarding.status = status;
@@ -117,51 +131,43 @@ describe("onboarding verification", () => {
         );
       }
       render(<OnboardingPageClient initialData={data} />);
+      const name = status === "in_progress" ? /GitHub\s*Completed/ : "GitHub";
+      await act(async () => fireEvent.click(desktopSteps().getByRole("button", { name })));
 
-      await act(async () =>
-        fireEvent.click(screen.getByRole("button", { name: /GitHub\s*Completed/ })),
-      );
-
-      const selectedStep = screen.getByRole("button", {
-        name: /GitHub\s*Completed/,
-        current: "step",
-      });
+      const selectedStep = desktopSteps().getByRole("button", { name, current: "step" });
       expect(selectedStep).toHaveClass("bg-accent-soft", "text-accent");
-      expect(within(selectedStep).getByText("Completed")).toBeInTheDocument();
-      const setupPicker = screen.getByRole("combobox", { name: "Setup step" });
-      expect(setupPicker).toHaveAttribute("data-value", "github");
-      expect(setupPicker).toHaveTextContent("GitHub — Completed");
+      if (status === "in_progress") {
+        expect(within(selectedStep).getByText("Completed")).toBeInTheDocument();
+      } else {
+        expect(selectedStep).not.toHaveTextContent("Completed");
+      }
+      expect(screen.getByText("Repository · Step 1 of 7")).toBeVisible();
     },
   );
 
-  it("keeps skipped status when selecting an optional step from the mobile picker", async () => {
+  it("keeps skipped status when selecting an optional step from the mobile disclosure", async () => {
     const data = verificationData();
     data.onboarding.status = "completed";
     render(<OnboardingPageClient initialData={data} />);
 
-    const setupPicker = screen.getByRole("combobox", { name: "Setup step" });
+    const mobile = screen.getByText("All setup steps", { exact: true }).closest("details")!;
+    expect(mobile).not.toHaveAttribute("open");
+    mobile.open = true;
     await act(async () => {
-      fireEvent.click(setupPicker);
-    });
-    await act(async () => {
-      fireEvent.click(
-        within(screen.getByRole("listbox", { name: "Setup step" })).getByRole("option", {
-          name: "Linear (optional) — Skipped",
-        }),
-      );
+      fireEvent.click(within(mobile).getByRole("button", { name: /Linear.*optional.*Skipped/ }));
     });
 
-    const selectedStep = screen.getByRole("button", {
+    const selectedStep = desktopSteps().getByRole("button", {
       name: /Linear.*optional.*Skipped/,
       current: "step",
     });
     expect(selectedStep).toHaveClass("bg-accent-soft", "text-accent");
     expect(selectedStep).not.toHaveTextContent("Completed");
-    expect(setupPicker).toHaveAttribute("data-value", "linear");
-    expect(setupPicker).toHaveTextContent("Linear (optional) — Skipped");
+    expect(mobile).not.toHaveAttribute("open");
+    expect(screen.getByRole("heading", { name: "Connect Linear (optional)" })).toHaveFocus();
   });
 
-  it("submits verification from the footer once, polls, and completes into the task composer", async () => {
+  it("submits verification once, polls, and completes into the task composer on first setup", async () => {
     vi.useFakeTimers();
     const data = verificationData();
     let startCheck!: (response: Response) => void;
@@ -181,8 +187,8 @@ describe("onboarding verification", () => {
       );
     render(<OnboardingPageClient initialData={data} />);
 
-    fireEvent.click(footerButton("Verify setup"));
-    expect(footerButton("Starting…")).toBeDisabled();
+    fireEvent.click(verificationButton("Verify setup"));
+    expect(verificationButton("Starting…")).toBeDisabled();
     fireEvent.submit(document.getElementById("onboarding-verification")!);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(
@@ -190,13 +196,13 @@ describe("onboarding verification", () => {
       expect.objectContaining({ method: "POST", body: JSON.stringify({ repositoryId: "repo-a" }) }),
     );
     await act(async () => startCheck(Response.json({ check: verificationCheck("running") })));
-    expect(footerButton("Checking…")).toBeDisabled();
+    expect(verificationButton("Checking…")).toBeDisabled();
     expect(screen.getByRole("status")).toHaveTextContent("Checking your setup…");
     await act(async () => vi.advanceTimersByTimeAsync(2000));
-    expect(screen.getByText("You’re ready for your first task")).toBeVisible();
-    expect(footerButton("Create your first task")).toBeEnabled();
+    expect(screen.getByText("Setup is ready")).toBeVisible();
+    expect(verificationButton("Create your first task")).toBeEnabled();
 
-    await act(async () => fireEvent.click(footerButton("Create your first task")));
+    await act(async () => fireEvent.click(verificationButton("Create your first task")));
     expect(fetchMock).toHaveBeenLastCalledWith(
       "/api/workspaces/workspace-1/onboarding/complete",
       expect.objectContaining({
@@ -212,9 +218,9 @@ describe("onboarding verification", () => {
       Response.json({ error: "Unable to connect to sandbox." }, { status: 500 }),
     );
     render(<OnboardingPageClient initialData={verificationData()} />);
-    await act(async () => fireEvent.click(footerButton("Verify setup")));
+    await act(async () => fireEvent.click(verificationButton("Verify setup")));
     expect(screen.getByRole("alert")).toHaveTextContent("Unable to connect to sandbox.");
-    expect(footerButton("Verify setup")).toBeEnabled();
+    expect(verificationButton("Verify setup")).toBeEnabled();
   });
 
   it("shows a failed check and retries it without losing the saved configuration", async () => {
@@ -223,23 +229,31 @@ describe("onboarding verification", () => {
     fetchMock.mockResolvedValueOnce(Response.json({ check: verificationCheck("running") }));
     render(<OnboardingPageClient initialData={data} />);
     expect(screen.getByRole("status")).toHaveTextContent("Agent sign-in expired.");
-    await act(async () => fireEvent.click(footerButton("Retry verification")));
-    expect(footerButton("Checking…")).toBeDisabled();
-    expect(screen.getByText("View configuration")).toBeVisible();
+    await act(async () => fireEvent.click(verificationButton("Retry verification")));
+    expect(verificationButton("Checking…")).toBeDisabled();
+    expect(allChecks()).not.toHaveAttribute("open");
   });
 
-  it("does not reuse a successful check from an older configuration", () => {
-    const data = verificationData();
-    data.setupHealth.latestSandboxCapabilityCheck = {
-      ...verificationCheck(),
-      agentModel: "old-model",
-    };
-    render(<OnboardingPageClient initialData={data} />);
-    expect(screen.getByText("Your setup has changed")).toBeVisible();
-    expect(screen.getByText("Previous verification details")).toBeVisible();
-    expect(screen.queryByText("You’re ready for your first task")).not.toBeInTheDocument();
-    expect(footerButton("Verify setup")).toBeEnabled();
-  });
+  it.each(["agent", "repository", "sandbox"] as const)(
+    "does not reuse a successful check from a different %s",
+    (scope) => {
+      const data = verificationData();
+      data.setupHealth.latestSandboxCapabilityCheck = {
+        ...verificationCheck(),
+        ...(scope === "agent"
+          ? { agentModel: "old-model" }
+          : scope === "repository"
+            ? { githubRepositoryId: "old-repo" }
+            : { sandboxVercelProjectId: "old-project" }),
+      };
+      render(<OnboardingPageClient initialData={data} />);
+      expect(screen.getByText("Setup has changed")).toBeVisible();
+      expect(allChecks()).not.toHaveAttribute("open");
+      expect(within(allChecks()).getByText("Previous verification result")).toBeInTheDocument();
+      expect(screen.queryByText("Setup is ready")).not.toBeInTheDocument();
+      expect(verificationButton("Verify again")).toBeEnabled();
+    },
+  );
 
   it("links missing access to its setup step and prevents verification", async () => {
     const data = verificationData();
@@ -251,8 +265,11 @@ describe("onboarding verification", () => {
       }),
     );
     render(<OnboardingPageClient initialData={data} />);
-    expect(footerButton("Verify setup")).toBeDisabled();
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Open Agent" })));
+    expect(verifyPanel().queryByRole("button", { name: "Verify setup" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Connect the current user's Codex credential.",
+    );
+    await act(async () => fireEvent.click(verificationButton("Fix agent access")));
     expect(screen.getByText("Editing runtime")).toBeVisible();
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/workspaces/workspace-1/onboarding",
@@ -264,16 +281,16 @@ describe("onboarding verification", () => {
     const data = verificationData();
     data.canManage = false;
     render(<OnboardingPageClient initialData={data} />);
-    expect(footerButton("Verify setup")).toBeDisabled();
+    expect(verifyPanel().queryByRole("button", { name: "Verify setup" })).not.toBeInTheDocument();
     fireEvent.submit(document.getElementById("onboarding-verification")!);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(
-      screen.getByText("A workspace owner or admin can verify and complete setup."),
+      screen.getByText("Read only. Ask a workspace owner or admin to verify the current setup."),
     ).toBeVisible();
   });
 
   it.each(["owner", "admin", "member"] as const)(
-    "lets a %s open the task composer after setup is completed",
+    "offers a returning %s Sessions rather than opening the task composer",
     (role) => {
       const data = verificationData();
       data.currentMember.role = role;
@@ -281,15 +298,34 @@ describe("onboarding verification", () => {
       data.onboarding.status = "completed";
       data.setupHealth.latestSandboxCapabilityCheck = verificationCheck();
       render(<OnboardingPageClient initialData={data} />);
-      expect(footerButton("Create your first task")).toBeEnabled();
-      fireEvent.click(footerButton("Create your first task"));
-      expect(router.replace).toHaveBeenCalledWith("/w/northwind?create=1");
-      expect(fetchMock).not.toHaveBeenCalled();
+      expect(verifyPanel().getByRole("link", { name: "Back to sessions" })).toHaveAttribute(
+        "href",
+        "/w/northwind/sessions",
+      );
       expect(
-        screen.queryByText("A workspace owner or admin can verify and complete setup."),
+        verifyPanel().queryByRole("button", { name: "Create your first task" }),
       ).not.toBeInTheDocument();
+      expect(screen.getByText("Setup is ready")).toBeVisible();
+      expect(screen.getByText("Setup was completed previously.")).toBeVisible();
+      expect(fetchMock).not.toHaveBeenCalled();
     },
   );
+
+  it("returns to Sessions after a previously completed workspace finishes setup again", async () => {
+    const data = verificationData();
+    data.onboarding.completedAt = "2026-09-06T19:15:00.000Z";
+    data.setupHealth.latestSandboxCapabilityCheck = verificationCheck();
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        kind: "onboarding-mutation",
+        onboarding: { ...data.onboarding, status: "completed" },
+      }),
+    );
+    render(<OnboardingPageClient initialData={data} />);
+    await act(async () => fireEvent.click(verificationButton("Finish setup")));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(router.replace).toHaveBeenCalledWith("/w/northwind/sessions");
+  });
 
   it("does not let a member complete setup after verification passes", () => {
     const data = verificationData();
@@ -297,8 +333,13 @@ describe("onboarding verification", () => {
     data.canManage = false;
     data.setupHealth.latestSandboxCapabilityCheck = verificationCheck();
     render(<OnboardingPageClient initialData={data} />);
-    expect(footerButton("Create your first task")).toBeDisabled();
-    fireEvent.click(footerButton("Create your first task"));
+    expect(
+      verifyPanel().queryByRole("button", { name: "Create your first task" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Read only. Ask a workspace owner or admin to finish setup."),
+    ).toBeVisible();
+    fireEvent.submit(document.getElementById("onboarding-verification")!);
     expect(router.replace).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -313,12 +354,12 @@ describe("onboarding verification", () => {
       agentModel: "old-model",
     };
     render(<OnboardingPageClient initialData={data} />);
-    expect(footerButton("Verify setup")).toBeDisabled();
+    expect(verifyPanel().queryByRole("button", { name: "Verify again" })).not.toBeInTheDocument();
     fireEvent.submit(document.getElementById("onboarding-verification")!);
     expect(router.replace).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(
-      screen.getByText("A workspace owner or admin can verify and complete setup."),
+      screen.getByText("Read only. Ask a workspace owner or admin to verify the current setup."),
     ).toBeVisible();
   });
 
@@ -334,45 +375,52 @@ describe("onboarding verification", () => {
           state === "missing"
             ? null
             : verificationCheck(state === "error" || state === "running" ? state : "success");
-        if (state === "stale") {
+        if (state === "stale")
           data.setupHealth.latestSandboxCapabilityCheck!.agentModel = "old-model";
-        }
         if (state === "blocked") data.setupHealth.codexConnection.connected = false;
         render(<OnboardingPageClient initialData={data} />);
 
         await act(async () =>
-          fireEvent.click(screen.getByRole("button", { name: /Agent\s*Completed/ })),
+          fireEvent.click(desktopSteps().getByRole("button", { name: "Agent" })),
         );
         expect(screen.getByText("Editing runtime")).toBeVisible();
         expect(
-          within(screen.getByRole("contentinfo")).queryByRole("button", {
-            name: "Create your first task",
-          }),
+          screen.queryByRole("button", { name: "Create your first task" }),
         ).not.toBeInTheDocument();
-        expect(footerButton("Review setup")).toBeEnabled();
-        expect(footerButton("Review setup")).not.toHaveAttribute("form");
-        await act(async () => fireEvent.click(footerButton("Review setup")));
+        const review = screen.getByRole("button", { name: "Review readiness" });
+        expect(review).toBeEnabled();
+        expect(review).not.toHaveAttribute("form");
+        await act(async () => fireEvent.click(review));
 
         expect(screen.getByRole("heading", { name: "Verify setup" })).toBeVisible();
-        const action = footerButton(
+        const label =
           state === "running"
             ? "Checking…"
             : state === "error"
               ? "Retry verification"
-              : "Verify setup",
-        );
-        if (role === "member" || state === "running" || state === "blocked") {
-          expect(action).toBeDisabled();
+              : state === "stale"
+                ? "Verify again"
+                : state === "blocked"
+                  ? "Fix agent access"
+                  : "Verify setup";
+        if (role === "member") {
+          expect(verifyPanel().queryByRole("button", { name: label })).not.toBeInTheDocument();
+        } else if (state === "running") {
+          expect(verificationButton(label)).toBeDisabled();
+        } else if (state === "blocked") {
+          expect(verificationButton(label)).toHaveAttribute("data-step-link", "runtime");
+          expect(verificationButton(label)).not.toHaveAttribute("form");
         } else {
-          expect(action).toBeEnabled();
-          expect(action).toHaveAttribute("form", "onboarding-verification");
+          expect(verificationButton(label)).toBeEnabled();
+          expect(verificationButton(label)).toHaveAttribute("form", "onboarding-verification");
         }
+        expect(screen.queryByText("Setup is ready")).not.toBeInTheDocument();
         expect(router.replace).not.toHaveBeenCalled();
         expect(fetchMock).not.toHaveBeenCalled();
       },
     );
 
-    it("can open the composer from another step when the current setup is verified", async () => {
+    it("can return to Sessions from another step when the current setup is verified", async () => {
       const data = verificationData();
       data.currentMember.role = role;
       data.canManage = role === "owner";
@@ -380,12 +428,14 @@ describe("onboarding verification", () => {
       data.setupHealth.latestSandboxCapabilityCheck = verificationCheck();
       render(<OnboardingPageClient initialData={data} />);
 
-      await act(async () =>
-        fireEvent.click(screen.getByRole("button", { name: /Agent\s*Completed/ })),
+      await act(async () => fireEvent.click(desktopSteps().getByRole("button", { name: "Agent" })));
+      expect(screen.getByRole("link", { name: "Back to sessions" })).toHaveAttribute(
+        "href",
+        "/w/northwind/sessions",
       );
-      expect(footerButton("Create your first task")).toBeEnabled();
-      fireEvent.click(footerButton("Create your first task"));
-      expect(router.replace).toHaveBeenCalledWith("/w/northwind?create=1");
+      expect(
+        screen.queryByRole("button", { name: "Create your first task" }),
+      ).not.toBeInTheDocument();
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });

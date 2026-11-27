@@ -53,11 +53,7 @@ export default async function WorkspaceOnboardingPage() {
         id="main-content"
         className="mx-auto w-full max-w-[640px] flex-1 px-6 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-10 sm:px-8"
       >
-        <PageHeader
-          eyebrow="Phase 1 of 2 · Create workspace"
-          title="Create workspace"
-          description="Name your workspace. Next, Set up workspace walks you through connecting a repository and execution access before you start a task."
-        />
+        <PageHeader className="mb-6 sm:mb-8" title="Create workspace" />
         <WorkspaceOnboardingForm />
       </main>
     </div>

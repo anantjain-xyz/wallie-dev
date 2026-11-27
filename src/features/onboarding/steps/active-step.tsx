@@ -26,7 +26,7 @@ export function StepLoading() {
     <div
       aria-busy="true"
       aria-label="Loading setup step"
-      className="min-h-[420px] animate-pulse rounded-[6px] border border-border bg-sheet p-5"
+      className="min-h-[420px] rounded-[6px] border border-border bg-sheet p-5 motion-safe:animate-pulse"
       role="status"
     >
       <div className="h-4 w-40 rounded bg-control-hover" />
@@ -37,7 +37,7 @@ export function StepLoading() {
 }
 
 function createDeferredStep(step: WorkspaceOnboardingStep) {
-  return dynamic(stepLoaders[step], { loading: StepLoading });
+  return dynamic(stepLoaders[step], { loading: StepLoading, ssr: step !== "pipeline" });
 }
 
 const deferredSteps = {

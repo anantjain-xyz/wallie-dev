@@ -817,6 +817,66 @@ export default function RuntimeStep({
         </div>
       ) : null}
 
+      <div data-sandbox-connection-href={sandboxConnectionHref}>
+        <ProviderAccessPanel
+          initialClaudeCodeStatus={{
+            checkedAt: data.setupHealth.claudeCodeConnection.checkedAt,
+            connected: data.setupHealth.claudeCodeConnection.connected,
+            updatedAt: data.setupHealth.claudeCodeConnection.updatedAt,
+          }}
+          initialCodexStatus={{
+            accountEmail: data.setupHealth.codexConnection.accountEmail,
+            checkedAt: data.setupHealth.codexConnection.checkedAt,
+            connected: data.setupHealth.codexConnection.connected,
+            credentialType: data.setupHealth.codexConnection.credentialType,
+            expired: data.setupHealth.codexConnection.status === "expired",
+            expiresAt: data.setupHealth.codexConnection.expiresAt,
+            reconnectReason: data.setupHealth.codexConnection.reconnectReason,
+            reconnectRequired: data.setupHealth.codexConnection.reconnectRequired,
+            updatedAt: data.setupHealth.codexConnection.updatedAt,
+          }}
+          initialCursorStatus={
+            data.setupHealth.cursorConnection
+              ? {
+                  accountEmail: data.setupHealth.cursorConnection.accountEmail,
+                  checkedAt: data.setupHealth.cursorConnection.checkedAt,
+                  connected: data.setupHealth.cursorConnection.connected,
+                  expired: data.setupHealth.cursorConnection.status === "expired",
+                  expiresAt: data.setupHealth.cursorConnection.expiresAt,
+                  reconnectReason: data.setupHealth.cursorConnection.reconnectReason,
+                  reconnectRequired: data.setupHealth.cursorConnection.reconnectRequired,
+                  updatedAt: data.setupHealth.cursorConnection.updatedAt,
+                }
+              : undefined
+          }
+          initialOpenCodeStatus={{
+            checkedAt: data.setupHealth.openCodeConnection.checkedAt,
+            connected: data.setupHealth.openCodeConnection.connected,
+            providers: data.setupHealth.openCodeConnection.providers,
+            updatedAt: data.setupHealth.openCodeConnection.updatedAt,
+          }}
+          onClaudeCodeStatusChange={handleClaudeCodeStatusChange}
+          onCodexStatusChange={handleCodexStatusChange}
+          onCursorStatusChange={handleCursorStatusChange}
+          onOpenCodeStatusChange={handleOpenCodeStatusChange}
+          onOpenCodeDraftStateChange={setOpenCodeDraft}
+          onSandboxConnectionSelect={() => onSelectStep("sandbox")}
+          provider={selectedProvider}
+          returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`}
+          sandboxConnectionHref={sandboxConnectionHref}
+          selectedModel={drafts.agent_model}
+          sandboxConnectionLabel={
+            data.setupHealth.sandboxConnection?.providerLabel ?? "a sandbox provider"
+          }
+          sandboxConnectionReady={
+            data.setupHealth.sandboxConnection?.connected ??
+            data.setupHealth.vercelSandboxConnection.connected
+          }
+          variant="embedded"
+          workspaceId={data.workspace.id}
+        />
+      </div>
+
       <div className="min-w-0">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
@@ -849,7 +909,7 @@ export default function RuntimeStep({
                 />
               ) : status.field.type === "select" && status.field.options ? (
                 <SelectField
-                  disabled={busyAction !== null}
+                  disabled={!data.canManage || busyAction !== null || isSaving}
                   label={status.field.label}
                   onValueChange={(value) => handleFieldChange(status.field.configKey, value)}
                   options={status.field.options}
@@ -861,7 +921,7 @@ export default function RuntimeStep({
                   <input
                     autoComplete="off"
                     className="ui-input"
-                    disabled={busyAction !== null}
+                    disabled={!data.canManage || busyAction !== null || isSaving}
                     onChange={(event) =>
                       handleFieldChange(status.field.configKey, event.target.value)
                     }
@@ -887,7 +947,7 @@ export default function RuntimeStep({
             <div className="block space-y-1.5" key={status.field.configKey}>
               {status.field.type === "select" && status.field.options ? (
                 <SelectField
-                  disabled={busyAction !== null}
+                  disabled={!data.canManage || busyAction !== null || isSaving}
                   label={status.field.label}
                   onValueChange={(value) => handleFieldChange(status.field.configKey, value)}
                   options={status.field.options}
@@ -899,7 +959,7 @@ export default function RuntimeStep({
                   <input
                     autoComplete="off"
                     className="ui-input"
-                    disabled={busyAction !== null}
+                    disabled={!data.canManage || busyAction !== null || isSaving}
                     onChange={(event) =>
                       handleFieldChange(status.field.configKey, event.target.value)
                     }
@@ -940,66 +1000,6 @@ export default function RuntimeStep({
               />
             </button>
           </div>
-        </div>
-
-        <div className="mt-4" data-sandbox-connection-href={sandboxConnectionHref}>
-          <ProviderAccessPanel
-            initialClaudeCodeStatus={{
-              checkedAt: data.setupHealth.claudeCodeConnection.checkedAt,
-              connected: data.setupHealth.claudeCodeConnection.connected,
-              updatedAt: data.setupHealth.claudeCodeConnection.updatedAt,
-            }}
-            initialCodexStatus={{
-              accountEmail: data.setupHealth.codexConnection.accountEmail,
-              checkedAt: data.setupHealth.codexConnection.checkedAt,
-              connected: data.setupHealth.codexConnection.connected,
-              credentialType: data.setupHealth.codexConnection.credentialType,
-              expired: data.setupHealth.codexConnection.status === "expired",
-              expiresAt: data.setupHealth.codexConnection.expiresAt,
-              reconnectReason: data.setupHealth.codexConnection.reconnectReason,
-              reconnectRequired: data.setupHealth.codexConnection.reconnectRequired,
-              updatedAt: data.setupHealth.codexConnection.updatedAt,
-            }}
-            initialCursorStatus={
-              data.setupHealth.cursorConnection
-                ? {
-                    accountEmail: data.setupHealth.cursorConnection.accountEmail,
-                    checkedAt: data.setupHealth.cursorConnection.checkedAt,
-                    connected: data.setupHealth.cursorConnection.connected,
-                    expired: data.setupHealth.cursorConnection.status === "expired",
-                    expiresAt: data.setupHealth.cursorConnection.expiresAt,
-                    reconnectReason: data.setupHealth.cursorConnection.reconnectReason,
-                    reconnectRequired: data.setupHealth.cursorConnection.reconnectRequired,
-                    updatedAt: data.setupHealth.cursorConnection.updatedAt,
-                  }
-                : undefined
-            }
-            initialOpenCodeStatus={{
-              checkedAt: data.setupHealth.openCodeConnection.checkedAt,
-              connected: data.setupHealth.openCodeConnection.connected,
-              providers: data.setupHealth.openCodeConnection.providers,
-              updatedAt: data.setupHealth.openCodeConnection.updatedAt,
-            }}
-            onClaudeCodeStatusChange={handleClaudeCodeStatusChange}
-            onCodexStatusChange={handleCodexStatusChange}
-            onCursorStatusChange={handleCursorStatusChange}
-            onOpenCodeStatusChange={handleOpenCodeStatusChange}
-            onOpenCodeDraftStateChange={setOpenCodeDraft}
-            onSandboxConnectionSelect={() => onSelectStep("sandbox")}
-            provider={selectedProvider}
-            returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`}
-            sandboxConnectionHref={sandboxConnectionHref}
-            selectedModel={drafts.agent_model}
-            sandboxConnectionLabel={
-              data.setupHealth.sandboxConnection?.providerLabel ?? "a sandbox provider"
-            }
-            sandboxConnectionReady={
-              data.setupHealth.sandboxConnection?.connected ??
-              data.setupHealth.vercelSandboxConnection.connected
-            }
-            variant="embedded"
-            workspaceId={data.workspace.id}
-          />
         </div>
       </div>
 
