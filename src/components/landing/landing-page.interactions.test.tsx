@@ -70,12 +70,19 @@ describe("the fictional factory tour", () => {
     await user.click(line.getByRole("button", { name: "Build v2" }));
     await user.click(line.getByText("Read the check evidence"));
     expect(line.getByText(/the observed count was 0/)).toBeVisible();
+
+    const receipt = within(screen.getByRole("group", { name: "Admission receipt" }));
+    const before = receipt.getByRole("button", { name: "Before adoption" });
+    await user.click(before);
     await user.click(line.getByRole("button", { name: "Approve Build v2" }));
     expect(line.getByText(/This did not merge code or edit the factory/)).toBeVisible();
     expect(line.getByText(/the observed count was 0/)).toBeVisible();
     const delivery = line.getByRole("button", { name: "See delivery" });
     expect(delivery).toHaveFocus();
-    expect(screen.getByRole("button", { name: "After adoption", pressed: true })).toBeVisible();
+    expect(before).toHaveAttribute("aria-pressed", "true");
+    expect(receipt.getByText("Next start", { exact: false }).parentElement).toHaveTextContent(
+      /WO–025\s*R07/,
+    );
 
     await user.click(delivery);
     expect(line.getByRole("heading", { name: "Code can leave in a GitHub PR." })).toHaveFocus();
