@@ -239,6 +239,39 @@ test("Back keeps the automatically selected Board stage after widening a search"
   await page.goBack();
   await expect(plan).toBeVisible();
   await expect(build).toHaveAttribute("aria-selected", "true");
+
+  await search.fill("Google Workspace");
+  await expect(page.getByRole("tab", { name: "Plan, 1 matching session" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
+test("a Board status edit keeps automatic stage selection responsive", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page, boardPath);
+  await status(page).click();
+  await page.getByRole("option", { name: "Awaiting review", exact: true }).click();
+  const search = page.getByRole("searchbox", { name: "Search active board" });
+  const build = page.getByRole("tab", { name: "Build, 1 matching session" });
+  await search.fill("Supabase Realtime");
+  await expect(build).toHaveAttribute("aria-selected", "true");
+  await search.fill("Google Workspace");
+  await expect(page.getByRole("tab", { name: "Plan, 1 matching session" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await search.fill("");
+  await expect(
+    page.getByRole("tab", { name: /^Plan, [2-9]\d* matching sessions$/ }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(build).toBeVisible();
+
+  await status(page).click();
+  await page.getByRole("option", { name: "Changes requested", exact: true }).click();
+  await expect(page).toHaveURL(`${boardPath}?status=rejected`);
+  await expect(page.getByRole("tab", { name: "Plan, 0 matching sessions" })).toBeVisible();
+  await expect(build).toHaveAttribute("aria-selected", "true");
 });
 
 test("another account cannot recover the previous Board search in the same tab", async ({

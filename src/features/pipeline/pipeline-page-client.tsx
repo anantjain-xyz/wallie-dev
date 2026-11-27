@@ -42,6 +42,8 @@ import {
   parseBoardStatus,
   readBoardBrowseHistory,
   writeBoardBrowseHistory,
+  type BoardBrowseChanges,
+  type BoardBrowseStage,
 } from "@/features/pipeline/board-browse-history";
 import { pipelineLayout } from "@/features/pipeline/layout";
 import {
@@ -95,7 +97,9 @@ type PendingCardFocus = {
 
 type DashboardCardStatus = SessionDisplayStatus;
 type LanePaginationState = "idle" | "loading" | "blocked";
-type LaneSelection = { key: string; origin: "default" | "restored" | "manual" | "automatic" };
+type LaneSelection =
+  | { key: string; origin: "default"; restored?: never }
+  | (BoardBrowseStage & { restored?: true });
 type StatusFilter = PipelineStatusFilter;
 
 const CARD_FOCUSABLE_SELECTOR =
@@ -283,6 +287,13 @@ function PipelinePageContent({
     () => (viewerId ? { factory: boardFactory, pathname: boardHref, viewerId } : null),
     [boardFactory, boardHref, viewerId],
   );
+  const historyEntryKey = useRef<string | undefined>(undefined);
+  const saveBrowseHistory = useCallback(
+    (changes: BoardBrowseChanges) => {
+      if (historyScope) historyEntryKey.current = writeBoardBrowseHistory(historyScope, changes);
+    },
+    [historyScope],
+  );
   const dashboardHref = withFactoryQuery(
     `/api/workspaces/${initialData.workspace.id}/pipeline-dashboard`,
     factoryId,
@@ -309,36 +320,42 @@ function PipelinePageContent({
     (query: string, status: StatusFilter) => {
       setSearchQuery(query);
       setStatusFilter(status);
-      if (historyScope) writeBoardBrowseHistory(historyScope, { searchQuery: query, status });
+      setLaneSelection((selection) =>
+        selection.restored ? { key: selection.key, origin: selection.origin } : selection,
+      );
+      saveBrowseHistory({ searchQuery: query, status });
     },
-    [historyScope],
+    [saveBrowseHistory],
   );
 
   useEffect(() => {
     if (!historyScope) return;
-    const restore = () => {
+    const restore = (traversed: boolean) => {
       const entry = readBoardBrowseHistory(historyScope);
-      if (!entry) return;
+      if (!entry || (!traversed && entry.entryKey && entry.entryKey === historyEntryKey.current))
+        return;
+      historyEntryKey.current = entry.entryKey;
       setSearchQuery(entry.searchQuery);
       setStatusFilter(entry.status);
-      setLaneSelection({
-        key: entry.laneKey ?? firstLaneKey,
-        origin: entry.laneKey ? "restored" : "default",
-      });
+      setLaneSelection(
+        entry.stage ? { ...entry.stage, restored: true } : { key: firstLaneKey, origin: "default" },
+      );
     };
-    restore();
-    window.addEventListener("popstate", restore);
-    window.addEventListener("pageshow", restore);
+    const restoreOnNavigation = () => restore(true);
+    restore(false);
+    window.addEventListener("popstate", restoreOnNavigation);
+    window.addEventListener("pageshow", restoreOnNavigation);
     return () => {
-      window.removeEventListener("popstate", restore);
-      window.removeEventListener("pageshow", restore);
+      window.removeEventListener("popstate", restoreOnNavigation);
+      window.removeEventListener("pageshow", restoreOnNavigation);
     };
   }, [firstLaneKey, historyScope, routeSearch]);
 
   useEffect(() => {
-    if (historyScope && (laneSelection.origin === "manual" || laneSelection.origin === "automatic"))
-      writeBoardBrowseHistory(historyScope, { laneKey: laneSelection.key || undefined });
-  }, [historyScope, laneSelection]);
+    if (laneSelection.origin === "default" || laneSelection.restored) return;
+    const { key, origin } = laneSelection;
+    saveBrowseHistory({ stage: key ? { key, origin } : undefined });
+  }, [laneSelection, saveBrowseHistory]);
 
   function selectStage(key: string) {
     setLaneSelection({ key, origin: "manual" });
@@ -466,7 +483,7 @@ function PipelinePageContent({
         const match = nextBoard.lanes.find((lane) => lane.totalCount > 0);
         if (!previous && match) {
           setLaneSelection((selection) => {
-            const preferred = selection.origin === "manual" || selection.origin === "restored";
+            const preferred = selection.origin === "manual" || selection.restored;
             return nextBoard.lanes.some(
               (lane) =>
                 pipelineLaneKey(lane) === selection.key && (lane.totalCount > 0 || preferred),

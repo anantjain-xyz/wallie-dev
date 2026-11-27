@@ -23,9 +23,12 @@ describe("board browse history", () => {
 
   it("keeps search in memory and restores it only for the same viewer and factory", () => {
     window.history.replaceState(null, "", `${board}?factory=all#anchor`);
-    writeBoardBrowseHistory(historyScope, { searchQuery: "board only", status: "failed" });
-    const key = window.history.state.wallieBoard;
-    writeBoardBrowseHistory(historyScope, { laneKey: "build" });
+    const key = writeBoardBrowseHistory(historyScope, {
+      searchQuery: "board only",
+      status: "failed",
+    });
+    const stage = { key: "build", origin: "manual" } as const;
+    expect(writeBoardBrowseHistory(historyScope, { stage })).toBe(key);
 
     expect(window.location.search).toBe("?factory=all&status=failed");
     expect(window.location.hash).toBe("#anchor");
@@ -33,8 +36,9 @@ describe("board browse history", () => {
     expect(typeof key).toBe("string");
     expect(key).not.toContain("board only");
     expect(readBoardBrowseHistory(historyScope)).toEqual({
-      laneKey: "build",
+      entryKey: key,
       searchQuery: "board only",
+      stage,
       status: "failed",
     });
     expect(
@@ -42,13 +46,27 @@ describe("board browse history", () => {
     ).toBe("");
     expect(readBoardBrowseHistory({ ...historyScope, viewerId: "member" })?.searchQuery).toBe("");
 
-    writeBoardBrowseHistory(historyScope, { searchQuery: "", status: "all" });
+    expect(writeBoardBrowseHistory(historyScope, { searchQuery: "", status: "all" })).toBe(key);
     expect(window.location.search).toBe("?factory=all");
     expect(readBoardBrowseHistory(historyScope)).toEqual({
-      laneKey: "build",
+      entryKey: key,
       searchQuery: "",
+      stage,
       status: "all",
     });
+  });
+
+  it("assigns a new key to a different entry of the same Board", () => {
+    window.history.replaceState(null, "", board);
+    const oldKey = writeBoardBrowseHistory(historyScope, {
+      stage: { key: "build", origin: "automatic" },
+    });
+    window.history.pushState(null, "", board);
+    expect(readBoardBrowseHistory(historyScope)).toMatchObject({
+      entryKey: undefined,
+      stage: undefined,
+    });
+    expect(writeBoardBrowseHistory(historyScope, { status: "failed" })).not.toBe(oldKey);
   });
 
   it("does not touch or read state on the List route", () => {
@@ -60,11 +78,15 @@ describe("board browse history", () => {
 
   it("expires private state when leaving the document, including a cached document", () => {
     window.history.replaceState(null, "", board);
-    writeBoardBrowseHistory(historyScope, { searchQuery: "board only", laneKey: "build" });
+    writeBoardBrowseHistory(historyScope, {
+      searchQuery: "board only",
+      stage: { key: "build", origin: "automatic" },
+    });
     window.dispatchEvent(new Event("pagehide"));
     expect(readBoardBrowseHistory(historyScope)).toEqual({
-      laneKey: undefined,
+      entryKey: undefined,
       searchQuery: "",
+      stage: undefined,
       status: "all",
     });
   });

@@ -4,10 +4,9 @@ import {
   type PipelineStatusFilter,
 } from "@/features/pipeline/types";
 
-type BoardBrowseState = {
-  searchQuery?: string;
-  laneKey?: string;
-};
+export type BoardBrowseStage = { key: string; origin: "manual" | "automatic" };
+type BoardBrowseState = { searchQuery?: string; stage?: BoardBrowseStage };
+export type BoardBrowseChanges = BoardBrowseState & { status?: PipelineStatusFilter };
 
 type BoardHistoryScope = { factory: string; pathname: string; viewerId: string };
 const entries = new Map<string, BoardBrowseState & { scope: string }>();
@@ -29,18 +28,19 @@ export function parseBoardStatus(
 
 export function readBoardBrowseHistory({ factory, pathname, viewerId }: BoardHistoryScope) {
   if (window.location.pathname !== pathname) return null;
-  const entry = findEntry(JSON.stringify([pathname, factory, viewerId]))?.value;
+  const entry = findEntry(JSON.stringify([pathname, factory, viewerId]));
   const statuses = new URLSearchParams(window.location.search).getAll("status");
   return {
-    searchQuery: entry?.searchQuery ?? "",
-    laneKey: entry?.laneKey,
+    entryKey: entry?.key,
+    searchQuery: entry?.value.searchQuery ?? "",
+    stage: entry?.value.stage,
     status: parseBoardStatus(statuses.length === 1 ? statuses[0] : undefined),
   };
 }
 
 export function writeBoardBrowseHistory(
   { factory, pathname, viewerId }: BoardHistoryScope,
-  changes: BoardBrowseState & { status?: PipelineStatusFilter },
+  changes: BoardBrowseChanges,
 ) {
   const url = new URL(window.location.href);
   if (url.pathname !== pathname) return;
@@ -60,4 +60,5 @@ export function writeBoardBrowseHistory(
     url.searchParams.set("status", status);
   const destination = url.href === window.location.href ? undefined : url;
   if (!stored || destination) window.history.replaceState({ wallieBoard: key }, "", destination);
+  return key;
 }
