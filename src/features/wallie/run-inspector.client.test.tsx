@@ -434,6 +434,17 @@ describe("RunInspector", () => {
     expect(screen.getByText(digest)).toBeTruthy();
   });
 
+  it("distinguishes unrecorded skills from a recorded empty set", () => {
+    const view = show();
+    const records = within(screen.getByRole("region", { name: "Diagnostic records" }));
+    const skills = records.getByText("Skill revisions").parentElement;
+    expect(skills?.querySelector("dd")?.textContent).toBe("Not recorded");
+
+    view.unmount();
+    show({}, undefined, { kind: "recorded", revisions: [] });
+    expect(screen.queryByText("Skill revisions")).toBeNull();
+  });
+
   it("keeps cancellation visible even when a newer attempt exists", () => {
     const nextId = "00000000-0000-4000-8000-000000000006";
     const next = `/w/wallie/runs/${nextId}`;

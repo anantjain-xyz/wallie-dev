@@ -111,7 +111,7 @@ export function RunInspector({
     {
       id: "skill-revisions",
       label: "Skill revisions",
-      kind: skills.kind === "unavailable" ? skills.kind : undefined,
+      kind: skills.kind,
     },
   ].filter(({ kind }) => kind === "unavailable" || kind === "unrecorded");
   return (
