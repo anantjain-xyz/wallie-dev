@@ -233,6 +233,34 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
     await expect(
       page.getByRole("link", { name: "Back to improvements", exact: true }),
     ).toHaveAttribute("href", /reviewState=open/);
+
+    await test.step("keeps unavailable proposal revisions in the authorized factory", async () => {
+      const unavailable = new URL(firstPath, fixture.app);
+      const banner = page.getByRole("banner");
+      const failureGroups = page
+        .getByRole("navigation", { name: "Insights sections" })
+        .getByRole("link", { name: "Failure groups", exact: true });
+      for (const revision of ["not-a-revision", randomUUID()]) {
+        unavailable.searchParams.set("revision", revision);
+        await page.goto(unavailable.href, { waitUntil: "domcontentloaded" });
+        await expect(
+          main.getByRole("heading", { name: "Proposal revision unavailable", exact: true }),
+        ).toBeVisible();
+        await expect(banner.getByText("Product delivery", { exact: true })).toBeVisible();
+        await expect(banner.getByRole("combobox", { name: "Factory", exact: true })).toHaveCount(0);
+        await expect(failureGroups).toHaveAttribute(
+          "href",
+          `${workspacePath}/failure-groups?factory=${fixture.factoryId}`,
+        );
+        await expect(
+          main.getByRole("link", { name: "Back to improvements", exact: true }),
+        ).toHaveAttribute(
+          "href",
+          `${workspacePath}/improvements?factory=${fixture.factoryId}&reviewState=open`,
+        );
+      }
+      await capture(page, info, "01a-unavailable-proposal-revision");
+    });
     await page.goto(firstPath, { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "Evidence and attribution" })).toBeVisible();
     await expect(main.getByText("Inconclusive evidence", { exact: true })).toBeVisible();

@@ -65,6 +65,7 @@ test("reviews recurring failures and preserves source evidence across filters, s
   const groupsPath = `/w/${fixture.slug}/failure-groups?factory=${fixture.factoryId}`;
   const reviewedLabel = "Recurring reconciliation checks";
   const main = page.locator("#main-content");
+  const banner = page.getByRole("banner");
 
   try {
     const scores = scorerSeed.parse(
@@ -182,6 +183,36 @@ test("reviews recurring failures and preserves source evidence across filters, s
     await page.goto(evaluationPath, { waitUntil: "domcontentloaded" });
     await expect(page).toHaveURL(/evaluationAttempt=/);
     await expect(page.getByRole("heading", { name: "Adjudication", exact: true })).toBeVisible();
+
+    await test.step("keeps unavailable failure groups in the authorized factory", async () => {
+      const detail = `/w/${fixture.slug}/failure-groups/${scorerGroupId}?factory=${fixture.factoryId}`;
+      for (const [parameter, value, recovery] of [
+        ["observedOn", "not-a-date", "Reset group filters"],
+        ["revision", randomUUID(), "Clear revision filter"],
+      ]) {
+        await page.goto(`${detail}&${parameter}=${value}`, { waitUntil: "domcontentloaded" });
+        await expect(
+          main.getByRole("heading", { name: "Failure group unavailable", exact: true }),
+        ).toBeVisible();
+        await expect(banner.getByText("Product delivery", { exact: true })).toBeVisible();
+        await expect(banner.getByRole("combobox", { name: "Factory", exact: true })).toHaveCount(0);
+        await expect(improvements).toHaveAttribute(
+          "href",
+          `/w/${fixture.slug}/improvements?factory=${fixture.factoryId}`,
+        );
+        await expect(
+          main.getByRole("link", { name: "Back to failure groups", exact: true }),
+        ).toHaveAttribute(
+          "href",
+          parameter === "revision" ? `${groupsPath}&revision=${value}` : groupsPath,
+        );
+        await expect(main.getByRole("link", { name: recovery, exact: true })).toHaveAttribute(
+          "href",
+          detail,
+        );
+      }
+      await capture(page, info, "04b-unavailable-failure-group");
+    });
     await page.goto(scorerGroupPath);
 
     const dismiss = page.getByRole("button", { name: "Dismiss group", exact: true });
@@ -335,7 +366,6 @@ test("reviews recurring failures and preserves source evidence across filters, s
     unavailableEvidence.pathname = `${unavailableEvidence.pathname.slice(0, memberSegment + 1)}${randomUUID()}`;
     await page.goto(unavailableEvidence.href);
     await expect(main.getByRole("heading", { name: "Evidence unavailable" })).toBeVisible();
-    const banner = page.getByRole("banner");
     await expect(banner.getByText("Product delivery", { exact: true })).toBeVisible();
     await expect(banner.getByRole("combobox", { name: "Factory", exact: true })).toHaveCount(0);
     await expect(improvements).toHaveAttribute(

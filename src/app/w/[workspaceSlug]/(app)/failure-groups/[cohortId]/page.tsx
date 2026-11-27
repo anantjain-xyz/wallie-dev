@@ -194,9 +194,17 @@ export default async function FailureGroupPage({
       Back to failure groups
     </Link>
   );
+  const resourceScope = (
+    <WorkspaceResourceScope
+      factoryId={scope.factoryId}
+      pathname={workspaceFailureGroupPath(workspaceSlug, cohortId)}
+      workspaceSlug={workspaceSlug}
+    />
+  );
   if (!data || !query.success || !evidenceQuery.success) {
     return (
       <PageContainer>
+        {resourceScope}
         <PageHeader title="Failure group unavailable" eyebrow={back} eyebrowAsPlain />
         {!evidenceQuery.success || !query.success ? (
           <Link
@@ -273,11 +281,7 @@ export default async function FailureGroupPage({
           : "Only factory managers can review this group.";
   return (
     <PageContainer>
-      <WorkspaceResourceScope
-        factoryId={scope.factoryId}
-        pathname={workspaceFailureGroupPath(workspaceSlug, cohortId)}
-        workspaceSlug={workspaceSlug}
-      />
+      {resourceScope}
       <PageHeader
         actions={
           <Link

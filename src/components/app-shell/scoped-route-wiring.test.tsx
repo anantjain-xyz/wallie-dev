@@ -1,8 +1,11 @@
+import type { ReactNode } from "react";
 import { renderToReadableStream, renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import ActivityPage from "@/app/w/[workspaceSlug]/(app)/activity/page";
+import FailureGroupPage from "@/app/w/[workspaceSlug]/(app)/failure-groups/[cohortId]/page";
 import FailureValidationPage from "@/app/w/[workspaceSlug]/(app)/failure-groups/[cohortId]/validation/[memberId]/page";
+import ImprovementPage from "@/app/w/[workspaceSlug]/(app)/improvements/[proposalId]/page";
 import InboxPage from "@/app/w/[workspaceSlug]/(app)/inbox/page";
 import RunsPage from "@/app/w/[workspaceSlug]/(app)/runs/page";
 import { scopeFactoryIndex } from "@/components/app-shell/workspace-factory-page.server";
@@ -26,6 +29,7 @@ const mocks = vi.hoisted(() => ({
   factories: vi.fn(),
   failureCohort: vi.fn(),
   failureValidation: vi.fn(),
+  rpc: vi.fn(),
   scopeHandoff: vi.fn(() => null),
 }));
 
@@ -37,10 +41,11 @@ vi.mock("@/features/factories/factory-options-data", () => ({
 }));
 vi.mock("@/features/factories/factory-selector", () => ({ FactorySelector: () => null }));
 vi.mock("@/features/workspaces/authenticated-context", () => ({
+  isWorkspaceOperator: () => false,
   loadAuthenticatedWorkspaceContext: () =>
     Promise.resolve({
       currentMember: { id: "member-id" },
-      supabase: {},
+      supabase: { rpc: mocks.rpc },
       user: { id: "viewer-id" },
       workspace: { id: "workspace-id", slug: "tandem" },
     }),
@@ -69,8 +74,13 @@ vi.mock("@/features/factory-failures/failure-validation-data", () => ({
 const slug = "tandem";
 const cohortId = "b974a915-abf8-4f96-9f6e-4a0b26b41f35";
 const memberId = "a6e68d53-190b-4658-ae99-bced8c09f9fb";
-const groupPath = `/w/${slug}/failure-groups/${cohortId}`;
+const proposalId = "68b2e7e4-3e1d-4d9d-90af-707473ca284d";
+const revisionId = "cab36d7c-8c13-4a42-ae96-54bd161cdc00";
+const groupsPath = `/w/${slug}/failure-groups`;
+const groupPath = `${groupsPath}/${cohortId}`;
 const validationPath = `${groupPath}/validation/${memberId}`;
+const improvementsPath = `/w/${slug}/improvements`;
+const proposalPath = `${improvementsPath}/${proposalId}`;
 const mobile = {
   id: "029d7bb8-d497-4ad1-b085-d3264e568faf",
   name: "Mobile app",
@@ -91,11 +101,40 @@ const props = (query: Record<string, string | string[] | undefined>) => ({
   searchParams: Promise.resolve(query),
 });
 
+const groupPage = (query: Parameters<typeof props>[0]) =>
+  FailureGroupPage({
+    ...props(query),
+    params: Promise.resolve({ workspaceSlug: slug, cohortId }),
+  });
+
+const proposalPage = (query: Parameters<typeof props>[0]) =>
+  ImprovementPage({
+    ...props(query),
+    params: Promise.resolve({ workspaceSlug: slug, proposalId }),
+  });
+
 const evidencePage = (factory: string) =>
   FailureValidationPage({
     params: Promise.resolve({ workspaceSlug: slug, cohortId, memberId }),
     searchParams: Promise.resolve({ factory }),
   });
+
+async function renderPage(page: Promise<ReactNode>) {
+  return new Response(await renderToReadableStream(await page)).text();
+}
+
+function expectMobileScopeHandoff(pathname: string) {
+  expect(mocks.scopeHandoff).toHaveBeenCalledExactlyOnceWith(
+    {
+      snapshot: expect.objectContaining({
+        locationKey: workspaceScopeLocationKey(pathname),
+        picker: "locked",
+        scope: { kind: "factory", factory: mobile },
+      }),
+    },
+    undefined,
+  );
+}
 
 describe("workspace scope route wiring", () => {
   beforeEach(() => {
@@ -188,6 +227,108 @@ describe("workspace scope route wiring", () => {
       "Resolved factory body",
     );
     expect(await Body.mock.calls[0]?.[0]?.searchParams).toEqual({ factory: mobile.id });
+  });
+
+  it.each([
+    { name: "group filters", query: { symptom: "unknown" }, retained: "" },
+    { name: "revision", query: { revision: "not-a-revision" }, retained: "" },
+    {
+      name: "evidence filters",
+      query: { symptom: "validation", observedOn: "not-a-date" },
+      retained: "&amp;symptom=validation",
+    },
+  ])(
+    "locks the failure group to its authorized factory with invalid $name",
+    async ({ query, retained }) => {
+      const markup = await renderPage(groupPage({ factory: mobile.id.toUpperCase(), ...query }));
+
+      expect(markup).toContain("Failure group unavailable");
+      expect(markup).toContain(`href="${groupsPath}?factory=${mobile.id}${retained}"`);
+      expect(markup).toContain(`href="${groupPath}?factory=${mobile.id}${retained}"`);
+      expect(markup).toContain("Reset group filters");
+      expect(mocks.failureCohort).not.toHaveBeenCalled();
+      expectMobileScopeHandoff(groupPath);
+    },
+  );
+
+  it.each([
+    { name: "group", revision: undefined },
+    { name: "revision", revision: revisionId },
+  ])("locks the authorized factory when the failure $name is unavailable", async ({ revision }) => {
+    mocks.failureCohort.mockResolvedValue(null);
+    const markup = await renderPage(groupPage({ factory: mobile.id, revision }));
+
+    expect(markup).toContain("Failure group unavailable");
+    expect(markup).toContain(
+      `href="${groupsPath}?factory=${mobile.id}${revision ? `&amp;revision=${revision}` : ""}"`,
+    );
+    expect(markup).not.toContain("Reset group filters");
+    if (revision) {
+      expect(markup).toContain(`href="${groupPath}?factory=${mobile.id}"`);
+      expect(markup).toContain("Clear revision filter");
+    } else {
+      expect(markup).not.toContain("Clear revision filter");
+    }
+    expect(mocks.failureCohort).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(),
+      expect.objectContaining({ factoryId: mobile.id }),
+      cohortId,
+      { revision },
+    );
+    expectMobileScopeHandoff(groupPath);
+  });
+
+  it.each([
+    ["revision", { revision: "not-a-revision" }],
+    ["discussion cursor", { before: "0" }],
+    ["source cohort", { cohort: "not-a-cohort" }],
+  ])("locks the proposal to its authorized factory with an invalid %s", async (_, query) => {
+    const markup = await renderPage(
+      proposalPage({ factory: mobile.id.toUpperCase(), reviewState: "open", ...query }),
+    );
+
+    expect(markup).toContain("Proposal revision unavailable");
+    expect(markup).toContain(
+      `href="${improvementsPath}?factory=${mobile.id}&amp;reviewState=open"`,
+    );
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    expectMobileScopeHandoff(proposalPath);
+  });
+
+  it.each([
+    { name: "proposal", revision: undefined },
+    { name: "revision", revision: revisionId },
+  ])(
+    "locks the authorized factory when the improvement $name is unavailable",
+    async ({ revision }) => {
+      mocks.rpc.mockResolvedValue({ data: null, error: null });
+      const markup = await renderPage(
+        proposalPage({ factory: mobile.id, cohort: cohortId, revision }),
+      );
+
+      expect(markup).toContain("Proposal revision unavailable");
+      expect(markup).toContain(`href="${improvementsPath}?factory=${mobile.id}"`);
+      expect(mocks.rpc).toHaveBeenCalledExactlyOnceWith("read_factory_improvement_workbench", {
+        p_workspace_id: "workspace-id",
+        p_factory_id: mobile.id,
+        p_proposal_id: proposalId,
+        ...(revision ? { p_revision_id: revision } : {}),
+      });
+      expectMobileScopeHandoff(proposalPath);
+    },
+  );
+
+  it.each([
+    ["failure group", groupPage],
+    ["improvement proposal", proposalPage],
+  ])("does not publish scope or read %s details for an unauthorized factory", async (_, page) => {
+    const markup = await renderPage(page({ factory: "c10d32cd-7036-48f8-8c05-d7aa38f473c5" }));
+
+    expect(markup).toContain("Factory unavailable");
+    expect(markup).toContain(`href="/w/${slug}/sessions?factory=all"`);
+    expect(mocks.failureCohort).not.toHaveBeenCalled();
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    expect(mocks.scopeHandoff).not.toHaveBeenCalled();
   });
 
   it.each([
