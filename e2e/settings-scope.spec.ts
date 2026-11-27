@@ -152,6 +152,16 @@ test("every Personal entry preserves another runtime section's unsaved edits", a
   const initial = await attempts.inputValue();
   await attempts.fill(initial === "7" ? "8" : "7");
   const expected = await attempts.inputValue();
+  await page.evaluate(() => {
+    window.location.hash = "profile";
+  });
+  await expect(
+    page
+      .getByRole("navigation", { name: "Settings categories" })
+      .getByText("Save or discard your changes before opening Personal settings."),
+  ).toBeVisible();
+  await expect(page).toHaveURL((url) => url.pathname === "/dev/settings" && !url.hash);
+  await expect(attempts).toHaveValue(expected);
   for (const [region, name] of [
     [runtime, "Provider access"],
     [page.locator("#verify"), "Open provider access"],

@@ -9,7 +9,7 @@ import {
   SETTINGS_CATEGORY_LINKS,
   type SettingsCategory,
 } from "@/features/settings/settings-categories";
-import { PersonalSettingsLink } from "@/features/settings/personal-settings-navigation";
+import { usePersonalSettingsGuard } from "@/features/settings/personal-settings-navigation";
 
 type SettingsCategoryNavProps = {
   activeCategory: SettingsCategory;
@@ -135,6 +135,8 @@ export function SettingsCategoryNav({
   const router = useRouter();
   const search = useSearchParams().toString();
   const [activeAnchor, setActiveAnchor] = useState<string | null>(null);
+  const { stopNavigation: stopPersonalNavigation, warning: personalWarning } =
+    usePersonalSettingsGuard();
   const activeSection = activeAnchor === "factory-setup" ? "factories" : activeAnchor;
   const [jumpOpen, setJumpOpen] = useState(false);
   const jumpId = useId();
@@ -172,6 +174,14 @@ export function SettingsCategoryNav({
       pending = null;
       if (!route || (!canManage && managerAnchors.has(route.anchor))) {
         setActiveAnchor(null);
+        return;
+      }
+      if (
+        activeCategory !== "personal" &&
+        route.category === "personal" &&
+        stopPersonalNavigation()
+      ) {
+        window.history.replaceState(null, "", window.location.pathname + window.location.search);
         return;
       }
       if (route.category !== activeCategory || hash !== `#${route.anchor}`) {
@@ -225,7 +235,7 @@ export function SettingsCategoryNav({
       observer?.disconnect();
       window.removeEventListener("hashchange", syncActiveHash);
     };
-  }, [activeCategory, canManage, pathname, reachTarget, router, search]);
+  }, [activeCategory, canManage, pathname, reachTarget, router, search, stopPersonalNavigation]);
 
   return (
     <nav
@@ -253,15 +263,19 @@ export function SettingsCategoryNav({
           );
         })}
       </ul>
-      <PersonalSettingsLink
+      <Link
         aria-current={activeCategory === "personal" ? "page" : undefined}
         className="settings-anchor mt-2 min-h-9 aria-[current=page]:bg-control-hover aria-[current=page]:text-foreground"
         href={`/w/${workspaceSlug}/settings?category=personal`}
         onFocus={() => preloadSettingsCategory("personal")}
+        onNavigate={(event) => {
+          if (stopPersonalNavigation()) event.preventDefault();
+        }}
         onPointerEnter={() => preloadSettingsCategory("personal")}
       >
         Personal
-      </PersonalSettingsLink>
+      </Link>
+      {personalWarning}
       <button
         aria-controls={jumpId}
         aria-expanded={jumpOpen}
