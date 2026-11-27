@@ -144,7 +144,6 @@ async function WorkflowDirectory({ params, searchParams }: Props) {
     <PageContainer>
       <PageHeader
         title="Workflows"
-        description={isDefault ? undefined : "New session still opens in the default factory."}
         actions={
           <>
             {selector}
