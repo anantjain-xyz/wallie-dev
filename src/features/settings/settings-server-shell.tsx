@@ -27,6 +27,7 @@ import {
   WorkspaceSecretsIntegrationIsland,
 } from "@/features/settings/islands/integration-islands";
 import { PipelineIsland } from "@/features/settings/islands/pipeline-island";
+import { PersonalSettingsNavigation } from "@/features/settings/personal-settings-navigation";
 import {
   DangerActionsIsland,
   WorkspaceIdentityIsland,
@@ -344,14 +345,16 @@ export function SettingsServerShell(props: SettingsServerShellProps) {
           <h1 className="type-page-title">Settings</h1>
         </header>
         <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-12">
-          <SettingsCategoryNav
-            activeCategory={props.category}
-            canManage={props.initialData.canManage}
-            workspaceSlug={props.initialData.workspace.slug}
-          />
-          <div className="min-w-0" id="settings-sections">
-            <ActiveCategory {...props} />
-          </div>
+          <PersonalSettingsNavigation key={props.initialData.workspace.id}>
+            <SettingsCategoryNav
+              activeCategory={props.category}
+              canManage={props.initialData.canManage}
+              workspaceSlug={props.initialData.workspace.slug}
+            />
+            <div className="min-w-0" id="settings-sections">
+              <ActiveCategory {...props} />
+            </div>
+          </PersonalSettingsNavigation>
         </div>
       </div>
     </div>

@@ -9,8 +9,13 @@ import {
   SettingsCategoryNav,
 } from "@/features/settings/settings-category-nav";
 import { SETTINGS_CATEGORY_LINKS } from "@/features/settings/settings-categories";
+import {
+  PersonalSettingsNavigation,
+  useBlockPersonalSettings,
+} from "@/features/settings/personal-settings-navigation";
 
 const replace = vi.fn();
+const navigate = vi.fn();
 const router = { replace };
 let searchParams = new URLSearchParams("category=advanced");
 
@@ -24,12 +29,22 @@ vi.mock("next/link", () => ({
   default: ({
     children,
     href,
+    onNavigate,
     ...props
   }: {
     children: React.ReactNode;
     href: string;
+    onNavigate?: (event: { preventDefault: () => void }) => void;
   } & React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
-    <a href={href} {...props}>
+    <a
+      href={href}
+      {...props}
+      onClick={(event) => {
+        onNavigate?.({ preventDefault: () => event.preventDefault() });
+        if (!event.defaultPrevented) navigate(href);
+        event.preventDefault();
+      }}
+    >
       {children}
     </a>
   ),
@@ -38,6 +53,7 @@ vi.mock("next/link", () => ({
 afterEach(() => {
   cleanup();
   replace.mockClear();
+  navigate.mockClear();
   searchParams = new URLSearchParams("category=advanced");
   window.history.replaceState(null, "", "/w/acme/settings?category=advanced");
 });
@@ -102,6 +118,38 @@ describe("SettingsCategoryNav hash routing", () => {
       "href",
       "/w/acme/settings?category=personal",
     );
+  });
+
+  it("keeps Personal blocked until every independent draft blocker clears", () => {
+    function Editor({ dirty }: { dirty: boolean }) {
+      useBlockPersonalSettings(dirty);
+      return null;
+    }
+
+    function Example({ agent, policy }: { agent: boolean; policy: boolean }) {
+      return (
+        <PersonalSettingsNavigation>
+          <Editor dirty={agent} />
+          <Editor dirty={policy} />
+          <SettingsCategoryNav activeCategory="integrations" canManage workspaceSlug="acme" />
+        </PersonalSettingsNavigation>
+      );
+    }
+
+    const { getByRole, queryByRole, rerender } = render(<Example agent policy />);
+    const personal = getByRole("link", { name: "Personal" });
+    fireEvent.click(personal);
+    expect(getByRole("status")).toHaveTextContent("Save or discard your changes");
+    expect(navigate).not.toHaveBeenCalled();
+
+    rerender(<Example agent={false} policy />);
+    fireEvent.click(personal);
+    expect(navigate).not.toHaveBeenCalled();
+
+    rerender(<Example agent={false} policy={false} />);
+    expect(queryByRole("status")).not.toBeInTheDocument();
+    fireEvent.click(personal);
+    expect(navigate).toHaveBeenCalledWith("/w/acme/settings?category=personal");
   });
 
   it("sticks below the shell header on desktop without covering mobile anchors", () => {

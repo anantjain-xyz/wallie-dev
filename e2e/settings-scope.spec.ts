@@ -130,7 +130,7 @@ test("changing connector selection never retargets or drops the default factory 
   );
   await providerAccess.click();
   await expect(
-    page.getByText("Save or discard your runtime edits before opening provider access."),
+    page.getByText("Save or discard your changes before opening Personal settings."),
   ).toBeVisible();
 
   await connectors.getByRole("combobox", { name: "Factory", exact: true }).click();
@@ -142,6 +142,32 @@ test("changing connector selection never retargets or drops the default factory 
     "href",
     "/w/northwind/settings/factory-definition#candidate-tests",
   );
+});
+
+test("every Personal entry preserves another runtime section's unsaved edits", async ({ page }) => {
+  await page.goto("/dev/settings?category=integrations&state=provider-blocked");
+  const runtime = page.locator("#runtime");
+  const attempts = runtime.getByRole("spinbutton", { name: /Maximum repair attempts/u });
+  await expect(attempts).toBeEditable();
+  const initial = await attempts.inputValue();
+  await attempts.fill(initial === "7" ? "8" : "7");
+  const expected = await attempts.inputValue();
+  for (const [region, name] of [
+    [runtime, "Provider access"],
+    [page.locator("#verify"), "Open provider access"],
+    [page.getByRole("navigation", { name: "Settings categories" }), "Personal"],
+  ] as const) {
+    await region.getByRole("link", { name, exact: true }).click();
+    await expect(
+      region.getByText("Save or discard your changes before opening Personal settings."),
+    ).toBeVisible();
+    await expect(page).toHaveURL((url) => url.pathname === "/dev/settings");
+    await expect(attempts).toHaveValue(expected);
+  }
+  await attempts.fill(initial);
+  await expect(
+    page.getByText("Save or discard your changes before opening Personal settings."),
+  ).toHaveCount(0);
 });
 
 test("delivery blockers stay visible when technical details are closed", async ({ page }) => {

@@ -8,6 +8,7 @@ import {
   type FactorySettingsFormRevision,
 } from "@/features/settings/factory-settings";
 import type { FlashMessage } from "@/features/settings/settings-types";
+import { useBlockPersonalSettings } from "@/features/settings/personal-settings-navigation";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { readResponseJson, useApiAction } from "@/features/settings/use-api-action";
 import {
@@ -172,6 +173,14 @@ function ExecutionPolicyControls({
   }
 
   const isBusy = save.isBusy || Boolean(revision?.busy);
+  useBlockPersonalSettings(
+    canManage &&
+      !factory &&
+      (save.isBusy ||
+        (loadState === "ready" &&
+          JSON.stringify(draft) !==
+            JSON.stringify(toDraft(policy?.requirements ?? newRequirements)))),
+  );
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
