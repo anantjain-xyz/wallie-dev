@@ -711,6 +711,11 @@ select throws_ok($$update public.factory_members
   'grant attribution stays immutable outside FK cleanup');
 set local role service_role;
 
+select ok(
+  (select convalidated from pg_constraint
+    where conrelid = 'public.factory_audit_events'::regclass
+      and conname = 'factory_audit_events_action_check'),
+  'the widened factory audit constraint is validated by a separate migration');
 select throws_ok($$select public.archive_additional_factory(
   '55000000-0000-4000-8000-000000000001',
   (select id from public.factories where workspace_id = '55000000-0000-4000-8000-000000000001' and is_default),

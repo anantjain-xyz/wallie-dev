@@ -9,7 +9,7 @@ begin
 
   alter table public.factory_audit_events drop constraint factory_audit_events_action_check;
   execute format(
-    'alter table public.factory_audit_events add constraint factory_audit_events_action_check check ((%s) or action = %L)',
+    'alter table public.factory_audit_events add constraint factory_audit_events_action_check check ((%s) or action = %L) not valid',
     action_predicate, 'factory.renamed'
   );
 end;
