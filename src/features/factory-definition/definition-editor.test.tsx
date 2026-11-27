@@ -70,6 +70,22 @@ const source: SerialFactoryDefinition = {
   ],
 };
 
+const freshSetup = {
+  repositories: [{ id: id(3), fullName: "acme/project" }],
+  hasPipeline: false,
+  pipelineAvailable: false,
+  enabledSandboxProviders: ["vercel"],
+} satisfies NonNullable<FactoryEditorSnapshot["setup"]>;
+
+const freshFactory: FactoryEditorSnapshot = {
+  activationNumber: 0,
+  published: null,
+  draft: null,
+  baseline: null,
+  readySandboxProviders: ["vercel"],
+  setup: freshSetup,
+};
+
 function document(
   number: number,
   kind: FactoryEditorDocument["kind"],
@@ -329,6 +345,10 @@ function setup({
   initialDraftPasses = true,
   initialDraft = draft,
   initialPublished = published,
+  initialSnapshot,
+  setupRepositories = [],
+  setupMutation,
+  readSnapshot,
   repositories = [{ id: id(3), fullName: "acme/project", isArchived: false }],
   credentials,
   routingPreview,
@@ -341,6 +361,13 @@ function setup({
   initialDraftPasses?: boolean;
   initialDraft?: FactoryEditorDocument;
   initialPublished?: FactoryEditorDocument;
+  initialSnapshot?: FactoryEditorSnapshot;
+  setupRepositories?: { id: string; fullName: string }[];
+  setupMutation?: (body: Record<string, unknown>) => {
+    snapshot?: FactoryEditorSnapshot;
+    response: Response;
+  };
+  readSnapshot?: () => Response | undefined;
   repositories?: CapabilityRepository[];
   credentials?: FactorySecretBindingResponse;
   routingPreview?: (body: Record<string, unknown>) => Response;
@@ -351,7 +378,7 @@ function setup({
   ) => Promise<Response> | undefined;
   rejectPublish?: Response;
 } = {}) {
-  let snapshot: FactoryEditorSnapshot = {
+  let snapshot: FactoryEditorSnapshot = initialSnapshot ?? {
     activationNumber: initialActivationNumber,
     published: initialPublished,
     draft: initialDraft,
@@ -453,21 +480,27 @@ function setup({
       });
     }
     if (options?.method !== "POST") {
+      if (pathname === `${endpoint}/setup`) {
+        return Response.json({ repositories: setupRepositories });
+      }
       if (pathname === endpoint) {
-        const currentActivation = activation(
-          snapshot.published ?? published,
-          snapshot.activationNumber,
-        );
+        const currentActivation = snapshot.published
+          ? activation(snapshot.published, snapshot.activationNumber)
+          : null;
         return Response.json({
           factoryId: id(9),
           currentActivation,
-          activations: [currentActivation, activation(previous, 1)],
+          activations: currentActivation ? [currentActivation, activation(previous, 1)] : [],
           nextBeforeActivationNumber: null,
         });
       }
       const selection = searchParams.get("revisionId") ?? searchParams.get("draftId");
       const deferred = selection ? readSelection?.(searchParams, options?.signal) : undefined;
       if (deferred) return deferred;
+      if (pathname === `${endpoint}/editor` && !selection) {
+        const unavailable = readSnapshot?.();
+        if (unavailable) return unavailable;
+      }
       return Response.json(selection ? { document: records.get(selection) } : { snapshot });
     }
 
@@ -475,6 +508,11 @@ function setup({
     requests.push({ path: pathname, body });
     if (body.expectedActivationNumber !== snapshot.activationNumber) {
       return Response.json({ error: "The activation changed." }, { status: 409 });
+    }
+    if (pathname === `${endpoint}/setup` && setupMutation) {
+      const result = setupMutation(body);
+      snapshot = result.snapshot ?? snapshot;
+      return result.response;
     }
     if (pathname === `${endpoint}/routing-preview`) {
       const current = snapshot.draft;
@@ -589,6 +627,95 @@ afterEach(() => {
   vi.unstubAllGlobals();
   navigation.push.mockReset();
   navigation.search = new URLSearchParams();
+});
+
+it("does not offer Create pipeline when a different pipeline already exists", async () => {
+  setup({
+    initialSnapshot: {
+      ...freshFactory,
+      draft,
+      setup: { ...freshSetup, hasPipeline: true },
+    },
+  });
+  expect(await screen.findByText(/The configured pipeline is unavailable/)).toBeVisible();
+  const panel = within(screen.getByRole("region", { name: "Setup" }));
+  expect(panel.queryByRole("button", { name: "Create pipeline" })).not.toBeInTheDocument();
+  expect(panel.queryByText(/Publish a tested draft/)).not.toBeInTheDocument();
+});
+
+it("creates the first pipeline and can return from its unchanged empty JSON source", async () => {
+  const { requests } = setup({
+    initialSnapshot: freshFactory,
+    setupMutation: () => ({
+      response: Response.json({ id: id(2) }, { status: 201 }),
+      snapshot: {
+        ...freshFactory,
+        baseline: { source: { ...source, stages: [] } },
+        setup: { ...freshSetup, hasPipeline: true, pipelineAvailable: true },
+      },
+    }),
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Create pipeline" }));
+  expect(await screen.findByRole("button", { name: "Add stage" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "JSON source" }));
+  const json = screen.getByLabelText<HTMLTextAreaElement>("Definition JSON");
+  expect(JSON.parse(json.value)).toEqual({ ...source, stages: [] });
+  expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Structured" }));
+  expect(screen.getByRole("button", { name: "Add stage" })).toBeVisible();
+  expect(requests).toEqual([
+    {
+      path: `${endpoint}/setup`,
+      body: { action: "create-pipeline", expectedActivationNumber: 0, expectedDraftId: null },
+    },
+  ]);
+});
+
+it("reads back a committed assignment after an ambiguous response without retrying", async () => {
+  const spare = { id: id(73), fullName: "acme/project" };
+  const { requests } = setup({
+    initialSnapshot: { ...freshFactory, setup: { ...freshSetup, repositories: [] } },
+    setupRepositories: [spare],
+    setupMutation: () => ({
+      response: Response.json({ error: "Gateway timeout." }, { status: 504 }),
+      snapshot: freshFactory,
+    }),
+  });
+  fireEvent.change(await screen.findByRole("combobox", { name: "Connected repository" }), {
+    target: { value: spare.id },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Assign repository" }));
+  expect(await screen.findByText(/Check the refreshed setup/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Create pipeline" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Assign repository" })).not.toBeInTheDocument();
+  expect(requests).toHaveLength(1);
+  expect(requests[0]?.body).toMatchObject({ action: "assign-repository", repositoryId: spare.id });
+});
+
+it("blocks another setup attempt until a manual reload can read the current state", async () => {
+  let readUnavailable = false;
+  const { requests } = setup({
+    initialSnapshot: freshFactory,
+    setupMutation: () => {
+      readUnavailable = true;
+      throw new TypeError("Network connection lost.");
+    },
+    readSnapshot: () =>
+      readUnavailable
+        ? Response.json({ error: "Definition unavailable." }, { status: 503 })
+        : undefined,
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Create pipeline" }));
+  expect(await screen.findByText(/Reload definition before trying again/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Create pipeline" })).toBeDisabled();
+  expect(requests).toHaveLength(1);
+
+  readUnavailable = false;
+  fireEvent.click(screen.getByRole("button", { name: "Reload definition" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Create pipeline" })).toBeEnabled(),
+  );
+  expect(requests).toHaveLength(1);
 });
 
 it("shows credential rotation status and saves only the selected binding reference", async () => {

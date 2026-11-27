@@ -111,15 +111,28 @@ function choose(field: string, option: string) {
   );
 }
 
+function openAdvanced() {
+  fireEvent.click(screen.getByText("Runtime and advanced settings", { exact: true }));
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
 
 describe("structured factory definition editor", () => {
+  it("shows the serial pipeline without exposing advanced controls until requested", () => {
+    renderEditor();
+    expect(screen.getByRole("heading", { name: "Pipeline" })).toBeVisible();
+    expect(screen.getByLabelText("Model")).not.toBeVisible();
+    openAdvanced();
+    expect(screen.getByLabelText("Model")).toBeVisible();
+  });
+
   it("keeps the pinned agent prompt revision while editing stage instructions", () => {
     const revisionId = "00000000-0000-4000-8000-000000000005";
     const { current } = renderEditor({ ...initialDefinition, implementationAgent: revisionId });
+    openAdvanced();
     expect(
       screen.getByRole("combobox", { name: "Implementation agent prompt revision" }),
     ).toHaveTextContent("Agent prompt revision unavailable");
@@ -268,6 +281,7 @@ describe("structured factory definition editor", () => {
         { id: namedId(22), label: "Code review · Revision 2" },
       ],
     });
+    openAdvanced();
     choose("Add a skill revision", "Issue planning · Revision 4");
     choose("Add a skill revision", "Code review · Revision 2");
     expect(
@@ -342,6 +356,7 @@ describe("structured factory definition editor", () => {
         },
       ],
     });
+    openAdvanced();
     fireEvent.click(screen.getByRole("button", { name: "Add routing policy" }));
     fireEvent.click(screen.getByRole("button", { name: "Add task class" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Task class name" }), {
@@ -365,6 +380,7 @@ describe("structured factory definition editor", () => {
 
   it("keeps writable and read-context assignments distinct while editing", () => {
     const { current } = renderEditor();
+    fireEvent.click(screen.getByText("Additional repository bindings", { exact: true }));
     const writable = screen.getByRole("combobox", { name: "Other writable repositories" });
     const readContext = screen.getByRole("combobox", { name: "Read-only context repositories" });
     fireEvent.click(readContext);
@@ -473,6 +489,7 @@ it("adds and orders routing classes and rules through the structured definition"
   const { current } = renderEditor(initialDefinition, benchmarksHref, {
     routing: [{ id: routingConfigurationKey(configuration), configuration, label }],
   });
+  openAdvanced();
   const routing = within(screen.getByRole("region", { name: "Model routing" }));
   fireEvent.click(routing.getByRole("button", { name: "Add routing policy" }));
   const addClass = routing.getByRole("button", { name: "Add task class" });

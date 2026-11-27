@@ -117,7 +117,7 @@ const serialDefinitionFields = z
     operatingRulesMd: pipelineOperatingRulesSchema
       .default("")
       .refine(isFactoryDefinitionText, validText),
-    stages: z.array(stageSchema).min(1, "Add at least one stage to the serial workflow."),
+    stages: z.array(stageSchema).min(1, "Add at least one stage to the pipeline."),
   })
   .strict();
 
@@ -160,6 +160,11 @@ export const serialFactoryDefinitionSchema = z.discriminatedUnion(
 
 export type SerialFactoryDefinitionInput = z.input<typeof serialFactoryDefinitionSchema>;
 export type SerialFactoryDefinition = z.output<typeof serialFactoryDefinitionSchema>;
+
+export const emptyFactorySetupSourceSchema = serialDefinitionFields.extend({
+  schemaVersion: z.literal(FACTORY_DEFINITION_SCHEMA_VERSION),
+  stages: z.tuple([]),
+});
 
 const compiledDefinitionFields = serialDefinitionFields
   .omit({

@@ -7,10 +7,12 @@ import { sandboxProviderSchema } from "@/lib/sandbox-connections/contracts";
 
 import {
   compiledFactoryDefinitionSchema,
+  emptyFactorySetupSourceSchema,
   factoryDefinitionExpectedActivationSchema,
   factoryDefinitionSourceSchema,
   serialFactoryDefinitionSchema,
 } from "./schema";
+import { factorySetupSnapshotSchema } from "./setup-contracts";
 
 const uuid = z.string().uuid();
 const activationNumber = z.number().int().safe().nonnegative();
@@ -37,8 +39,11 @@ export const factoryEditorSnapshotSchema = z.object({
   routingCanaryAlertId: uuid.optional(),
   published: documentSchema.nullable(),
   draft: documentSchema.nullable(),
-  baseline: z.object({ source: serialFactoryDefinitionSchema }).nullable(),
+  baseline: z
+    .object({ source: z.union([serialFactoryDefinitionSchema, emptyFactorySetupSourceSchema]) })
+    .nullable(),
   readySandboxProviders: z.array(sandboxProviderSchema),
+  setup: factorySetupSnapshotSchema.optional(),
 });
 export const factoryEditorSnapshotResponseSchema = z.object({
   snapshot: factoryEditorSnapshotSchema,
