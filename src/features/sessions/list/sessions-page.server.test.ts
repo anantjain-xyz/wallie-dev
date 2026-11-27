@@ -249,8 +249,8 @@ describe("Sessions ledger server render", () => {
       { factoryQuery: "factory-9" },
     );
     expect(filtered).toContain("No matching sessions");
-    expect(filtered).toContain("Clear filters");
-    expect(filtered).toContain("scope=active");
+    expect(filtered).not.toContain("Show unfiltered sessions");
+    expect(filtered).toContain("Search all sessions in accessible factories");
     expect(filtered).toContain("factory=factory-9");
     expect(filtered).toContain("q=deploy");
     expect(filtered).not.toContain("stage=plan");
@@ -261,8 +261,20 @@ describe("Sessions ledger server render", () => {
         queryState: queryState({ query: "deploy", scope: "all" }),
       }),
     );
-    expect(filteredAllScope).toContain("Clear filters");
+    expect(filteredAllScope).toContain("Show unfiltered sessions");
     expect(filteredAllScope).toContain("scope=all");
+
+    const filteredArchived = renderPage(
+      emptyData({
+        hasAnySession: true,
+        queryState: queryState({ query: "deploy", scope: "archived", sort: "oldest" }),
+      }),
+      { factoryQuery: "factory-9" },
+    );
+    expect(filteredArchived).toContain("Show unfiltered, unarchived sessions");
+    expect(filteredArchived).toContain(
+      'href="/w/acme/sessions?sort=oldest&amp;scope=active&amp;factory=factory-9"',
+    );
 
     const noSessionsSingle = renderPage(emptyData(), { factoryQuery: "factory-9" });
     expect(noSessionsSingle).toContain("No sessions yet");

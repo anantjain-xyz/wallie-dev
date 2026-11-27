@@ -1,6 +1,8 @@
 import type { CSSProperties } from "react";
 
+import { PageHeader } from "@/components/ui/page-shell";
 import { SkeletonBlock } from "@/components/ui/skeleton";
+import { FILTER_CONTROL_CLASS } from "@/components/ui/filter-controls";
 import { pipelineLayout } from "@/features/pipeline/layout";
 import { cn } from "@/lib/utils";
 
@@ -42,7 +44,13 @@ function PipelineLaneSkeleton({ index, mobileVisible }: { index: number; mobileV
   );
 }
 
-export function PipelineLoadingSkeleton({ stageCount = 3 }: { stageCount?: number }) {
+export function PipelineLoadingSkeleton({
+  showFactorySelector = true,
+  stageCount = 3,
+}: {
+  showFactorySelector?: boolean;
+  stageCount?: number;
+}) {
   const lanes = Math.max(1, stageCount);
 
   return (
@@ -55,15 +63,33 @@ export function PipelineLoadingSkeleton({ stageCount = 3 }: { stageCount?: numbe
         role="status"
       >
         <div className={pipelineLayout.controlsArea}>
-          <div className="hidden space-y-3 pipeline-wide:mb-10 pipeline-wide:block">
-            <SkeletonBlock className="h-8 w-32" />
-            <SkeletonBlock className="h-4 w-full max-w-[520px]" />
-            <SkeletonBlock className="h-4 w-8/12 max-w-[420px]" />
+          <div aria-hidden="true">
+            <PageHeader
+              actions={
+                showFactorySelector ? (
+                  <SkeletonBlock className={cn(FILTER_CONTROL_CLASS, "w-36 pointer-coarse:h-11")} />
+                ) : undefined
+              }
+              actionsRightOnDesktop
+              className={pipelineLayout.header}
+              title={
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                  <SkeletonBlock className="h-8 w-28" />
+                  <div className="flex min-h-11 items-center sm:min-h-9 pointer-coarse:min-h-11">
+                    <SkeletonBlock className="h-8 w-[108px]" />
+                  </div>
+                  <div className="flex h-[1.375rem] items-center">
+                    <SkeletonBlock className="h-4 w-48" />
+                  </div>
+                </div>
+              }
+              titleAsChild
+            />
           </div>
 
           <div aria-hidden="true" className={pipelineLayout.controls}>
-            <SkeletonBlock className="h-11 min-w-0 flex-1 basis-full sm:basis-60 md:h-9" />
-            <SkeletonBlock className="h-11 w-40 md:h-9" />
+            <SkeletonBlock className="h-11 min-w-0 flex-1 basis-full sm:basis-60 md:h-9 pointer-coarse:h-11" />
+            <SkeletonBlock className="h-11 w-40 md:h-9 pointer-coarse:h-11" />
           </div>
         </div>
 

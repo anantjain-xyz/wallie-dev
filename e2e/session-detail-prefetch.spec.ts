@@ -64,11 +64,12 @@ test("session detail prefetch requires intent and stays deduplicated", async ({ 
   });
 
   await page.goto(workspacePath);
-  await expect(page.getByRole("heading", { name: "Pipeline", exact: true })).toBeVisible();
+  const views = page.getByRole("navigation", { name: "Sessions views" });
+  await expect(views.locator('[aria-current="page"]')).toHaveText("Board");
   await page.waitForTimeout(750);
   expect(detailRequests, "Pipeline must not prefetch visible session cards").toHaveLength(0);
 
-  const pipelineSessionLink = page.getByRole("link", { name: /^Open session / }).first();
+  const pipelineSessionLink = page.getByRole("link", { name: /^(Open|Review) session / }).first();
   const intentHref = await pipelineSessionLink.getAttribute("href");
   expect(intentHref).toMatch(sessionDetailPathPattern);
   if (!intentHref) throw new Error("Pipeline session link is missing its href");
@@ -100,8 +101,10 @@ test("session detail prefetch requires intent and stays deduplicated", async ({ 
   ).toEqual(Array.from({ length: detailRequests.length }, () => intentHref));
   expect(detailRequests, "hover must not start a second prefetch").toHaveLength(intentRequestCount);
 
-  await page.getByRole("link", { name: "Sessions", exact: true }).click();
-  await expect(page).toHaveURL(`${workspacePath}/sessions`);
+  const list = views.getByRole("link", { name: "List" });
+  const listHref = await list.getAttribute("href");
+  await list.click();
+  await expect(page).toHaveURL(listHref!);
   await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
   await page.waitForTimeout(750);
   expect(detailRequests, "Sessions must not prefetch visible session rows").toHaveLength(

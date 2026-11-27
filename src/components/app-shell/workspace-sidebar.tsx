@@ -9,7 +9,6 @@ import { cn } from "@/lib/utils";
 
 const navIconPaths = {
   overview: "M3 3.5h10v9H3zM3 7h10M7 7v5.5",
-  pipeline: "M2.5 3.5h11v9h-11zM6.2 3.5v9m3.6-9v9",
   sessions: "M5 4h8M5 8h8m-8 4h8M2.5 4h.1m-.1 4h.1m-.1 4h.1",
   inbox: "M2.5 8.5 4.5 3.5h7l2 5v4h-11zM2.5 8.5h3l1 1.5h3l1-1.5h3",
   runs: "M2.5 8h2l1.7-4 3.4 8 1.7-4h2.2",

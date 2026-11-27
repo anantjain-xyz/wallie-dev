@@ -194,7 +194,7 @@ test("200% reflow and 320px mobile widths do not create horizontal page overflow
   await page.setViewportSize({ height: 640, width: 320 });
   await page.goto(workspacePath);
   await expect(
-    page.getByRole("heading", { name: "Pipeline", exact: true, level: 1 }),
+    page.getByRole("heading", { name: "Sessions", exact: true, level: 1 }),
   ).toBeVisible();
   await expectNoPageOverflow(page);
   await page.goto(workspacePath + "/settings");

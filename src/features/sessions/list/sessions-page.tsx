@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { withFactoryQuery } from "@/features/factories/factory-selection";
+import { SessionsViewTitle } from "@/features/sessions/components/sessions-view-navigation";
 import { SessionsZeroState } from "@/features/sessions/components/sessions-zero-state";
 import type { SessionListPageData } from "@/features/sessions/list/data";
 import { SessionsCommandBar } from "@/features/sessions/list/sessions-command-bar";
@@ -14,6 +15,7 @@ import {
   buildSessionsListHref,
   sessionsPaginationDirection,
 } from "@/features/sessions/list/sessions-list-mutations";
+import { SESSION_LIST_DEFAULT_SORT } from "@/features/sessions/list/sessions-list-query-state";
 import type { SessionFilterKey, SessionListQueryState } from "@/features/sessions/types";
 import { workspaceRunsPath, workspaceSessionsPath } from "@/lib/routes";
 
@@ -115,13 +117,16 @@ export function SessionsPage({
   const returnTo = listHref(queryState);
   const firstPageHref = listHref({ ...queryState, cursor: null });
   const clearFiltersScope = queryState.scope === "all" ? "all" : "active";
-  const clearFiltersHref = listHref({
-    cursor: null,
-    query: "",
-    scope: clearFiltersScope,
-    sort: queryState.sort,
-    stageSlug: null,
-  });
+  const clearFiltersHref =
+    clearFiltersScope === "all" || queryState.sort !== SESSION_LIST_DEFAULT_SORT
+      ? listHref({
+          cursor: null,
+          query: "",
+          scope: clearFiltersScope,
+          sort: queryState.sort,
+          stageSlug: null,
+        })
+      : null;
   const viewAllHref = listHref({
     cursor: null,
     query: "",
@@ -189,9 +194,13 @@ export function SessionsPage({
                     Search all sessions in accessible factories
                   </Link>
                 ) : null}
-                <Link className="ui-button" href={clearFiltersHref}>
-                  Clear filters
-                </Link>
+                {clearFiltersHref ? (
+                  <Link className="ui-button" href={clearFiltersHref}>
+                    {queryState.scope === "archived"
+                      ? "Show unfiltered, unarchived sessions"
+                      : "Show unfiltered sessions"}
+                  </Link>
+                ) : null}
               </>
             }
             body="No sessions match the search and filters in this scope."
@@ -264,7 +273,15 @@ export function SessionsPage({
         }
         actionsRightOnDesktop
         className="mb-4 sm:mb-8"
-        title="Sessions"
+        title={
+          <SessionsViewTitle
+            factory={factoryQuery ?? factoryId ?? "all"}
+            status={queryState.scope === "active" ? queryState.status : undefined}
+            view="list"
+            workspaceSlug={workspaceSlug}
+          />
+        }
+        titleAsChild
       />
 
       <SessionsCommandBar

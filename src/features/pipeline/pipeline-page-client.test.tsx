@@ -44,6 +44,7 @@ vi.mock("@/components/ui/status", async (importOriginal) => {
 
 vi.mock("next/navigation", () => ({
   useRouter: () => mocked.router,
+  useSearchParams: () => null,
 }));
 
 vi.mock("@/lib/supabase/browser", () => ({
@@ -962,23 +963,42 @@ describe("PipelinePageClient", () => {
     expect(screen.getAllByRole("article")).toHaveLength(2);
   });
 
-  it("keeps Review CTA above the card-wide overlay hit target", () => {
+  it("uses one named session link and keeps reference links accessible on a review card", async () => {
     installSupabaseMock();
     render(
       <PipelinePageClient
         initialData={initialData([
-          card(1, PLAN_STAGE_ID, { phaseStatus: "awaiting_review", title: "Needs review" }),
+          card(1, PLAN_STAGE_ID, {
+            phaseStatus: "awaiting_review",
+            title: "Needs review",
+            linearIssueId: "OP-4",
+            linearIssueUrl: "https://linear.app/example/issue/OP-4",
+            pullRequests: [
+              {
+                id: "pr-5",
+                pullRequestNumber: 5,
+                pullRequestUrl: "https://github.com/example/repo/pull/5",
+              },
+            ],
+          }),
         ])}
       />,
     );
 
     const reviewLink = screen.getByRole("link", { name: "Review session Needs review" });
-    const overlay = screen.getByRole("link", { name: "Open session Needs review" });
-    const content = reviewLink.closest(".pointer-events-none");
-    expect(overlay.closest("article")?.className).toContain("isolate");
-    expect(content?.className).toContain("z-20");
-    expect(overlay.className).toContain("z-10");
-    expect(reviewLink.parentElement?.className).toContain("pointer-events-auto");
+    const reviewCard = within(reviewLink.closest("article")!);
+    const linearLink = reviewCard.getByRole("link", { name: "OP-4" });
+    const prLink = reviewCard.getByRole("link", { name: "PR #5" });
+    expect(reviewCard.getAllByRole("link")).toEqual([reviewLink, linearLink, prLink]);
+    expect(reviewLink.getAttribute("href")).toBe("/w/wallie/sessions/1");
+    expect(reviewLink.textContent).toBe("Needs review");
+    expect(reviewCard.getByText("Awaiting review")).toBeTruthy();
+
+    reviewLink.focus();
+    await userEvent.tab();
+    expect(document.activeElement).toBe(linearLink);
+    await userEvent.tab();
+    expect(document.activeElement).toBe(prLink);
   });
 
   it("renders and live-updates an errored latest run as Failed", async () => {
@@ -1030,14 +1050,14 @@ describe("PipelinePageClient", () => {
     const linearLink = screen.getByRole("link", { name: "OP-353" });
     expect(linearLink.getAttribute("href")).toBe("https://linear.app/issue/OP-353");
     expect(linearLink.getAttribute("target")).toBe("_blank");
-    expect(linearLink.className).toContain("pointer-events-auto");
+    expect(linearLink.className).toContain("z-20");
 
     const prLink = screen.getByRole("link", { name: "PR" });
     expect(prLink.getAttribute("href")).toBe("https://github.com/wallie-dev/wallie/pull/400");
-    expect(prLink.className).toContain("pointer-events-auto");
+    expect(prLink.getAttribute("target")).toBe("_blank");
+    expect(prLink.className).toContain("z-20");
 
-    // Non-link metadata stays under the card-wide overlay (no pointer-events-auto on the row).
-    expect(linearLink.closest("p")?.className).not.toContain("pointer-events-auto");
+    expect(linearLink.closest("p")?.className).not.toContain("z-20");
   });
 
   it("labels partial lane status summaries when more sessions exist than loaded", () => {
@@ -1056,7 +1076,7 @@ describe("PipelinePageClient", () => {
     expect(within(planLane).getByText("Loaded: 1 awaiting review · 1 in progress")).toBeTruthy();
   });
 
-  it("falls back focus to the card overlay when the Review CTA disappears", async () => {
+  it("keeps focus on the primary link when a review card moves and changes status", async () => {
     const supabase = installSupabaseMock();
     render(
       <PipelinePageClient
@@ -1179,7 +1199,7 @@ describe("PipelinePageClient", () => {
 
     await userEvent.click(status);
     await userEvent.click(screen.getByRole("option", { name: "All statuses" }));
-    const search = screen.getByRole("searchbox", { name: "Search pipeline sessions" });
+    const search = screen.getByRole("searchbox", { name: "Search active board" });
     await userEvent.type(search, "changes");
     expect(await screen.findByText("Needs changes")).toBeTruthy();
     expect(screen.getAllByRole("article")).toHaveLength(1);
@@ -1286,7 +1306,7 @@ describe("PipelinePageClient", () => {
     render(<PipelinePageClient initialData={data} />);
     await act(async () => vi.dynamicImportSettled());
 
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search pipeline sessions" }), {
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search active board" }), {
       target: { value: "Ticket" },
     });
     const emitRunChange = () =>
@@ -1344,7 +1364,7 @@ describe("PipelinePageClient", () => {
     vi.stubGlobal("fetch", fetchMock);
     const view = render(<PipelinePageClient enableRealtime={false} initialData={data} />);
 
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search pipeline sessions" }), {
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search active board" }), {
       target: { value: "Ticket" },
     });
     await act(async () => vi.advanceTimersByTimeAsync(200));
@@ -1412,7 +1432,7 @@ describe("PipelinePageClient", () => {
     render(<PipelinePageClient initialData={data} />);
     await act(async () => vi.dynamicImportSettled());
 
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search pipeline sessions" }), {
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search active board" }), {
       target: { value: "Ticket" },
     });
     await act(async () => vi.advanceTimersByTimeAsync(200));
@@ -1485,7 +1505,7 @@ describe("PipelinePageClient", () => {
     vi.stubGlobal("fetch", fetchMock);
     const view = render(<PipelinePageClient enableRealtime={false} initialData={data} />);
 
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search pipeline sessions" }), {
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search active board" }), {
       target: { value: "Session" },
     });
     await act(async () => vi.advanceTimersByTimeAsync(200));
@@ -1681,12 +1701,9 @@ describe("PipelinePageClient", () => {
     expect(commits.every(({ id, phase }) => id === "pipeline-board" && phase === "update")).toBe(
       true,
     );
-    expect([...mocked.cardLinkRenders.entries()].sort()).toEqual(
-      [
-        ["Open session Session 1 updated", 1],
-        ["Review session Session 1 updated", 1],
-      ].sort(),
-    );
+    expect([...mocked.cardLinkRenders.entries()]).toEqual([
+      ["Review session Session 1 updated", 1],
+    ]);
     expect(screen.getAllByRole("article")).toHaveLength(100);
   });
 
@@ -1812,7 +1829,7 @@ describe("PipelinePageClient", () => {
     expect(screen.getByText("Beta item")).toBeTruthy();
     expect(screen.getByText("Gamma task")).toBeTruthy();
 
-    const search = screen.getByRole("searchbox", { name: "Search pipeline sessions" });
+    const search = screen.getByRole("searchbox", { name: "Search active board" });
     await userEvent.type(search, "  OP-353 ");
 
     expect((search as HTMLInputElement).value).toBe("  OP-353 ");
@@ -1847,7 +1864,7 @@ describe("PipelinePageClient", () => {
     render(<PipelinePageClient enableRealtime={false} initialData={initialData()} />);
 
     const query = `${"A".repeat(199)}İ`;
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search pipeline sessions" }), {
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search active board" }), {
       target: { value: query },
     });
     await act(async () => vi.advanceTimersByTimeAsync(200));

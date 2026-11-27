@@ -67,7 +67,9 @@ test("workspace switcher navigation wins while its route response is delayed", a
   expect(canonicalRequests).toHaveLength(0);
   navigationGate.release();
   await expect(page).toHaveURL(workspacePath);
-  await expect(page.getByRole("heading", { name: "Pipeline", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Sessions views" }).locator('[aria-current="page"]'),
+  ).toHaveText("Board");
 });
 
 test("returning to the workspace cancels a confirmed session's pending route handoff", async ({
@@ -141,11 +143,14 @@ test("creation from a deep link closes immediately and lets navigation win over 
   await expect(page.locator("[data-session-creation]")).toBeVisible();
   dismissGate.release();
   await expect(page).toHaveURL(`${workspacePath}/sessions`);
-  await page.getByRole("link", { name: "Pipeline", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Pipeline", exact: true })).toBeVisible();
+  await page
+    .getByRole("navigation", { name: "Workspace navigation" })
+    .getByRole("link", { name: "Overview", exact: true })
+    .click();
+  await expect(page).toHaveURL(`${workspacePath}/overview`);
   createGate.release();
   await expect(page.getByText("Session #1 created.", { exact: true })).toBeVisible();
-  await expect(page).toHaveURL(workspacePath);
+  await expect(page).toHaveURL(`${workspacePath}/overview`);
   await page.getByRole("button", { name: "Open session", exact: true }).click();
   await expect(page).toHaveURL(`${workspacePath}/sessions/1`);
 });
