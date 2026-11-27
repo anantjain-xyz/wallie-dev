@@ -9,17 +9,20 @@ import { SettingsLoadingSkeleton } from "@/features/settings/loading-skeleton";
 import { parseSettingsCategory } from "@/features/settings/settings-categories";
 import { SettingsServerShell } from "@/features/settings/settings-server-shell";
 import { Section } from "@/features/settings/settings-ui";
+import { WorkspaceFactoriesSection } from "@/features/settings/workspace-factories-section";
 
 const workspaceId = "11111111-1111-4111-8111-111111111111";
 const defaultFactory = {
   id: "22222222-2222-4222-8222-222222222222",
   name: "Product factory",
+  slug: "product",
   isDefault: true,
   status: "active",
 } as const;
 const supportFactory = {
   id: "33333333-3333-4333-8333-333333333333",
   name: "Support factory",
+  slug: "support",
   isDefault: false,
   status: "active",
 } as const;
@@ -178,6 +181,16 @@ export default async function SettingsPreviewPage({
         searchState={{ codexStatus: null, githubStatus: github ?? null }}
         setupData={setupData}
         usage={Promise.resolve(data.usage)}
+        workspaceFactories={
+          selectedCategory === "workspace" ? (
+            <WorkspaceFactoriesSection
+              canManage={canManage}
+              factories={Promise.resolve([defaultFactory, supportFactory])}
+              requestedSetup={factory}
+              workspace={data.workspace}
+            />
+          ) : undefined
+        }
         workspaceInvitations={Promise.resolve({ asOf: 0, invitations: data.workspaceInvitations })}
         workspaceProfile={Promise.resolve({
           avatarUrl: currentMember.avatarUrl,

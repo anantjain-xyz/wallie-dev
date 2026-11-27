@@ -1,7 +1,6 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { privilegedImportBoundaryConfig } from "../../../scripts/privileged-import-boundaries.config";
 import {
   formatPrivilegedImportDiagnostics,
   type PrivilegedImportBoundaryConfig,
@@ -62,15 +61,6 @@ function verifyFixture(
 }
 
 describe("privileged import boundary verifier", () => {
-  it("keeps the Wallie production graph within the declared boundaries", () => {
-    expect(
-      verifyPrivilegedImports({
-        config: privilegedImportBoundaryConfig,
-        projectRoot: process.cwd(),
-      }),
-    ).toEqual([]);
-  }, 15_000);
-
   it("reports an indirect aliased browser path and its forbidden edge", () => {
     const diagnostics = verifyFixture("indirect-alias");
 

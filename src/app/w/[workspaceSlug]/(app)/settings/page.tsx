@@ -11,6 +11,7 @@ import {
   SettingsSectionFallback,
   SettingsServerShell,
 } from "@/features/settings/settings-server-shell";
+import { WorkspaceFactoriesSection } from "@/features/settings/workspace-factories-section";
 
 type SettingsPageProps = {
   params: Promise<{
@@ -81,6 +82,16 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
       }}
       setupData={data.setupData}
       usage={data.usage}
+      workspaceFactories={
+        category === "workspace" ? (
+          <WorkspaceFactoriesSection
+            canManage={initialData.canManage}
+            factories={loadWorkspaceFactoryOptions(workspaceSlug)}
+            requestedSetup={resolvedSearchParams.factory}
+            workspace={initialData.workspace}
+          />
+        ) : undefined
+      }
       workspaceInvitations={data.workspaceInvitations}
       workspaceProfile={data.workspaceProfile}
     />

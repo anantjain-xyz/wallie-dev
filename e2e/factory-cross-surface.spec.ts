@@ -356,7 +356,10 @@ test("one exact factory session survives browser, API and MCP handoffs", async (
         );
 
         await inbox.click();
-        const link = page.getByRole("link", { name: `Answer clarification for ${title}` });
+        const link = page.getByRole("link", { name: title, exact: true });
+        await expect(
+          page.getByRole("listitem").filter({ has: link }).getByText("Clarification needed"),
+        ).toBeVisible();
         await expect(link).toHaveAttribute("href", originalReview.href);
         await link.click();
         const clarification = page.getByRole("region", { name: "Specification clarification" });
@@ -456,11 +459,11 @@ test("one exact factory session survives browser, API and MCP handoffs", async (
             ),
             context.setOffline(false),
           ]);
-          const link = page.getByRole("link", { name: `Open review for ${title}` });
+          const link = page.getByRole("link", { name: title, exact: true });
           await expect(link).toHaveAttribute("href", currentReview.href);
-          await expect(
-            page.getByRole("link", { name: `Answer clarification for ${title}` }),
-          ).toHaveCount(0);
+          const row = page.getByRole("listitem").filter({ has: link });
+          await expect(row.getByText("Awaiting review")).toBeVisible();
+          await expect(row.getByText("Clarification needed")).toHaveCount(0);
           await page.screenshot({
             path: testInfo.outputPath("01-inbox-recovered.png"),
             animations: "disabled",
@@ -524,7 +527,7 @@ test("one exact factory session survives browser, API and MCP handoffs", async (
         ]);
         expect(lateAnswer.status()).toBe(409);
         expect(lateApproval.status()).toBe(409);
-        await page.getByRole("link", { name: `Open review for ${title}` }).click();
+        await page.getByRole("link", { name: title, exact: true }).click();
         await expect(page.getByText(revised)).toBeVisible();
         const approval = page.getByRole("button", { name: /^Approve / });
         await expect(approval).toBeEnabled();

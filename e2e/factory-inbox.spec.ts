@@ -240,7 +240,7 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
     const workspacePath = `/w/${workspace.slug}`;
     const main = page.getByRole("main");
     const factory = page.getByRole("combobox", { name: "Factory", exact: true });
-    const defaultLink = main.getByRole("link", { name: `Open review for ${defaultTitle}` });
+    const defaultLink = main.getByRole("link", { name: defaultTitle, exact: true });
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
     await signInViaMagicLink(page, `${workspacePath}/sessions`, {
@@ -254,6 +254,11 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
       page.getByRole("link", { name: "Inbox", exact: true }).press("Enter"),
     ]);
     await expect(page.getByRole("heading", { name: "Inbox", exact: true })).toBeVisible();
+    await expect(factory).toHaveAttribute("data-value", primary.id);
+    await factory.press("Enter");
+    await factory.press("Home");
+    await factory.press("Enter");
+    await expect(page).toHaveURL((url) => url.searchParams.get("factory") === "all");
     await expect(factory).toHaveText("All factories");
     await expect(factory).toHaveAttribute("data-value", "all");
     const itemTypes = main.getByRole("navigation", { name: "Inbox item type" });
@@ -348,7 +353,7 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
     await itemTypes.getByRole("link", { name: "Reviews 1" }).press("Enter");
     await expect(main.getByText(delegatedTitle, { exact: true })).toBeVisible();
     const delegatedHref = await main
-      .getByRole("link", { name: `Open review for ${delegatedTitle}` })
+      .getByRole("link", { name: delegatedTitle, exact: true })
       .getAttribute("href");
     if (!delegatedHref) throw new Error("Missing the filtered review link.");
     expect(new URL(delegatedHref, app).searchParams.get("returnTo")).toBe(

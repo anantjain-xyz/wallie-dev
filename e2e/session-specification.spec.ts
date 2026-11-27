@@ -563,7 +563,8 @@ test(journeyTitle, async ({ browser, page, baseURL }, testInfo) => {
       try {
         await inbox.goto(workspaceInboxPath(slug));
         const clarificationLink = inbox.getByRole("link", {
-          name: `Answer clarification for ${title}`,
+          name: title,
+          exact: true,
         });
         await expect(clarificationLink).toHaveAttribute("href", pendingReviewPath);
         await clarificationLink.click();

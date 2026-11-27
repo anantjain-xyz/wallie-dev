@@ -77,10 +77,43 @@ export function RunInspector({
   names?: RunInspectorNames;
 }) {
   const active = run.status === "started" || run.status === "running";
-  const recovery = recoveryAction(run, newerRunHref);
+  const recovery = recoveryNotice(run, newerRunHref);
+  const cause =
+    run.status === "error"
+      ? (run.failure?.cause ?? "This attempt stopped without a recorded cause.")
+      : run.status === "canceled"
+        ? "This attempt was canceled."
+        : null;
+  const showArtifact = artifact.kind !== "none" || run.status === "success";
+  const cost = runCatalogCostLabel(run);
   const recorded = executionProfile?.kind === "recorded" ? executionProfile.profile : null;
   const currentProfile =
     executionProfileAttempt === undefined || executionProfileAttempt === run.attemptCount;
+  const diagnosticRecords = [
+    {
+      id: "routing-decision",
+      label: "Routing decision",
+      kind: routingDecision?.kind,
+    },
+    {
+      id: "frozen-inputs",
+      label: "Frozen inputs",
+      kind: frozenContext?.kind,
+    },
+    {
+      id: "execution-profile",
+      label:
+        executionProfileAttempt === undefined
+          ? "Execution profile"
+          : `Execution profile (job attempt ${executionProfileAttempt})`,
+      kind: executionProfile?.kind,
+    },
+    {
+      id: "skill-revisions",
+      label: "Skill revisions",
+      kind: skills.kind,
+    },
+  ].filter(({ kind }) => kind === "unavailable" || kind === "unrecorded");
   return (
     <PageContainer className="pt-5 sm:pt-10">
       <PageHeader
@@ -92,11 +125,6 @@ export function RunInspector({
               }
               value={agentRunStatusValue(run.status)}
             />
-            {run.status === "error" || run.status === "canceled" ? (
-              <Link className="ui-button" href="#run-outcome">
-                View outcome
-              </Link>
-            ) : null}
             {benchmarkCapture}
           </>
         }
@@ -123,63 +151,82 @@ export function RunInspector({
         title={run.sessionTitle}
       />
 
-      <div className="space-y-8">
+      <div className="space-y-6">
         <PageSection anchorId="run-outcome" title="Outcome">
           <div className="ui-sheet divide-y divide-border">
-            <div className="grid gap-4 px-4 py-5 sm:grid-cols-2 sm:gap-8 sm:px-5">
-              <div className="min-w-0">
-                <h3 className="type-label font-semibold text-foreground">
-                  {run.status === "error" || run.status === "canceled" ? "Stop cause" : "Run state"}
-                </h3>
-                <p className="mt-2 text-sm leading-6 text-muted">{stopCause(run)}</p>
-              </div>
-              <div className="min-w-0">
-                <h3 className="type-label font-semibold text-foreground">{recovery.title}</h3>
-                <p className="mt-2 text-sm leading-6 text-muted">{recovery.description}</p>
-                {recovery.scheduledAt ? (
-                  <p className="mt-2 text-xs text-muted">
-                    Scheduled for{" "}
-                    <TimeDisplay initialNow={initialNow} value={recovery.scheduledAt} />
-                  </p>
+            {cause || recovery || showArtifact ? (
+              <div className="grid gap-x-6 gap-y-4 px-4 py-4 sm:grid-cols-2 sm:px-5">
+                {cause ? (
+                  <div className="min-w-0">
+                    <h3 className="type-label text-foreground">Stop cause</h3>
+                    <p className="mt-1 text-sm text-muted">{cause}</p>
+                  </div>
                 ) : null}
+                {recovery ? (
+                  <div className="min-w-0">
+                    <h3 className="type-label text-foreground">{recovery.title}</h3>
+                    <p className="mt-1 text-sm text-muted">{recovery.description}</p>
+                    {recovery.scheduledAt ? (
+                      <p className="mt-1 text-xs text-muted">
+                        Scheduled for{" "}
+                        <TimeDisplay initialNow={initialNow} value={recovery.scheduledAt} />
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                {showArtifact ? (
+                  <div className="min-w-0">
+                    <h3 className="type-label text-foreground">Accepted artifact</h3>
+                    <p className="mt-1 text-sm text-muted [overflow-wrap:anywhere]">
+                      {artifact.kind === "available" ? (
+                        <Link
+                          className="text-foreground underline underline-offset-4"
+                          href={artifact.href}
+                          prefetch={false}
+                        >
+                          {artifact.stageSlug} · Version {artifact.version}
+                        </Link>
+                      ) : artifact.kind === "none" ? (
+                        "No artifact was accepted."
+                      ) : artifact.kind === "unrecorded" ? (
+                        "An exact artifact link was not recorded for this run."
+                      ) : (
+                        "Artifact details could not be loaded."
+                      )}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 sm:px-5">
+              <Link
+                className="ui-button min-h-11 sm:min-h-9"
+                href={run.sessionRunHref}
+                prefetch={false}
+              >
+                Open session #{run.sessionNumber}
+              </Link>
+              {recovery?.href ? (
                 <Link
-                  className="ui-button mt-4"
-                  href={recovery.href ?? run.sessionRunHref}
+                  className="ui-button min-h-11 sm:min-h-9"
+                  href={recovery.href}
                   prefetch={false}
                 >
-                  {recovery.action}
-                </Link>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2 px-4 py-3 sm:px-5">
-              <Link className="ui-button" href="#run-transcript">
-                View transcript
-              </Link>
-              <Link className="ui-button" href="#run-evidence">
-                Inspect run evidence
-              </Link>
-              <p className="w-full text-xs text-muted">
-                Find harness logs, reports, and other retained evidence.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-4 px-4 py-5 sm:px-5">
-              <div>
-                <h3 className="type-label font-semibold text-foreground">Accepted artifact</h3>
-                <p className="mt-2 text-sm text-muted">
-                  {artifact.kind === "available"
-                    ? `${artifact.stageSlug} · Version ${artifact.version}`
-                    : artifact.kind === "none"
-                      ? "This attempt has no accepted artifact."
-                      : artifact.kind === "unrecorded"
-                        ? "An exact artifact link was not recorded for this run."
-                        : "Artifact details could not be loaded."}
-                </p>
-              </div>
-              {artifact.kind === "available" ? (
-                <Link className="ui-button" href={artifact.href} prefetch={false}>
-                  Open artifact
+                  Next attempt
                 </Link>
               ) : null}
+              <a
+                className="inline-flex min-h-11 items-center text-sm underline underline-offset-4 sm:min-h-9"
+                href="#run-transcript"
+              >
+                Transcript
+              </a>
+              <a
+                className="inline-flex min-h-11 items-center text-sm underline underline-offset-4 sm:min-h-9"
+                href="#run-evidence"
+              >
+                Evidence
+              </a>
             </div>
           </div>
         </PageSection>
@@ -188,7 +235,15 @@ export function RunInspector({
           {transcript}
         </div>
 
-        <div id="run-evidence" className="scroll-mt-8" tabIndex={-1}>
+        <section
+          aria-labelledby="run-evidence-heading"
+          className="ui-sheet scroll-mt-8 space-y-3 px-4 py-4 sm:px-5"
+          id="run-evidence"
+          tabIndex={-1}
+        >
+          <h2 className="type-heading" id="run-evidence-heading">
+            Evidence
+          </h2>
           <ArtifactEvidenceInspector
             source={{
               kind: "run",
@@ -198,7 +253,7 @@ export function RunInspector({
               artifactId: artifact.kind === "available" ? artifact.id : null,
             }}
           />
-        </div>
+        </section>
 
         {workflowInspection ? (
           <WorkflowInspectionDisclosure
@@ -208,20 +263,14 @@ export function RunInspector({
             workspaceSlug={workspaceSlug}
           />
         ) : null}
-        <section aria-label="Run details" className="ui-sheet px-4 py-5 sm:px-5">
+        <section
+          aria-labelledby="run-details-heading"
+          className="ui-sheet space-y-2 px-4 py-4 sm:px-5"
+        >
+          <h2 className="type-heading" id="run-details-heading">
+            Run details
+          </h2>
           <MetadataList>
-            <MetadataItem
-              label="Source session"
-              value={
-                <Link
-                  className="break-words text-foreground underline underline-offset-4"
-                  href={run.sessionRunHref}
-                  prefetch={false}
-                >
-                  #{run.sessionNumber} · {run.sessionTitle}
-                </Link>
-              }
-            />
             {routingDecision?.kind !== "recorded" || !run.startedAt ? (
               <MetadataItem
                 label={run.startedAt ? "Ran with" : "Run configuration"}
@@ -282,10 +331,7 @@ export function RunInspector({
               }
             />
             <MetadataItem label="Tokens" value={tokenLabel(run)} />
-            <MetadataItem
-              label="Cost"
-              value={`${runCatalogCostLabel(run)}${run.usage.finalized ? "" : " · Not final"}`}
-            />
+            <MetadataItem label="Cost" value={cost ?? "Cost unavailable"} />
           </MetadataList>
           <RunTechnicalDetails
             entries={[
@@ -297,7 +343,7 @@ export function RunInspector({
           />
         </section>
 
-        {routingDecision ? (
+        {routingDecision?.kind === "recorded" ? (
           <RunRoutingDecisionInspection
             canOpenPolicy={canOpenRoutingPolicy}
             names={names}
@@ -314,7 +360,7 @@ export function RunInspector({
           />
         ) : null}
 
-        {frozenContext && (
+        {frozenContext?.kind === "recorded" && (
           <RunContextInspection
             result={frozenContext}
             workspaceSlug={workspaceSlug}
@@ -323,181 +369,164 @@ export function RunInspector({
           />
         )}
 
-        {executionProfile && (
-          <PageSection
-            anchorId="execution-profile"
-            title={recorded ? "Recorded execution profile" : "Execution profile"}
-          >
+        {recorded && (
+          <PageSection anchorId="execution-profile" title="Recorded execution profile">
             <div className="ui-sheet space-y-2 px-4 py-5 sm:px-5">
               {executionProfileAttempt !== undefined ? (
                 <p className="type-secondary text-muted">
                   Recorded job attempt {executionProfileAttempt}
                 </p>
               ) : null}
-              {recorded ? (
-                <>
-                  <p className="mb-3 text-xs text-muted">
-                    Agent and member names reflect current records. The IDs and revision below are
-                    from this attempt.
-                  </p>
-                  <MetadataList>
-                    <ExecutionProfileFields profile={recorded} />
-                    <MetadataItem
-                      label="Worker runtime"
-                      value={recorded.workerRuntime === "node" ? "Node.js" : "Workerd"}
-                    />
-                    {!recorded.definitionRevisionId ? (
-                      <MetadataItem label="Factory definition" value="Legacy configuration" />
-                    ) : null}
-                    <MetadataItem
-                      label="Implementation agent"
-                      value={
-                        recorded.agentId
-                          ? (names?.agents[recorded.agentId] ?? "Recorded agent unavailable")
-                          : "Unrecorded"
-                      }
-                    />
-                    <MetadataItem
-                      label="Agent prompt revision"
-                      value={
-                        recorded.agentId &&
-                        recorded.promptRevisionId &&
-                        names?.promptRevisionNumber ? (
-                          <Link
-                            className="text-foreground underline underline-offset-4"
-                            href={workspaceAgentDetailPath(workspaceSlug, recorded.agentId, {
-                              factory: recorded.factoryId,
-                              revision: recorded.promptRevisionId,
-                            })}
-                            prefetch={false}
-                          >
-                            Open prompt revision {names.promptRevisionNumber}
-                          </Link>
-                        ) : recorded.promptRevisionId ? (
-                          "Recorded revision unavailable"
-                        ) : (
-                          "Unrecorded"
-                        )
-                      }
-                    />
-                    <MetadataItem
-                      label="Invoking member"
-                      value={
-                        recorded.invokingMemberId ? (
-                          <RecordedRunActor
-                            member={names?.members[recorded.invokingMemberId]}
-                            action="View invoking member activity"
-                            workspaceSlug={workspaceSlug}
-                            factoryId={recorded.factoryId}
-                            memberId={recorded.invokingMemberId}
-                          />
-                        ) : (
-                          "Unrecorded"
-                        )
-                      }
-                    />
-                    {recorded.triggeredByMemberId &&
-                      recorded.triggeredByMemberId !== recorded.invokingMemberId && (
-                        <MetadataItem
-                          label="Triggered by"
-                          value={
-                            <RecordedRunActor
-                              member={names?.members[recorded.triggeredByMemberId]}
-                              action="View triggering member activity"
-                              workspaceSlug={workspaceSlug}
-                              factoryId={recorded.factoryId}
-                              memberId={recorded.triggeredByMemberId}
-                            />
-                          }
-                        />
-                      )}
-                    {recorded.authority.kind === "human" ? (
-                      <MetadataItem
-                        label="Credential owner"
-                        value={
-                          names?.members[recorded.authority.memberId]?.label ??
-                          "Member details unavailable"
-                        }
+              <p className="mb-3 text-xs text-muted">
+                Agent and member names reflect current records. The IDs and revision below are from
+                this attempt.
+              </p>
+              <MetadataList>
+                <ExecutionProfileFields profile={recorded} />
+                <MetadataItem
+                  label="Worker runtime"
+                  value={recorded.workerRuntime === "node" ? "Node.js" : "Workerd"}
+                />
+                {!recorded.definitionRevisionId ? (
+                  <MetadataItem label="Factory definition" value="Legacy configuration" />
+                ) : null}
+                <MetadataItem
+                  label="Implementation agent"
+                  value={
+                    recorded.agentId
+                      ? (names?.agents[recorded.agentId] ?? "Recorded agent unavailable")
+                      : "Unrecorded"
+                  }
+                />
+                <MetadataItem
+                  label="Agent prompt revision"
+                  value={
+                    recorded.agentId && recorded.promptRevisionId && names?.promptRevisionNumber ? (
+                      <Link
+                        className="text-foreground underline underline-offset-4"
+                        href={workspaceAgentDetailPath(workspaceSlug, recorded.agentId, {
+                          factory: recorded.factoryId,
+                          revision: recorded.promptRevisionId,
+                        })}
+                        prefetch={false}
+                      >
+                        Open prompt revision {names.promptRevisionNumber}
+                      </Link>
+                    ) : recorded.promptRevisionId ? (
+                      "Recorded revision unavailable"
+                    ) : (
+                      "Unrecorded"
+                    )
+                  }
+                />
+                <MetadataItem
+                  label="Invoking member"
+                  value={
+                    recorded.invokingMemberId ? (
+                      <RecordedRunActor
+                        member={names?.members[recorded.invokingMemberId]}
+                        action="View invoking member activity"
+                        workspaceSlug={workspaceSlug}
+                        factoryId={recorded.factoryId}
+                        memberId={recorded.invokingMemberId}
                       />
-                    ) : recorded.authority.kind === "service" ? (
+                    ) : (
+                      "Unrecorded"
+                    )
+                  }
+                />
+                {recorded.triggeredByMemberId &&
+                  recorded.triggeredByMemberId !== recorded.invokingMemberId && (
+                    <MetadataItem
+                      label="Triggered by"
+                      value={
+                        <RecordedRunActor
+                          member={names?.members[recorded.triggeredByMemberId]}
+                          action="View triggering member activity"
+                          workspaceSlug={workspaceSlug}
+                          factoryId={recorded.factoryId}
+                          memberId={recorded.triggeredByMemberId}
+                        />
+                      }
+                    />
+                  )}
+                {recorded.authority.kind === "human" ? (
+                  <MetadataItem
+                    label="Credential owner"
+                    value={
+                      names?.members[recorded.authority.memberId]?.label ??
+                      "Member details unavailable"
+                    }
+                  />
+                ) : recorded.authority.kind === "service" ? (
+                  <>
+                    <MetadataItem
+                      label="Execution grant"
+                      value={`Service execution grant · Version ${recorded.authority.grantVersion}`}
+                    />
+                    {credential && currentProfile ? (
+                      <RunCredentialFields
+                        credential={credential}
+                        initialNow={initialNow}
+                        principalName={names?.principals[credential.servicePrincipalId]}
+                      />
+                    ) : (
                       <>
                         <MetadataItem
-                          label="Execution grant"
-                          value={`Service execution grant · Version ${recorded.authority.grantVersion}`}
+                          label="Credential owner"
+                          value={
+                            names?.principals[recorded.authority.servicePrincipalId] ??
+                            "Service principal details unavailable"
+                          }
                         />
-                        {credential && currentProfile ? (
-                          <RunCredentialFields
-                            credential={credential}
-                            initialNow={initialNow}
-                            principalName={names?.principals[credential.servicePrincipalId]}
-                          />
-                        ) : (
-                          <>
-                            <MetadataItem
-                              label="Credential owner"
-                              value={
-                                names?.principals[recorded.authority.servicePrincipalId] ??
-                                "Service principal details unavailable"
-                              }
-                            />
-                            <MetadataItem
-                              label="Service credential binding"
-                              value="Recorded service binding"
-                            />
-                          </>
-                        )}
+                        <MetadataItem
+                          label="Service credential binding"
+                          value="Recorded service binding"
+                        />
                       </>
-                    ) : (
-                      <MetadataItem label="Credential authority" value="Unrecorded" />
                     )}
-                  </MetadataList>
-                </>
-              ) : (
-                <p className="type-secondary text-muted">
-                  {executionProfile.kind === "unavailable"
-                    ? "Recorded execution profile unavailable."
-                    : "This attempt has no recorded execution profile."}
-                </p>
-              )}
-              {recorded ? (
-                <RunTechnicalDetails
-                  entries={[
-                    ["Sandbox connection revision ID", recorded.sandboxConnectionRevision],
-                    ["Factory definition revision ID", recorded.definitionRevisionId],
-                    ["Implementation agent ID", recorded.agentId],
-                    ["Agent prompt revision ID", recorded.promptRevisionId],
-                    ["Invoking member ID", recorded.invokingMemberId],
-                    ["Triggering member ID", recorded.triggeredByMemberId],
-                    [
-                      "Credential owner member ID",
-                      recorded.authority.kind === "human" ? recorded.authority.memberId : null,
-                    ],
-                    [
-                      "Execution grant ID",
-                      recorded.authority.kind === "service" ? recorded.authority.grantId : null,
-                    ],
-                    [
-                      "Service credential binding ID",
-                      recorded.authority.kind === "service" ? recorded.authority.bindingId : null,
-                    ],
-                    [
-                      "Service principal ID",
-                      recorded.authority.kind === "service"
-                        ? recorded.authority.servicePrincipalId
-                        : null,
-                    ],
-                  ]}
-                />
-              ) : null}
+                  </>
+                ) : (
+                  <MetadataItem label="Credential authority" value="Unrecorded" />
+                )}
+              </MetadataList>
+              <RunTechnicalDetails
+                entries={[
+                  ["Sandbox connection revision ID", recorded.sandboxConnectionRevision],
+                  ["Factory definition revision ID", recorded.definitionRevisionId],
+                  ["Implementation agent ID", recorded.agentId],
+                  ["Agent prompt revision ID", recorded.promptRevisionId],
+                  ["Invoking member ID", recorded.invokingMemberId],
+                  ["Triggering member ID", recorded.triggeredByMemberId],
+                  [
+                    "Credential owner member ID",
+                    recorded.authority.kind === "human" ? recorded.authority.memberId : null,
+                  ],
+                  [
+                    "Execution grant ID",
+                    recorded.authority.kind === "service" ? recorded.authority.grantId : null,
+                  ],
+                  [
+                    "Service credential binding ID",
+                    recorded.authority.kind === "service" ? recorded.authority.bindingId : null,
+                  ],
+                  [
+                    "Service principal ID",
+                    recorded.authority.kind === "service"
+                      ? recorded.authority.servicePrincipalId
+                      : null,
+                  ],
+                ]}
+              />
             </div>
           </PageSection>
         )}
 
-        {evaluations}
+        {skills.kind === "recorded" && skills.revisions.length ? (
+          <RunSkillRevisions revisions={skills.revisions} />
+        ) : null}
 
-        <RunSkillRevisions skills={skills} />
-
-        {mcp && (
+        {mcp && mcp.manifest.servers.length > 0 && (
           <PageSection
             title={mcp.kind === "planned" ? "Planned MCP manifest" : "Pinned MCP manifest"}
           >
@@ -528,6 +557,28 @@ export function RunInspector({
             </ul>
           </PageSection>
         )}
+        {diagnosticRecords.length > 0 ? (
+          <section
+            aria-labelledby="run-records-heading"
+            className="ui-sheet space-y-2 px-4 py-4 sm:px-5"
+          >
+            <h2 className="type-heading" id="run-records-heading">
+              Diagnostic records
+            </h2>
+            <MetadataList className="gap-y-0">
+              {diagnosticRecords.map(({ id, kind, label }) => (
+                <MetadataItem
+                  className="scroll-mt-8"
+                  id={id}
+                  key={id}
+                  label={label}
+                  value={kind === "unavailable" ? "Unavailable" : "Not recorded"}
+                />
+              ))}
+            </MetadataList>
+          </section>
+        ) : null}
+        {evaluations}
       </div>
     </PageContainer>
   );
@@ -594,23 +645,15 @@ const skillSourceLabels = {
   repository: "Repository",
 };
 
-function RunSkillRevisions({ skills }: { skills: RunInspectorSkills }) {
-  if (skills.kind === "unrecorded") return null;
-  if (skills.kind === "unavailable") {
-    return (
-      <PageSection title="Skill revisions">
-        <p className="ui-sheet px-4 py-5 text-sm text-muted sm:px-5">
-          Skill revision details could not be loaded.
-        </p>
-      </PageSection>
-    );
-  }
-  if (!skills.revisions.length) return null;
-
+function RunSkillRevisions({
+  revisions,
+}: {
+  revisions: Extract<RunInspectorSkills, { kind: "recorded" }>["revisions"];
+}) {
   return (
     <PageSection title="Skill revisions" tagline="Revisions included in this attempt’s prompt.">
       <ul className="ui-sheet divide-y divide-border">
-        {skills.revisions.map((revision) => (
+        {revisions.map((revision) => (
           <li key={revision.revisionId} className="min-w-0 space-y-3 px-4 py-5 sm:px-5">
             <div className="space-y-1">
               <h3 className="break-words text-sm font-semibold text-foreground">{revision.name}</h3>
@@ -644,38 +687,18 @@ function tokenLabel(run: WorkspaceRunCatalogItem) {
   return `${inputTokens.toLocaleString("en-US")} in · ${outputTokens.toLocaleString("en-US")} out · ${tokenProvenance}${finalized ? "" : " · Not final"}`;
 }
 
-function stopCause(run: WorkspaceRunCatalogItem) {
-  switch (run.status) {
-    case "canceled":
-      return "This attempt was canceled.";
-    case "error":
-      return run.failure?.cause ?? "This attempt stopped without a recorded cause.";
-    case "success":
-      return "This attempt completed successfully.";
-    case "queued":
-      return "This attempt is waiting to start.";
-    case "started":
-      return "This attempt is starting.";
-    case "running":
-      return "This attempt is running.";
-  }
-}
-
-function recoveryAction(
+function recoveryNotice(
   run: WorkspaceRunCatalogItem,
   newerRunHref?: string,
 ): {
   title: string;
   description: string;
-  action: string;
-  scheduledAt: string | null;
+  scheduledAt?: string | null;
   href?: string;
-} {
-  const common = { action: "Check recovery in session", scheduledAt: null };
+} | null {
   const recovery = run.recovery;
   if (recovery?.sourceRecoveryRequired)
     return {
-      ...common,
       title: "Source recovery needed",
       description:
         "The session needs source recovery before it can continue. Review its recovery options.",
@@ -683,7 +706,6 @@ function recoveryAction(
   const publication = recovery?.publication;
   if (publication?.status === "pending" || publication?.status === "claimed")
     return {
-      ...common,
       title: publication.deadlineExpired
         ? "Publication recovery expired"
         : "Publishing saved output",
@@ -693,48 +715,41 @@ function recoveryAction(
     };
   if (recovery?.queue.state === "retry_scheduled")
     return {
-      ...common,
       title: "Retry scheduled",
       description: "A retry is queued. This failed attempt keeps its own outcome and transcript.",
       scheduledAt: recovery.queue.scheduledAt,
     };
   if (newerRunHref || recovery?.queue.state === "superseded")
     return {
-      ...common,
       title: "A newer attempt exists",
       description: "The activity and outcome here still belong to the selected attempt.",
-      action: newerRunHref ? "Inspect next attempt" : "Follow newer attempts in session",
       href: newerRunHref,
     };
   if (!recovery?.metadataAvailable)
     return {
-      ...common,
       title: "Recovery details unavailable",
       description:
         "Current recovery details could not be loaded. Open the session to check its available actions.",
     };
-  if ((run.status === "running" || run.status === "started") && recovery.activity.state === "stale")
-    return {
-      ...common,
-      title: "No recent activity",
-      description:
-        "No activity has been saved recently. This alone does not confirm that the worker stopped. Check the session before taking action.",
-    };
+  if (run.status === "running" || run.status === "started") {
+    if (recovery.worker.state === "deadline_expired")
+      return {
+        title: "Worker deadline exceeded",
+        description: "The recorded worker deadline has passed. Check the session before retrying.",
+      };
+    if (recovery.activity.state === "stale")
+      return {
+        title: "No recent activity",
+        description:
+          "No activity has been saved recently. This alone does not confirm that the worker stopped. Check the session before taking action.",
+      };
+  }
   if (run.status === "error" || run.status === "canceled")
     return {
-      ...common,
       title: "Review before retrying",
       description:
         run.failure?.recovery ??
         "Review this attempt in the session and use its available recovery actions to continue.",
     };
-  return {
-    ...common,
-    action: "Open source session",
-    title: run.status === "success" ? "Continue in the session" : "Follow this run",
-    description:
-      run.status === "success"
-        ? "Review the session’s current stage and available output."
-        : "Open the source session to see its current controls and progress.",
-  };
+  return null;
 }

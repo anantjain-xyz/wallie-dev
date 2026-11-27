@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 
 import { TimeDisplay } from "@/components/shared/time-display";
+import { FILTER_BAR_CLASS, FILTER_CONTROL_CLASS } from "@/components/ui/filter-controls";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { Status } from "@/components/ui/status";
 import type {
@@ -20,6 +21,7 @@ import {
 } from "@/features/factory-activity/activity-query";
 import { ActivityRefresh } from "@/features/factory-activity/activity-refresh";
 import { workspaceRunsPath, workspaceSessionsPath } from "@/lib/routes";
+import { cn } from "@/lib/utils";
 
 const textLink = "underline underline-offset-2 hover:text-foreground";
 
@@ -49,14 +51,32 @@ export function FactoryActivityPage({
         actions={
           <>
             {factorySelector}
-            <ActivityActorFilter label={actorLabel} query={query} workspaceSlug={workspaceSlug} />
             <ActivityRefresh capturedAt={hasSnapshot ? capturedAt : null} />
           </>
         }
         actionsRightOnDesktop
+        className="mb-4 sm:mb-5"
         title="Activity"
       />
       <div className="space-y-5">
+        <div
+          aria-label="Activity filters"
+          className={cn(FILTER_BAR_CLASS, "min-w-0 items-end")}
+          role="group"
+        >
+          <ActivityActorFilter label={actorLabel} query={query} workspaceSlug={workspaceSlug} />
+          <ActivityStatusFilter query={query} workspaceSlug={workspaceSlug} />
+          {query.actor || query.status || invalidStatus ? (
+            <Link
+              className={`ui-button ${FILTER_CONTROL_CLASS}`}
+              href={activityHref(workspaceSlug, { factory: query.factory })}
+              prefetch={false}
+              scroll={false}
+            >
+              Clear filters
+            </Link>
+          ) : null}
+        </div>
         <ActivityList
           initialNow={capturedAt}
           invalidCursor={invalidCursors?.sessions}
@@ -106,7 +126,7 @@ function ActivityList({
   const browseHref = isSessions
     ? workspaceSessionsPath(workspaceSlug, { factory: query.factory, scope: "all" })
     : workspaceRunsPath(workspaceSlug, { factory: query.factory, status: query.status });
-  const filtered = query.factory !== "all" || query.actor || (!isSessions && query.status);
+  const filtered = query.actor || (!isSessions && query.status);
 
   return (
     <section
@@ -116,45 +136,38 @@ function ActivityList({
       tabIndex={-1}
     >
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-4 sm:px-5">
-        <div className="min-w-0">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
           <h2 className="type-section-title" id={headingId}>
             {heading}
           </h2>
-          <p className="mt-1 text-xs text-muted">
-            {isSessions ? "Most recently updated first" : "Most recently created first"}
-          </p>
           {section.kind === "available" ? (
-            <p className="mt-1 text-xs text-muted" role="status">
+            <p className="text-xs text-muted tabular-nums" role="status">
               {section.count.toLocaleString("en-US")}{" "}
-              {section.count === 1 ? (isSessions ? "session" : "run") : kind}{" "}
-              {filtered ? (section.count === 1 ? "matches" : "match") : "in this scope"}
-              {section.rows.length > 0 && (section.count > section.rows.length || hasOlderPosition)
-                ? ` · Showing ${section.rows.length} ${hasOlderPosition ? "older" : "latest"}`
-                : null}
+              {section.count === 1 ? (isSessions ? "session" : "run") : kind}
+              {filtered ? (section.count === 1 ? " matches" : " match") : null}
             </p>
           ) : null}
         </div>
-        <div className="flex min-w-0 max-w-full flex-wrap items-end gap-2">
-          {isSessions ? null : <ActivityStatusFilter query={query} workspaceSlug={workspaceSlug} />}
-          {!query.actor && section.kind === "available" && section.count > 0 ? (
-            <Link className="ui-button" href={browseHref}>
-              View {kind}
-            </Link>
-          ) : null}
-        </div>
+        {!query.actor && section.kind === "available" && section.count > 0 ? (
+          <Link className="ui-button" href={browseHref}>
+            View {kind}
+          </Link>
+        ) : null}
       </div>
       {invalidCursor || invalidStatus ? (
         <p className="border-b border-border px-4 py-3 text-sm text-muted sm:px-5">
           {invalidCursor ? "This page link is unavailable. Showing the latest results. " : null}
           {invalidStatus ? "This status filter is unavailable. Showing all statuses. " : null}
-          <Link className={textLink} href={latestHref}>
-            Reset link
-          </Link>
+          {invalidCursor ? (
+            <Link className={textLink} href={latestHref}>
+              Latest {kind}
+            </Link>
+          ) : null}
         </p>
       ) : null}
       {section.kind === "unavailable" ? (
         <p className="px-4 py-8 text-sm text-muted sm:px-5">
-          {heading} activity is unavailable. Use Refresh at the top of Activity to try again.
+          {heading} activity is unavailable. Use Refresh to try again.
         </p>
       ) : section.rows.length === 0 ? (
         <div className="space-y-3 px-4 py-8 text-sm text-muted sm:px-5">
@@ -163,61 +176,26 @@ function ActivityList({
               ? `No older ${kind} match this view.`
               : filtered
                 ? `No ${kind} match these filters.`
-                : `No ${kind} yet.`}
+                : query.factory !== "all"
+                  ? `No ${kind} in this factory.`
+                  : `No ${kind} yet.`}
           </p>
-          {hasOlderPosition ? null : filtered ? (
-            <div className="flex flex-wrap gap-x-4 gap-y-2">
-              {query.actor ? (
-                <Link
-                  className={textLink}
-                  href={activityHref(workspaceSlug, {
-                    factory: query.factory,
-                    status: query.status,
-                  })}
-                  scroll={false}
-                >
-                  Clear actor filter
-                </Link>
-              ) : null}
-              {query.factory !== "all" ? (
-                <Link
-                  className={textLink}
-                  href={activityHref(workspaceSlug, {
-                    factory: "all",
-                    actor: query.actor,
-                    status: query.status,
-                  })}
-                  scroll={false}
-                >
-                  Show all accessible factories
-                </Link>
-              ) : null}
-              {!isSessions && query.status ? (
-                <Link
-                  className={textLink}
-                  href={activityHref(workspaceSlug, { ...latestQuery, status: undefined })}
-                  scroll={false}
-                >
-                  Clear status filter
-                </Link>
-              ) : null}
-            </div>
-          ) : (
+          {!hasOlderPosition && !filtered && query.factory === "all" ? (
             <Link className={textLink} href={browseHref}>
               View {kind}
             </Link>
-          )}
+          ) : null}
         </div>
       ) : (
         <ul className="divide-y divide-border">
           {section.rows.map((row) => (
             <li
-              className="grid min-w-0 gap-x-6 gap-y-2 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,180px)_auto] sm:px-5"
+              className="grid min-w-0 gap-x-5 gap-y-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_8rem] sm:px-5"
               key={row.id}
             >
               <div className="min-w-0">
                 <Link
-                  className="font-semibold text-foreground hover:underline [overflow-wrap:anywhere]"
+                  className="text-sm font-semibold text-foreground underline decoration-border-strong underline-offset-4 hover:decoration-current [overflow-wrap:anywhere]"
                   href={row.href}
                 >
                   {row.title}
@@ -228,9 +206,9 @@ function ActivityList({
                   </p>
                 ) : null}
               </div>
-              <div className="grid min-w-0 content-start gap-1 text-xs text-muted [overflow-wrap:anywhere]">
+              <div className="flex min-w-0 flex-wrap items-start gap-x-3 gap-y-1 text-xs text-muted [overflow-wrap:anywhere] sm:flex-col">
                 <Link
-                  className={`justify-self-start ${textLink}`}
+                  className={textLink}
                   href={activityHref(workspaceSlug, {
                     factory: row.factory.id,
                     actor: query.actor,
@@ -262,12 +240,9 @@ function ActivityList({
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted sm:flex-col sm:items-end">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span>Current status:</span>
-                  <Status compact value={row.status} />
-                </div>
+                <Status compact value={row.status} />
                 <p>
-                  {isSessions ? "Last updated " : "Run created "}
+                  {isSessions ? "Updated " : "Created "}
                   <TimeDisplay initialNow={initialNow} value={row.time} variant="relative" />
                 </p>
               </div>

@@ -8,8 +8,8 @@ import type { ActivityRow, FactoryActivityData } from "@/features/factory-activi
 import { FactoryActivityPage } from "@/features/factory-activity/activity-page";
 import { ActivityRefresh } from "@/features/factory-activity/activity-refresh";
 
-const { refresh } = vi.hoisted(() => ({ refresh: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
+const { push, refresh } = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push, refresh }) }));
 
 const capturedAt = "2026-11-18T15:45:00Z";
 const factory = { id: "d18b4467-122d-4367-8628-f76856b8615e", name: "Research" };
@@ -54,10 +54,10 @@ describe("factory activity", () => {
     );
 
     const sessions = within(screen.getByRole("region", { name: "Sessions" }));
-    expect(sessions.getByText("18 sessions in this scope · Showing 1 latest")).toBeTruthy();
-    expect(sessions.getByText("Most recently updated first")).toBeTruthy();
-    expect(sessions.getByText(/Last updated/)).toBeTruthy();
-    expect(sessions.getByText("Current status:")).toBeTruthy();
+    expect(sessions.getByRole("status").textContent).toBe("18 sessions");
+    expect(sessions.queryByText(/Most recently|Showing 1 latest|in this scope/)).toBeNull();
+    expect(sessions.getByText(/Updated/)).toBeTruthy();
+    expect(sessions.getByText("Complete")).toBeTruthy();
     expect(sessions.getByRole("link", { name: "Qualify research" }).getAttribute("href")).toBe(
       "/w/wallie/sessions/42",
     );
@@ -76,7 +76,7 @@ describe("factory activity", () => {
     expect(screen.getByText("No runs yet.")).toBeTruthy();
   });
 
-  it("keeps unavailable and zero counts distinct and can clear only the actor filter", () => {
+  it("keeps unavailable and zero counts distinct and clears filters once without changing factory", () => {
     render(
       <FactoryActivityPage
         actorLabel="Actor unavailable"
@@ -85,19 +85,45 @@ describe("factory activity", () => {
           runs: { kind: "available", count: 0, rows: [] },
           capturedAt,
         }}
-        query={{ factory: factory.id, actor: actor.id, status: "error" }}
+        query={{ factory: factory.id, actor: actor.id, status: "error", runsBefore: "old" }}
         workspaceSlug="wallie"
       />,
     );
 
     expect(screen.getByText(/Sessions activity is unavailable. Use Refresh/)).toBeTruthy();
-    expect(screen.queryByText("0 sessions in this scope")).toBeNull();
-    expect(screen.getByText("No runs match these filters.")).toBeTruthy();
+    expect(
+      within(screen.getByRole("region", { name: "Sessions" })).queryByRole("status"),
+    ).toBeNull();
+    expect(screen.getByText("No older runs match this view.")).toBeTruthy();
     expect(screen.getByText("0 runs match")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Actor: Actor unavailable" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Clear actor filter" }).getAttribute("href")).toBe(
-      `/w/wallie/activity?factory=${factory.id}&status=error`,
+    expect(screen.getByRole("link", { name: "Clear filters" }).getAttribute("href")).toBe(
+      `/w/wallie/activity?factory=${factory.id}`,
     );
+  });
+
+  it("applies run status immediately without dropping the actor or session position", async () => {
+    const user = userEvent.setup();
+    render(
+      <FactoryActivityPage
+        actorLabel={actor.label}
+        data={{ sessions: { kind: "unavailable" }, runs: { kind: "unavailable" }, capturedAt }}
+        query={{ factory: factory.id, actor: actor.id, sessionsBefore: "keep", runsBefore: "drop" }}
+        workspaceSlug="wallie"
+      />,
+    );
+    const status = screen.getByRole("combobox", { name: "Run status" });
+    status.focus();
+    await user.keyboard("{Enter}{End}{Enter}");
+    expect(document.activeElement).toBe(status);
+    const [href, options] = push.mock.calls[0] ?? [];
+    expect(Object.fromEntries(new URL(href, "http://localhost").searchParams)).toEqual({
+      factory: factory.id,
+      actor: actor.id,
+      status: "canceled",
+      sessionsBefore: "keep",
+    });
+    expect(options).toEqual({ scroll: false });
   });
 
   it("searches named actors without losing status and restores trigger focus on Escape", async () => {

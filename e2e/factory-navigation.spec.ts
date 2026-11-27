@@ -281,10 +281,11 @@ test("Activity searches actors and pages filtered results within factory access"
     await expect(search).toBeFocused();
     await search.fill("@jamie");
     await dialog.getByRole("link", { name: "Jamie Sample (@jamie)" }).press("Enter");
-    await expect(actorTrigger).toHaveText("Actor: Jamie Sample (@jamie)");
+    await expect(actorTrigger).toHaveText("Jamie Sample (@jamie)");
     const runs = page.getByRole("region", { name: "Runs", exact: true });
     const sessions = page.getByRole("region", { name: "Sessions", exact: true });
-    await selectDropdownOption(runs.getByRole("combobox", { name: "Status" }), "error");
+    const statusFilter = page.getByRole("combobox", { name: "Run status" });
+    await selectDropdownOption(statusFilter, "error");
     await expect(runs.getByText(/12 runs match/)).toBeVisible();
     await expect(sessions.getByText(/13 sessions match/)).toBeVisible();
     await expect(runs.getByText("Failed", { exact: true })).toHaveCount(10);
@@ -302,22 +303,27 @@ test("Activity searches actors and pages filtered results within factory access"
     expect(new URL(page.url()).searchParams.get("actor")).toBe(actor.id);
     expect(new URL(page.url()).searchParams.get("factory")).toBe(visible.id);
     expect(new URL(page.url()).searchParams.get("status")).toBe("error");
-    await expect(runs.getByText(/12 runs match · Showing 2 older/)).toBeVisible();
-    await expect(sessions.getByText(/13 sessions match · Showing 10 latest/)).toBeVisible();
+    await expect(runs.getByText("12 runs match", { exact: true })).toBeVisible();
+    await expect(runs.getByRole("listitem")).toHaveCount(2);
+    await expect(sessions.getByText("13 sessions match", { exact: true })).toBeVisible();
+    await expect(sessions.getByRole("listitem")).toHaveCount(10);
     expect((await runTitles()).every((title) => !latestTitles.includes(title))).toBe(true);
     await page.goBack();
-    await expect(runs.getByText(/12 runs match · Showing 10 latest/)).toBeVisible();
+    await expect(runs.getByText("12 runs match", { exact: true })).toBeVisible();
+    await expect(runs.getByRole("listitem")).toHaveCount(10);
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.emulateMedia({ colorScheme: "dark" });
     await page.reload();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await capture(page, info, "activity-mobile-filtered");
-    await selectDropdownOption(runs.getByRole("combobox", { name: "Status" }), "canceled");
+    await selectDropdownOption(statusFilter, "canceled");
     await expect(runs.getByText("No runs match these filters.")).toBeVisible();
-    await expect(actorTrigger).toHaveText("Actor: Jamie Sample (@jamie)");
-    await runs.getByRole("link", { name: "Clear status filter" }).click();
-    await expect(runs.getByText(/13 runs match/)).toBeVisible();
+    await expect(actorTrigger).toHaveText("Jamie Sample (@jamie)");
+    await page.getByRole("link", { name: "Clear filters" }).press("Enter");
+    await expect(page).toHaveURL(`${activityPath}?factory=${visible.id}`);
+    await expect(actorTrigger).toHaveText("All actors");
+    await expect(runs.getByText("13 runs", { exact: true })).toBeVisible();
 
     await page.goto(`${activityPath}?factory=${restricted.id}`);
     await expect(page.getByRole("heading", { name: "Factory unavailable" })).toBeVisible();
@@ -328,7 +334,7 @@ test("Activity searches actors and pages filtered results within factory access"
     await search.press("Escape");
     await expect(actorTrigger).toBeFocused();
     await page.goto(`${activityPath}?actor=${hiddenActor.id}`);
-    await expect(actorTrigger).toHaveText("Actor: Actor unavailable");
+    await expect(actorTrigger).toHaveText("Actor unavailable");
     await expect(runs.getByText("No runs match these filters.")).toBeVisible();
   } finally {
     if (workspaceId) await write(admin.from("workspaces").delete().eq("id", workspaceId));
@@ -518,15 +524,33 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     await page.goto(
       `${runsPath}?factory=${defaultFactory.id}&sessionId=${defaultSession.id}&stageId=${initial.stage.id}`,
     );
-    await expect(page.getByText("1 run on this page", { exact: true })).toBeVisible();
+    const runs = page.getByRole("list", { name: /^Runs/ });
+    await expect(runs.getByRole("listitem")).toHaveCount(1);
     await selectFactory(page, "Customer tools");
-    await expect(page.getByRole("list", { name: "Runs", exact: true })).toContainText(
-      "Customer tools session 1",
-    );
+    await expect(runs).toContainText("Customer tools session 1");
     expect(new URL(page.url()).searchParams.has("stageId")).toBe(false);
     expect(new URL(page.url()).searchParams.has("sessionId")).toBe(false);
     await selectFactory(page, "All factories");
-    await expect(page.getByText("2 runs on this page", { exact: true })).toBeVisible();
+    await expect(runs.getByRole("listitem")).toHaveCount(2);
+    await expect(runs.getByText(/Restricted/u)).toHaveCount(0);
+
+    await page.setViewportSize({ width: 320, height: 844 });
+    const runStatus = page.getByRole("combobox", { name: "Status", exact: true });
+    await runStatus.press("Enter");
+    await runStatus.press("End");
+    await runStatus.press("Enter");
+    await expect(page).toHaveURL((url) => url.searchParams.get("status") === "canceled");
+    await expect(runStatus).toBeFocused();
+    await expect(page.getByRole("heading", { name: "No matching runs" })).toBeVisible();
+    await page.getByRole("link", { name: "Clear filters", exact: true }).press("Enter");
+    await expect(page).toHaveURL(`${runsPath}?factory=all`);
+    await expect(runs.getByRole("listitem")).toHaveCount(2);
+    await capture(page, info, "06-runs-narrow");
+    await runs.getByRole("link", { name: /^Customer tools session 1 —/ }).press("Enter");
+    await expect(page).toHaveURL((url) => url.pathname.startsWith(`${runsPath}/`));
+    await page.getByRole("link", { name: "Evidence", exact: true }).press("Enter");
+    await expect(page).toHaveURL(/#run-evidence$/u);
+    await expect(page.getByRole("region", { name: "Evidence", exact: true })).toBeFocused();
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.emulateMedia({ colorScheme: "dark" });

@@ -53,11 +53,11 @@ const scope = {
   memberCount: 1,
 };
 
-function authorized() {
+function authorized(role = "owner") {
   mocked.requireWorkspaceAccessById.mockResolvedValue({
     ok: true,
     context: {
-      currentMember: { id: "member-id", role: "owner" },
+      currentMember: { id: "member-id", role },
       supabase: { from: vi.fn() },
       user: { id: actorUserId },
       workspace: { id: workspaceId },
@@ -111,11 +111,11 @@ describe("factory scope route", () => {
     expect(response.status).toBe(404);
   });
 
-  it("creates a factory for a workspace manager", async () => {
-    authorized();
+  it.each(["owner", "admin"])("creates a factory for a workspace %s", async (role) => {
+    authorized(role);
     mocked.createFactory.mockResolvedValue(factory);
 
-    const response = await post({ name: "Payments", slug: "payments" });
+    const response = await post({ name: " Payments ", slug: " payments " });
 
     expect(response.status).toBe(201);
     expect(await response.json()).toEqual({ factory });
@@ -145,6 +145,7 @@ describe("factory scope route", () => {
 
     expect(response.status).toBe(409);
     expect(await response.json()).toEqual({
+      code: "factory_slug_taken",
       error: "That factory slug is already used in this workspace.",
     });
   });

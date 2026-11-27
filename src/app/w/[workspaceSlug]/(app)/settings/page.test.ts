@@ -3,9 +3,13 @@ import { describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
   SettingsServerShell: vi.fn(() => null),
+  loadWorkspaceFactoryOptions: vi.fn(),
   loadSettingsPageData: vi.fn(),
 }));
 
+vi.mock("@/features/factories/factory-options-data", () => ({
+  loadWorkspaceFactoryOptions: mocked.loadWorkspaceFactoryOptions,
+}));
 vi.mock("@/features/settings/data", () => ({
   loadSettingsPageData: mocked.loadSettingsPageData,
 }));
@@ -28,6 +32,8 @@ describe("SettingsPage", () => {
     const usage = new Promise<never>(() => undefined);
     const workspaceInvitations = new Promise<never>(() => undefined);
     const workspaceProfile = new Promise<never>(() => undefined);
+    const factories = new Promise<never>(() => undefined);
+    mocked.loadWorkspaceFactoryOptions.mockReturnValue(factories);
     mocked.loadSettingsPageData.mockResolvedValue({
       initialData: Promise.resolve(initialData),
       setupData,
@@ -43,6 +49,7 @@ describe("SettingsPage", () => {
         github: "connected",
         afterOAuthGrant: "56800000-0000-4000-8000-000000000001",
         oauthView: "history",
+        factory: "56800000-0000-4000-8000-000000000002",
       }),
     })) as ReactElement;
 
@@ -62,6 +69,14 @@ describe("SettingsPage", () => {
       },
       setupData,
       usage,
+      workspaceFactories: {
+        props: {
+          canManage: false,
+          factories,
+          requestedSetup: "56800000-0000-4000-8000-000000000002",
+          workspace: initialData.workspace,
+        },
+      },
       workspaceInvitations,
       workspaceProfile,
     });
