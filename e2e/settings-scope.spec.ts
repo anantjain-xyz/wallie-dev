@@ -218,6 +218,9 @@ test("the 320px workspace fixture separates team actions from personal tasks", a
     }
     await expect(team.getByRole("button", { name: "Edit profile" })).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Your profile" })).toBeVisible();
+    await expect(
+      page.locator("#profile").getByRole("button", { name: "Edit profile" }),
+    ).toBeVisible();
     await expect(page.getByRole("heading", { name: "Connected clients" })).toBeVisible();
     await expect(
       page.locator("#danger-zone").getByRole("button", {

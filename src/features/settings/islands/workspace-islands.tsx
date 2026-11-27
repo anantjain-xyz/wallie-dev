@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { lazy, useEffect, useState, type ComponentProps } from "react";
 
 import type { SettingsInitialData } from "@/features/settings/data";
 import { DangerZoneSection } from "@/features/settings/danger-zone-section";
@@ -10,6 +10,38 @@ import {
   dispatchSettingsEvent,
   SETTINGS_WORKSPACE_NAME_CHANGED,
 } from "@/features/settings/settings-island-events";
+
+const WorkspaceMembersSection = lazy(() =>
+  import("@/features/settings/workspace-members-section").then((module) => ({
+    default: module.WorkspaceMembersSection,
+  })),
+);
+
+const WorkspaceInvitationsSection = lazy(() =>
+  import("@/features/settings/workspace-invitations-section").then((module) => ({
+    default: module.WorkspaceInvitationsSection,
+  })),
+);
+
+const WorkspaceProfileSection = lazy(() =>
+  import("@/features/settings/workspace-profile-section").then((module) => ({
+    default: module.WorkspaceProfileSection,
+  })),
+);
+
+export function WorkspaceMembersIsland(props: ComponentProps<typeof WorkspaceMembersSection>) {
+  return <WorkspaceMembersSection {...props} />;
+}
+
+export function WorkspaceInvitationsIsland(
+  props: ComponentProps<typeof WorkspaceInvitationsSection>,
+) {
+  return <WorkspaceInvitationsSection {...props} />;
+}
+
+export function WorkspaceProfileIsland(props: ComponentProps<typeof WorkspaceProfileSection>) {
+  return <WorkspaceProfileSection {...props} />;
+}
 
 export function WorkspaceIdentityIsland({ initialData }: { initialData: SettingsInitialData }) {
   const [workspace, setWorkspace] = useState(initialData.workspace);
