@@ -1,4 +1,6 @@
 import { randomInt, randomUUID } from "node:crypto";
+import { readFileSync, readdirSync } from "node:fs";
+import { inspect } from "node:util";
 
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
@@ -439,6 +441,8 @@ test("factory management changes only the selected factory and leaves workspace 
   }
 
   let workspaceId: string | undefined;
+  let workflowFailed = false;
+  const cleanupErrors: unknown[] = [];
   try {
     const owner = await makeUser("owner");
     const workspace = await read(
@@ -456,26 +460,20 @@ test("factory management changes only the selected factory and leaves workspace 
       .eq("workspace_id", workspace.id)
       .throwOnError();
     const operatorArgs = { p_actor_user_id: owner.id, p_workspace_id: workspace.id };
-    const [payments, support, defaultFactory] = await Promise.all([
-      read(
-        admin.rpc("create_factory", {
-          ...operatorArgs,
-          p_name: "Payments Lab",
-          p_slug: "payments",
-        }),
-      ),
-      read(
-        admin.rpc("create_factory", { ...operatorArgs, p_name: "Support Lab", p_slug: "support" }),
-      ),
-      read(
-        admin
-          .from("factories")
-          .select("id,name")
-          .eq("workspace_id", workspace.id)
-          .eq("is_default", true)
-          .single(),
-      ),
-    ]);
+    const payments = await read(
+      admin.rpc("create_factory", { ...operatorArgs, p_name: "Payments Lab", p_slug: "payments" }),
+    );
+    const support = await read(
+      admin.rpc("create_factory", { ...operatorArgs, p_name: "Support Lab", p_slug: "support" }),
+    );
+    const defaultFactory = await read(
+      admin
+        .from("factories")
+        .select("id,name")
+        .eq("workspace_id", workspace.id)
+        .eq("is_default", true)
+        .single(),
+    );
     async function addMember(
       label: string,
       fullName: string,
@@ -500,12 +498,10 @@ test("factory management changes only the selected factory and leaves workspace 
       );
       return { ...user, memberId: member.id };
     }
-    const [operator, manager, member] = await Promise.all([
-      addMember("admin", "Alex Reed", "admin"),
-      addMember("manager", "Mika Lane", "member"),
-      addMember("member", "Jo Rivera", "member"),
-      addMember("inactive", "Sam Quinn", "member", false),
-    ]);
+    const operator = await addMember("admin", "Alex Reed", "admin");
+    const manager = await addMember("manager", "Mika Lane", "member");
+    const member = await addMember("member", "Jo Rivera", "member");
+    await addMember("inactive", "Sam Quinn", "member", false);
     const ownerMember = await read(
       admin
         .from("workspace_members")
@@ -562,12 +558,46 @@ test("factory management changes only the selected factory and leaves workspace 
     await expect(page.getByRole("heading", { name: "Factories", exact: true })).toBeFocused();
 
     await page.context().clearCookies();
-    await signInViaMagicLink(page, managePath(payments.id), {
+    await signInViaMagicLink(page, managePath(payments.id.toUpperCase()), {
       baseURL: base,
       email: operator.email,
     });
     await expect(panel.getByRole("heading", { name: "Payments Lab" })).toBeVisible();
     await expect(panel.getByRole("button", { name: "Archive factory" })).toBeVisible();
+    const managePayments = directory.getByRole("link", { name: "Manage Payments Lab" });
+    await expect(managePayments).toHaveAttribute("aria-current", "location");
+    await expect(directory.locator('[aria-current="location"]')).toHaveCount(1);
+
+    const chunks = readdirSync(".next/static/chunks")
+      .filter(
+        (file) =>
+          file.endsWith(".js") &&
+          readFileSync(`.next/static/chunks/${file}`, "utf8").includes("Remove factory access?"),
+      )
+      .map((file) => `**/_next/static/chunks/${file}`);
+    expect(chunks.length).toBeGreaterThan(0);
+    for (const chunk of chunks) await page.route(chunk, (route) => route.abort());
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${settings}#factories`);
+    await managePayments.click();
+    await expect(panel.getByRole("alert")).toHaveText("Could not load factory management.");
+    await expect(directory.getByRole("listitem")).toHaveCount(3);
+    await expect(managePayments).toHaveAttribute("aria-current", "location");
+    await directory.evaluate((element) => element.scrollIntoView({ block: "start" }));
+    await capture(page, info, "05-management-load-failure-mobile");
+    await panel.getByRole("link", { name: "Close factory management" }).click();
+    await expect(panel).toHaveCount(0);
+    await expect(directory).toBeVisible();
+    await managePayments.click();
+    await expect(panel.getByRole("alert")).toHaveText("Could not load factory management.");
+    for (const chunk of chunks) await page.unroute(chunk);
+    const reloaded = page.waitForEvent(
+      "request",
+      (request) => request.isNavigationRequest() && request.resourceType() === "document",
+    );
+    await panel.getByRole("button", { name: "Reload Settings" }).click();
+    expect(new URL((await reloaded).url()).searchParams.get("manageFactory")).toBe(payments.id);
+    await expect(panel.getByRole("textbox", { name: "Factory name" })).toHaveValue("Payments Lab");
 
     await page.context().clearCookies();
     await page.setViewportSize({ width: 320, height: 760 });
@@ -579,7 +609,6 @@ test("factory management changes only the selected factory and leaves workspace 
     await expect(
       directory.getByRole("link", { name: `Manage ${defaultFactory.name}` }),
     ).toHaveCount(0);
-    const managePayments = directory.getByRole("link", { name: "Manage Payments Lab" });
     await expect(managePayments).toHaveAttribute("href", managePath(payments.id));
     await managePayments.press("Enter");
     await expect(panel.getByRole("heading", { name: "Payments Lab" })).toBeFocused();
@@ -605,8 +634,32 @@ test("factory management changes only the selected factory and leaves workspace 
     await saveAccess.click();
     await expect(memberRow.getByText("Manager", { exact: true })).toBeVisible();
 
+    const saveName = panel.getByRole("button", { name: "Save name" });
     await rename.fill("Payments Operations");
-    await panel.getByRole("button", { name: "Save name" }).click();
+    await panel.scrollIntoViewIfNeeded();
+    await capture(page, info, "06-rename-draft-mobile");
+    await admin
+      .rpc("rename_factory", {
+        ...operatorArgs,
+        p_expected_name: "Payments Lab",
+        p_factory_id: payments.id,
+        p_name: "Payments Studio",
+      })
+      .throwOnError();
+    await saveName.click();
+    await expect(panel.getByRole("alert")).toHaveText(
+      "The factory name changed. Reload and try again.",
+    );
+    await expect(rename).toHaveValue("Payments Operations");
+    await expect(saveName).toHaveCount(0);
+    await panel.scrollIntoViewIfNeeded();
+    await capture(page, info, "07-rename-conflict-mobile");
+    await panel.getByRole("button", { name: "Discard draft and reload" }).click();
+    await expect(panel.getByRole("heading", { name: "Payments Studio" })).toBeVisible();
+    await expect(rename).toHaveValue("Payments Studio");
+    await expect(saveName).toBeDisabled();
+    await rename.fill("Payments Operations");
+    await saveName.click();
     await expect(panel.getByRole("heading", { name: "Payments Operations" })).toBeVisible();
     await expect(
       directory.getByRole("listitem").filter({ hasText: "Payments Operations" }),
@@ -705,11 +758,35 @@ test("factory management changes only the selected factory and leaves workspace 
         })
       ).status(),
     ).toBe(403);
+  } catch (error) {
+    workflowFailed = true;
+    throw error;
   } finally {
-    if (workspaceId) await admin.from("workspaces").delete().eq("id", workspaceId).throwOnError();
-    for (const id of userIds) {
-      const { error } = await admin.auth.admin.deleteUser(id);
-      if (error) throw error;
+    if (workspaceId) {
+      try {
+        await admin.from("workspaces").delete().eq("id", workspaceId).throwOnError();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
     }
+    for (const id of userIds) {
+      try {
+        const { error } = await admin.auth.admin.deleteUser(id);
+        if (error) throw error;
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (workflowFailed && cleanupErrors.length) {
+      await info
+        .attach("fixture cleanup errors", {
+          body: inspect(cleanupErrors),
+          contentType: "text/plain",
+        })
+        .catch(() => {});
+    }
+  }
+  if (cleanupErrors.length) {
+    throw new AggregateError(cleanupErrors, "Factory management fixture cleanup failed.");
   }
 });

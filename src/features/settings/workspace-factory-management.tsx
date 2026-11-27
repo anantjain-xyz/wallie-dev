@@ -18,6 +18,23 @@ export type FactoryManagementMember = {
   workspaceRole: Tables<"workspace_members">["role"];
 };
 
+const memberPageSize = 500;
+
+async function readMemberPages<Row>(
+  readPage: (after?: string) => PromiseLike<{ data: Row[] | null; error: unknown }>,
+  cursor: (row: Row) => string,
+) {
+  const rows: Row[] = [];
+  let after: string | undefined;
+  for (;;) {
+    const { data, error } = await readPage(after);
+    if (error || !data) throw error ?? new Error("Factory membership page unavailable.");
+    rows.push(...data);
+    if (data.length < memberPageSize) return rows;
+    after = cursor(data[data.length - 1]);
+  }
+}
+
 export async function WorkspaceFactoryManagement({
   factoryId,
   workspaceSlug,
@@ -48,23 +65,37 @@ export async function WorkspaceFactoryManagement({
     );
   }
 
-  const [grants, workspaceMembers] = await Promise.all([
-    supabase
-      .from("factory_members")
-      .select("member_id, role")
-      .eq("workspace_id", workspace.id)
-      .eq("factory_id", factory.id)
-      .is("revoked_at", null),
-    supabase
-      .from("workspace_members")
-      .select("id, full_name, email, role")
-      .eq("workspace_id", workspace.id)
-      .eq("kind", "human")
-      .eq("is_active", true)
-      .order("full_name")
-      .order("id"),
-  ]);
-  if (grants.error || workspaceMembers.error) {
+  const membership = await Promise.all([
+    readMemberPages(
+      (after) => {
+        const query = supabase
+          .from("factory_members")
+          .select("member_id, role")
+          .eq("workspace_id", workspace.id)
+          .eq("factory_id", factory.id)
+          .is("revoked_at", null)
+          .order("member_id")
+          .limit(memberPageSize);
+        return after ? query.gt("member_id", after) : query;
+      },
+      (row) => row.member_id,
+    ),
+    readMemberPages(
+      (after) => {
+        const query = supabase
+          .from("workspace_members")
+          .select("id, full_name, email, role")
+          .eq("workspace_id", workspace.id)
+          .eq("kind", "human")
+          .eq("is_active", true)
+          .order("id")
+          .limit(memberPageSize);
+        return after ? query.gt("id", after) : query;
+      },
+      (row) => row.id,
+    ),
+  ]).catch(() => null);
+  if (!membership) {
     return (
       <Section actions={close} anchorId="factory-management" heading="h3" title={factory.name}>
         <WorkspaceSettingsLoadError label="factory management" />
@@ -72,19 +103,20 @@ export async function WorkspaceFactoryManagement({
     );
   }
 
+  const [grants, workspaceMembers] = membership;
   const roles = new Map(
-    grants.data.map(
+    grants.map(
       ({ member_id, role }) => [member_id, role === "manager" ? "manager" : "member"] as const,
     ),
   );
-  const members: FactoryManagementMember[] = workspaceMembers.data.map(
-    ({ email, full_name, id, role }) => ({
+  const members: FactoryManagementMember[] = workspaceMembers
+    .map(({ email, full_name, id, role }) => ({
       factoryRole: roles.get(id) ?? null,
       id,
       label: [full_name?.trim(), email].filter(Boolean).join(" · ") || "Workspace member",
       workspaceRole: role,
-    }),
-  );
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label));
   return (
     <Section
       actions={close}

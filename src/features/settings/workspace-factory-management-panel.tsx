@@ -25,6 +25,7 @@ export function WorkspaceFactoryManagementPanel({
   const router = useRouter();
   const factoryNameId = useId();
   const [draft, setDraft] = useState<{ expectedName: string; name: string } | null>(null);
+  const [nameConflict, setNameConflict] = useState(false);
   const [lifecycleOpen, setLifecycleOpen] = useState(false);
   const [message, setMessage] = useState<FlashMessage | null>(null);
   const [refreshing, startRefresh] = useTransition();
@@ -35,12 +36,15 @@ export function WorkspaceFactoryManagementPanel({
   const statusLabel = archived ? "Restore factory" : "Archive factory";
   const endpoint = `/api/workspaces/${encodeURIComponent(workspaceId)}/factories/${encodeURIComponent(factory.id)}`;
   const mutation = useApiAction<{ factory: FactoryRecord }, [FactoryManagementCommand]>({
-    call: (command) =>
-      fetch(endpoint, {
+    call: async (command) => {
+      const response = await fetch(endpoint, {
         body: JSON.stringify(command),
         headers: { "Content-Type": "application/json" },
         method: "PATCH",
-      }),
+      });
+      if (command.action === "rename" && response.status === 409) setNameConflict(true);
+      return response;
+    },
     errorText: "Could not confirm the update. Reload Settings before trying again.",
     onSuccess: ({ factory: saved }, [command]) => {
       if (
@@ -53,6 +57,7 @@ export function WorkspaceFactoryManagementPanel({
       }
       setLifecycleOpen(false);
       setDraft(null);
+      setNameConflict(false);
       startRefresh(() => router.refresh());
     },
     setFlashMessage: setMessage,
@@ -72,7 +77,7 @@ export function WorkspaceFactoryManagementPanel({
           className="space-y-2"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!busy && changed) {
+            if (!busy && !nameConflict && changed) {
               setMessage(null);
               void mutation.run({ action: "rename", expectedName: draft.expectedName, name });
             }
@@ -99,11 +104,21 @@ export function WorkspaceFactoryManagementPanel({
             />
             <button
               className="ui-button min-h-11 justify-self-start sm:min-h-9"
-              disabled={busy || !changed}
-              type="submit"
+              disabled={busy || (!nameConflict && !changed)}
+              onClick={
+                nameConflict
+                  ? () => {
+                      setDraft(null);
+                      setMessage(null);
+                      setNameConflict(false);
+                      startRefresh(() => router.refresh());
+                    }
+                  : undefined
+              }
+              type={nameConflict ? "button" : "submit"}
             >
               <ActionButtonLabel
-                idle="Save name"
+                idle={nameConflict ? "Discard draft and reload" : "Save name"}
                 pending={!lifecycleOpen && mutation.isBusy}
                 pendingLabel="Saving…"
               />
@@ -254,7 +269,7 @@ function FactoryMembers({
               </span>
               <span className="type-label text-muted">{roleLabel[member.factoryRole]}</span>
               {!archived &&
-              selectable.includes(member) &&
+              member.workspaceRole === "member" &&
               !(member.factoryRole === "manager" && managers.length === 1) ? (
                 <button
                   aria-label={`Remove factory access for ${member.label}`}
