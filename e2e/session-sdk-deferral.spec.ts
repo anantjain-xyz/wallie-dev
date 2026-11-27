@@ -89,7 +89,7 @@ async function expectArtifact(page: Page) {
   await expect(artifact.locator(".artifact-content:visible")).toContainText(
     "The checkout path waits on inventory, tax, and shipping before it can show a total.",
   );
-  await expect(artifact).toContainText(/v1\s*·\s*Latest/);
+  await expect(page.getByRole("heading", { name: "Review Plan v1", exact: true })).toBeVisible();
 }
 
 async function expectReviewReady(page: Page) {
@@ -140,8 +140,9 @@ test("review and activity work while the SDK loads, then authenticated recovery 
     expect(fixture.joins).toHaveLength(0);
 
     const activity = page.getByRole("region", { name: "Session runs", exact: true });
-    const disclosure = activity.getByRole("button", { name: /^Completed .* run Attempt/ }).first();
+    const disclosure = activity.getByRole("button", { name: /^Plan run Attempt 1\b/ });
     await expect(disclosure).toBeVisible();
+    await expect(disclosure.getByRole("status")).toHaveText("Completed");
     await disclosure.click();
     await expect(disclosure).toHaveAttribute("aria-expanded", "true");
 
