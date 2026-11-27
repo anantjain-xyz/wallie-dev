@@ -56,7 +56,7 @@ describe("/ page", () => {
     const html = renderToStaticMarkup(await HomePage());
 
     expect(html).toContain("Turn a task into a pull request");
-    expect(html).toContain("Get started");
+    expect(html).toContain("Start with email");
     expect(mocked.createSupabaseServerClient).not.toHaveBeenCalled();
     expect(mocked.redirect).not.toHaveBeenCalled();
   });

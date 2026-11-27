@@ -16,8 +16,9 @@ test("invalid invitation preserves sign-in destination and offers a usable retur
     expect(response?.status()).toBe(404);
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Invitation not found");
     await expect(
-      page.getByRole("button", { name: "Sign out and try another account" }),
-    ).toHaveCount(0);
+      page.getByText("Ask the person who invited you to send a new link."),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Use a different account" })).toHaveCount(0);
     const returnLink = page.getByRole("link", { name: "Back to Wallie" });
     await expect(returnLink).toBeVisible();
     expect((await returnLink.boundingBox())?.height).toBeGreaterThanOrEqual(44);
@@ -29,5 +30,5 @@ test("invalid invitation preserves sign-in destination and offers a usable retur
 
   await page.getByRole("link", { name: "Back to Wallie" }).click();
   await expect(page).toHaveURL(/\/w\/acme-corp$/);
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Pipeline");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Sessions");
 });

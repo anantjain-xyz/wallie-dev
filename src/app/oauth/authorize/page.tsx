@@ -22,7 +22,7 @@ import { consentResumePath } from "./consent-navigation";
 import { ConsentRecovery } from "./consent-recovery";
 
 export const metadata: Metadata = {
-  title: { absolute: "Authorize client · Wallie" },
+  title: { absolute: "Review app access · Wallie" },
   referrer: "same-origin",
   robots: { index: false, follow: false },
 };
@@ -123,38 +123,34 @@ export default async function FactoryOAuthAuthorizePage({
 
   return (
     <PageContainer className="max-w-xl">
-      <PageHeader title="Authorize client" />
+      <PageHeader className="mb-4 sm:mb-5" title="Review app access" />
       <div className="ui-sheet min-w-0 space-y-5 p-4 sm:p-5">
-        <p className="type-body text-foreground [overflow-wrap:anywhere]">
-          {target ? (
-            <>
-              Review <strong>{client_name}</strong>’s access to <strong>{factories[0].name}</strong>{" "}
-              in <strong>{workspace_name}</strong>.
-            </>
-          ) : (
-            <>
-              Choose which factories <strong>{client_name}</strong> can access in{" "}
-              <strong>{workspace_name}</strong>.
-            </>
-          )}
-        </p>
-        <form
-          action="/auth/signout"
-          method="post"
-          className="flex flex-wrap items-center gap-x-3 gap-y-1"
-        >
-          <input type="hidden" name="next" value={resumePath} />
-          <input type="hidden" name="switchAccount" value="1" />
-          <p className="type-secondary text-muted [overflow-wrap:anywhere]">
-            Signed in as{" "}
-            <strong className="font-medium text-foreground">
-              {actor.email || "the current Wallie account"}
-            </strong>
+        <div className="space-y-2 [overflow-wrap:anywhere]">
+          <p className="type-body text-foreground">
+            <strong>{client_name}</strong> is asking for access in <strong>{workspace_name}</strong>
+            .
           </p>
-          <button className="ui-button min-h-11" type="submit">
-            Use a different account
-          </button>
-        </form>
+          <form
+            action="/auth/signout"
+            method="post"
+            className="flex flex-wrap items-center gap-x-3 gap-y-1"
+          >
+            <input type="hidden" name="next" value={resumePath} />
+            <input type="hidden" name="switchAccount" value="1" />
+            <p className="type-secondary min-w-0 text-muted">
+              Signed in as{" "}
+              <strong className="font-medium text-foreground">
+                {actor.email || "the current Wallie account"}
+              </strong>
+            </p>
+            <button
+              className="ui-touch-target inline-flex min-h-11 items-center rounded-[6px] text-sm font-medium text-foreground underline decoration-border-strong underline-offset-4 hover:decoration-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              type="submit"
+            >
+              Use a different account
+            </button>
+          </form>
+        </div>
         <ConsentForm
           authorizationId={authorization_id}
           technicalDetails={
@@ -163,12 +159,12 @@ export default async function FactoryOAuthAuthorizePage({
         >
           <fieldset className="min-w-0 space-y-3 border-t border-border pt-3">
             <legend className="type-label pr-2 text-foreground">
-              {target ? "Factory permissions" : "Factories"}
+              {target ? "Factory permissions" : "Choose factories"}
             </legend>
             <p className="type-secondary text-muted">
               {target
-                ? "Allowing access grants all the listed actions together."
-                : "For each factory you select, the app gets all the listed actions together."}
+                ? "Allowing access grants all actions listed for this factory."
+                : "The app gets all listed actions for each factory you select."}
             </p>
             {factories.map((factory) => {
               const scopeId = `scopes-${factory.factory_id}`;
@@ -176,7 +172,12 @@ export default async function FactoryOAuthAuthorizePage({
               return (
                 <div className="min-w-0 border-b border-border pb-3" key={factory.factory_id}>
                   {target ? (
-                    <input name="factoryIds" type="hidden" value={factory.factory_id} />
+                    <>
+                      <input name="factoryIds" type="hidden" value={factory.factory_id} />
+                      <p className="type-body font-semibold text-foreground [overflow-wrap:anywhere]">
+                        {factory.name}
+                      </p>
+                    </>
                   ) : (
                     <label className="flex min-h-11 items-center gap-2 text-sm font-medium text-foreground [overflow-wrap:anywhere]">
                       <input
@@ -193,27 +194,27 @@ export default async function FactoryOAuthAuthorizePage({
                       </span>
                     </label>
                   )}
-                  <div className={target ? "" : "ml-6"} id={scopeId}>
-                    <p className="type-label text-muted">What this app can do</p>
-                    <ul className="type-secondary mt-1 list-disc space-y-1 pl-5">
-                      {factory.scopes.map((scope) => (
-                        <li
-                          className={
-                            scope === "sessions:read" ? "text-muted" : "font-medium text-foreground"
-                          }
-                          key={scope}
-                        >
-                          {factoryCommandLabels[scope]}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
+                  <ul
+                    className={`type-secondary list-disc space-y-1 pl-5 ${target ? "mt-1" : "ml-6"}`}
+                    id={scopeId}
+                  >
+                    {factory.scopes.map((scope) => (
+                      <li
+                        className={
+                          scope === "sessions:read" ? "text-muted" : "font-medium text-foreground"
+                        }
+                        key={scope}
+                      >
+                        {factoryCommandLabels[scope]}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               );
             })}
           </fieldset>
           <p className="type-secondary text-muted [overflow-wrap:anywhere]">
-            After you choose, you’ll return to <strong>{client_name}</strong> (
+            Either choice returns you to <strong>{client_name}</strong> (
             {new URL(request.redirectUri).origin}). If you deny, no access is granted.
           </p>
         </ConsentForm>

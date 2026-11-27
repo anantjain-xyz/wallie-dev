@@ -2,12 +2,18 @@
   isolation: isolate;
 }
 
-.illustrations {
-  min-width: 0;
+.content {
+  width: 100%;
+  max-width: 1120px;
+  margin-inline: auto;
+  padding-left: max(1.25rem, env(safe-area-inset-left));
+  padding-right: max(1.25rem, env(safe-area-inset-right));
 }
 
 .workflow {
+  --node-size: 44px;
   display: grid;
+  min-width: 0;
   gap: 16px;
   padding: 16px;
   border: 1px solid var(--border);
@@ -33,17 +39,17 @@
 
 .stage:not(:last-child)::after {
   position: absolute;
-  top: 19px;
-  left: calc(50% + 26px);
-  width: max(0px, calc(100% - 52px));
+  top: calc(var(--node-size) / 2);
+  left: calc(50% + var(--node-size) / 2 + 6px);
+  width: max(0px, calc(100% - var(--node-size) - 12px));
   border-top: 1px solid var(--border-strong);
   content: "";
 }
 
 .stageNode {
   display: grid;
-  width: 39px;
-  height: 39px;
+  width: var(--node-size);
+  height: var(--node-size);
   margin-bottom: 8px;
   place-items: center;
   border: 1px solid var(--accent);
@@ -61,8 +67,9 @@
 
 .providers {
   display: grid;
-  gap: 12px;
-  margin-top: 24px;
+  gap: 16px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
 }
 
 .agents,
@@ -73,7 +80,6 @@
 
 .agents {
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin-bottom: 6px;
 }
 
 .sandboxes {
@@ -95,8 +101,25 @@
 }
 
 @media (min-width: 640px) {
+  .content {
+    padding-left: max(2rem, env(safe-area-inset-left));
+    padding-right: max(2rem, env(safe-area-inset-right));
+  }
+
   .workflow {
-    padding: 24px;
+    padding: 28px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .workflow {
+    --node-size: 48px;
+    gap: 22px;
+  }
+
+  .providers {
+    grid-template-columns: auto minmax(0, 4fr) minmax(0, 3fr);
+    gap: 32px;
   }
 }
 

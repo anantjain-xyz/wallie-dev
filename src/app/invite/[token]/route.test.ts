@@ -113,24 +113,32 @@ describe("GET /invite/[token]", () => {
     expect(response.status).toBe(403);
     const html = await response.text();
     expect(html).toContain("Use the invited email");
-    expect(html).toContain('action="/auth/signout"');
+    expect(html).toContain("Sign out, then sign in with the email address");
+    expect(html).toContain('action="/auth/signout" method="post"');
     expect(html).toContain('name="next" value="/invite/invite-token"');
+    expect(html.indexOf("Use a different account")).toBeLessThan(html.indexOf("Back to Wallie"));
+    expect(html).not.toContain("new@example.com");
+    expect(html).not.toContain("wrong@example.com");
     expect(html).toContain('href="/"');
   });
   it.each([
-    ["expired", 410],
-    ["revoked", 410],
-    ["already_accepted", 409],
-    ["not_found", 404],
-  ])("offers a return destination without signing out for %s", async (errorCode, status) => {
-    mocked.createSupabaseServerClient.mockResolvedValue({});
-    mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-1", email: "user@example.com" });
-    mocked.createSupabaseAdminClient.mockReturnValue({ rpc: mocked.rpc });
-    mocked.rpc.mockResolvedValue({ data: { ok: false, error_code: errorCode }, error: null });
-    const response = await GET(requestWith(), routeContext());
-    expect(response.status).toBe(status);
-    const html = await response.text();
-    expect(html).toContain('href="/"');
-    expect(html).not.toContain('action="/auth/signout"');
-  });
+    ["expired", 410, "Ask the person who invited you to send a new link."],
+    ["revoked", 410, "Ask the person who invited you to send a new link."],
+    ["already_accepted", 409, "with the account that received the invitation."],
+    ["not_found", 404, "Ask the person who invited you to send a new link."],
+  ])(
+    "offers a safe next step and return destination without signing out for %s",
+    async (errorCode, status, guidance) => {
+      mocked.createSupabaseServerClient.mockResolvedValue({});
+      mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-1", email: "user@example.com" });
+      mocked.createSupabaseAdminClient.mockReturnValue({ rpc: mocked.rpc });
+      mocked.rpc.mockResolvedValue({ data: { ok: false, error_code: errorCode }, error: null });
+      const response = await GET(requestWith(), routeContext());
+      expect(response.status).toBe(status);
+      const html = await response.text();
+      expect(html).toContain(guidance);
+      expect(html).toContain('href="/"');
+      expect(html).not.toContain('action="/auth/signout"');
+    },
+  );
 });

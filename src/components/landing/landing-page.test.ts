@@ -10,8 +10,11 @@ describe("LandingPage", () => {
 
     expect(html.match(/<h1(?:\s|>)/g)).toHaveLength(1);
     expect(html.match(/href="\/login"/g)).toHaveLength(2);
+    expect(html).toContain("Start with email");
+    expect(html).toContain("Sign in");
+    expect(html).not.toContain("Get started");
     expect(html).toContain("docs/deployment/self-hosting.md");
-    expect(html).toContain("Sign in by email, then set up your workspace.");
+    expect(html).toContain("For a new hosted workspace");
     expect(html).toContain("agent credentials");
     expect(html).toContain("Linear is optional");
   });
@@ -21,9 +24,10 @@ describe("LandingPage", () => {
 
     expect(html.match(/<figure(?:\s|>)/g)).toHaveLength(1);
     expect(html).toContain("Example workflow");
-    expect(html).toContain("Supported coding agents");
-    expect(html).toContain("Supported sandboxes");
-    expect(html.indexOf("Example workflow")).toBeLessThan(html.indexOf("Supported coding agents"));
+    expect(html).toContain("Works with");
+    expect(html).toContain("Coding agents");
+    expect(html).toContain("Sandboxes");
+    expect(html.indexOf("Example workflow")).toBeLessThan(html.indexOf("Works with"));
     expect(html).toContain("<ol");
     expect(html).toContain("Wallie starts the build after you approve the plan.");
     expect(html).not.toContain("Add stage");

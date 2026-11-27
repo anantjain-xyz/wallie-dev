@@ -29,6 +29,7 @@ vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 
 import FactoryOAuthAuthorizePage from "./page";
 import AuthorizeLayout from "./layout";
+import OAuthRecoveryPage from "./recover/page";
 
 const issuer = "https://wallie.example.test";
 const workspace = "56800000-0000-4000-8000-000000000005";
@@ -81,7 +82,9 @@ it("shows the exact offered scopes next to each selectable factory", async () =>
   expect(html).toContain("Signed in as");
   expect(html).toContain("member@example.test");
   expect(html).toContain("Use a different account");
-  expect(html).toContain("What this app can do");
+  expect(html).toContain("Choose factories");
+  expect(html).toContain("The app gets all listed actions for each factory you select.");
+  expect(html).not.toContain("What this app can do");
   expect(html).toContain("If you deny, no access is granted.");
   expect(html).toContain(`aria-describedby="scopes-${readFactory}"`);
   expect(html).toMatch(new RegExp(`id="scopes-${readFactory}"[^>]*>.*?Read sessions.*?</ul>`));
@@ -129,7 +132,7 @@ it("disambiguates equal factory names with slugs visible to this account", async
   );
 });
 
-it("shows the exact factory, resource and issuer without a selectable factory", async () => {
+it("shows the exact factory and actions before decisions, with resource and issuer in details", async () => {
   mocks.rpc.mockReturnValue({
     single: async () => ({
       data: {
@@ -150,7 +153,11 @@ it("shows the exact factory, resource and issuer without a selectable factory", 
   expect(html).toContain(`type="hidden" name="factoryIds" value="${readFactory}"`);
   expect(html).toContain("Customer tools");
   expect(html).toContain("Read sessions");
+  expect(html).not.toContain("What this app can do");
   expect(html).toMatch(/<details[^>]*>.*?Technical details/);
+  expect(html.indexOf("Read sessions")).toBeLessThan(html.indexOf("Allow access"));
+  expect(html.indexOf("Allow access")).toBeLessThan(html.indexOf("Technical details"));
+  expect(html.slice(0, html.indexOf("<details"))).not.toContain(">Resource<");
   expect(html).toContain(target);
   expect(html).toContain(`>${issuer}</dd>`);
   expect(html).not.toContain('type="checkbox"');
@@ -177,9 +184,7 @@ it("sends invalid_target only after the exact registered callback passes databas
     });
 
   const invalid = [target, target];
-  expect(renderToStaticMarkup(await authorization(invalid))).toContain(
-    "This authorization request is unavailable.",
-  );
+  expect(renderToStaticMarkup(await authorization(invalid))).toContain("Start authorization again");
   expect(mocks.redirect).not.toHaveBeenCalled();
   await expect(authorization(invalid)).rejects.toThrow("redirect");
   expect(mocks.rpc).toHaveBeenLastCalledWith(
@@ -212,7 +217,7 @@ it("composes the consent render inside one focusable main landmark", async () =>
   const html = renderToStaticMarkup(<AuthorizeLayout>{await authorization()}</AuthorizeLayout>);
   expect(html.match(/id="main-content"/g)).toHaveLength(1);
   expect(html).toContain('tabindex="-1"');
-  expect(html).toContain("Authorize client");
+  expect(html).toContain("Review app access");
   expect(html).toContain("Release tools");
   expect(html).toContain("Customer tools");
 });
@@ -225,7 +230,33 @@ it("composes the unavailable render inside one focusable main landmark", async (
   const html = renderToStaticMarkup(<AuthorizeLayout>{await authorization()}</AuthorizeLayout>);
   expect(html.match(/id="main-content"/g)).toHaveLength(1);
   expect(html).toContain('tabindex="-1"');
-  expect(html).toContain("This authorization request is unavailable.");
+  expect(html).toContain("Start authorization again");
+  expect(html).toContain("Return to the app that requested access and connect again.");
   expect(html).toContain("Use a different account");
+  expect(html).toContain('action="/auth/signout"');
+  expect(html).toContain('name="switchAccount" value="1"');
+  expect(html).toContain('name="next" value="/oauth/authorize?');
   expect(html).not.toContain('href="https://client.example.test');
+});
+
+it("tells people how to restart a malformed request without offering a redirect", async () => {
+  const html = renderToStaticMarkup(
+    await FactoryOAuthAuthorizePage({ searchParams: Promise.resolve({}) }),
+  );
+  expect(html).toContain("Start authorization again");
+  expect(html).toContain("Return to the app that requested access and connect again.");
+  expect(html).not.toContain("Use a different account");
+  expect(html).not.toContain('href="');
+  expect(mocks.actor).not.toHaveBeenCalled();
+  expect(mocks.rpc).not.toHaveBeenCalled();
+});
+
+it("offers sign-in without inventing an OAuth resume target after sign-out", async () => {
+  const html = renderToStaticMarkup(
+    await OAuthRecoveryPage({ searchParams: Promise.resolve({ reason: "signed_out" }) }),
+  );
+  expect(html).toContain("Start authorization again");
+  expect(html).toMatch(/href="\/login"[^>]*>Sign in to Wallie/);
+  expect(html).not.toContain("Use a different account");
+  expect(html).not.toContain('name="next"');
 });

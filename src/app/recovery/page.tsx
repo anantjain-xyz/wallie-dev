@@ -17,32 +17,33 @@ export default async function RecoveryPage({
     <main id="main-content" tabIndex={-1}>
       <PageContainer className="max-w-xl">
         <PageHeader
-          title={failedSignOut ? "Wallie couldn’t sign you out" : "Get help with Wallie"}
+          className="mb-4 sm:mb-5"
+          title={failedSignOut ? "Wallie couldn’t sign you out" : "Get help with a Wallie link"}
         />
         <div className="ui-sheet space-y-4 p-4 sm:p-5">
           {failedSignOut ? (
             <p className="type-body text-foreground" role="alert">
-              Account switching stopped. Try signing out again before reopening the link or starting
-              authorization again from the app that requested it.
+              You may still be signed in. Sign out before reopening the link or restarting
+              authorization in the app that requested access.
             </p>
           ) : (
-            <>
-              <p className="type-body text-foreground">
-                If you followed a workspace link, check that you’re using the account that was
-                invited. Ask the person who shared the link for an invitation or an updated link.
-              </p>
-              <p className="type-body text-muted">
-                If a page still won’t load after retrying, share the link with your workspace
-                administrator.
-              </p>
-            </>
+            <p className="type-body text-foreground">
+              If you’re using the wrong account, sign out and sign in with the email address that
+              received the invitation.
+            </p>
           )}
           <form action="/auth/signout" method="post">
             <input type="hidden" name="switchAccount" value="1" />
-            <button type="submit" className="ui-button">
+            <button type="submit" className="ui-button min-h-11">
               {failedSignOut ? "Try signing out again" : "Use a different account"}
             </button>
           </form>
+          {!failedSignOut ? (
+            <p className="type-secondary text-muted">
+              Ask the person who shared the link for an invitation or a new link. If it still
+              doesn’t open, share it with your workspace admin.
+            </p>
+          ) : null}
         </div>
       </PageContainer>
     </main>

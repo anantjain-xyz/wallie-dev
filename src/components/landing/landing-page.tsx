@@ -1,12 +1,10 @@
 import Link from "next/link";
 
-import { LandingIllustrations } from "@/components/landing/product-mockups";
-import { GitHubIcon } from "@/components/shared/icons/github-icon";
+import { LandingProviders, LandingWorkflow } from "@/components/landing/product-mockups";
 import { WallieMark } from "@/components/shared/wallie-mark";
 
 import styles from "./landing.module.css";
 
-const githubUrl = "https://github.com/anantjain-xyz/wallie-dev";
 const docsUrl = "https://github.com/anantjain-xyz/wallie-dev#readme";
 const selfHostingUrl =
   "https://github.com/anantjain-xyz/wallie-dev/blob/main/docs/deployment/self-hosting.md";
@@ -16,28 +14,19 @@ export function LandingPage() {
   return (
     <div className={`${styles.page} flex min-h-[100svh] flex-col bg-canvas text-foreground`}>
       <header className="pt-[env(safe-area-inset-top)]">
-        <div className="mx-auto flex min-h-16 w-full max-w-[1120px] items-center justify-between gap-2 pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] sm:gap-4 sm:pl-[max(2rem,env(safe-area-inset-left))] sm:pr-[max(2rem,env(safe-area-inset-right))]">
+        <div className={`${styles.content} flex min-h-16 items-center justify-between gap-2`}>
           <Link
             href="/"
             aria-label="Wallie home"
-            className="flex min-h-11 items-center gap-2 rounded-[6px] px-1 text-[20px] font-bold tracking-tight text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            className="flex min-h-11 items-center gap-2 rounded-[6px] text-[20px] font-bold tracking-tight text-foreground hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
             <WallieMark className="size-7 shrink-0" />
             Wallie
           </Link>
-          <nav aria-label="Main navigation" className="flex shrink-0 items-center gap-2 sm:gap-4">
-            <a
-              href={githubUrl}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="ui-touch-target inline-flex min-h-11 items-center gap-2 rounded-[6px] px-2 text-[14px] font-medium text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-            >
-              <GitHubIcon className="h-4 w-4" />
-              GitHub
-            </a>
+          <nav aria-label="Main navigation">
             <Link
               href="/login"
-              className="ui-touch-target inline-flex min-h-11 items-center justify-center rounded-[6px] border border-border px-3 text-[14px] font-medium text-foreground transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 sm:px-4"
+              className="ui-touch-target inline-flex min-h-11 items-center rounded-[6px] px-2 text-sm font-medium text-muted hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               Sign in
             </Link>
@@ -49,57 +38,59 @@ export function LandingPage() {
         id="main-content"
         aria-labelledby="landing-title"
         tabIndex={-1}
-        className="flex flex-1 items-center py-10 pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] max-[360px]:pt-4 sm:pl-[max(2rem,env(safe-area-inset-left))] sm:pr-[max(2rem,env(safe-area-inset-right))] lg:px-10"
+        className="flex flex-1 items-center py-8 max-[360px]:pt-4 lg:py-12"
       >
-        <div className="mx-auto grid w-full max-w-[1120px] gap-8 max-[360px]:gap-4 sm:gap-12 lg:grid-cols-[1.02fr_0.98fr] lg:items-center lg:gap-14">
-          <div>
-            <h1
-              id="landing-title"
-              className="max-w-[640px] text-[38px] font-semibold leading-[1.06] tracking-[-0.035em] text-foreground max-[360px]:text-[34px] sm:text-[48px] lg:text-[54px]"
-            >
-              Turn a task into a pull request you can trust
-            </h1>
-            <p className="mt-5 max-w-[540px] text-[16px] leading-7 text-muted max-[360px]:mt-4 max-[360px]:leading-6 sm:text-[17px] sm:leading-8">
-              Describe the work. Review the plan. Let your coding agent build it in an isolated
-              sandbox, with your team in control at every stage.
-            </p>
-            <div className="mt-8 flex flex-wrap items-center gap-3 max-[360px]:mt-4 max-[360px]:gap-2">
-              <Link
-                href="/login"
-                aria-describedby="hosted-setup"
-                className="ui-touch-target inline-flex min-h-11 items-center justify-center rounded-[6px] border border-accent bg-accent px-5 text-[14px] font-semibold text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas max-[360px]:px-4"
+        <div className={`${styles.content} space-y-8 sm:space-y-10 lg:space-y-12`}>
+          <div className="grid gap-6 sm:gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-center lg:gap-12">
+            <div>
+              <h1
+                id="landing-title"
+                className="max-w-[640px] text-balance text-[38px] font-semibold leading-[1.06] tracking-[-0.035em] text-foreground max-[360px]:text-[34px] sm:text-[48px] lg:text-[54px]"
               >
-                Get started
-              </Link>
-              <a
-                href={selfHostingUrl}
-                className="ui-touch-target inline-flex min-h-11 items-center justify-center rounded-[6px] border border-border px-5 text-[14px] font-medium text-foreground transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 max-[360px]:px-4"
+                Turn a task into a pull request you can trust
+              </h1>
+              <p className="mt-4 max-w-[470px] text-pretty text-base leading-6 text-muted sm:text-[17px] sm:leading-7">
+                Run your coding agent in an isolated sandbox, with your team in control of what gets
+                built.
+              </p>
+              <div className="mt-5 flex flex-wrap items-center gap-2 sm:mt-6 sm:gap-3">
+                <Link
+                  href="/login"
+                  aria-describedby="hosted-setup"
+                  className="ui-button-primary min-h-11 px-4 text-sm font-semibold"
+                >
+                  Start with email
+                </Link>
+                <a href={selfHostingUrl} className="ui-button min-h-11 px-4 text-sm">
+                  Self-host Wallie
+                </a>
+              </div>
+              <p
+                id="hosted-setup"
+                className="type-secondary mt-3 max-w-[430px] text-pretty text-muted"
               >
-                Self-host Wallie
-              </a>
+                For a new hosted workspace, connect a GitHub repository, a sandbox, and your agent
+                credentials. Linear is optional.
+              </p>
             </div>
-            <p id="hosted-setup" className="mt-3 text-sm leading-5 text-muted">
-              Sign in by email, then set up your workspace.
-            </p>
-            <p className="mt-2 max-w-[440px] text-xs leading-5 text-muted">
-              Connect a GitHub repository, a sandbox provider, and your agent credentials to run
-              your first task. Linear is optional.
-            </p>
-          </div>
 
-          <LandingIllustrations />
+            <LandingWorkflow />
+          </div>
+          <LandingProviders />
         </div>
       </main>
 
       <footer className="pb-[max(1.5rem,env(safe-area-inset-bottom))]">
-        <div className="mx-auto flex w-full max-w-[1120px] flex-wrap items-center justify-between gap-x-6 gap-y-2 px-5 text-[13px] text-muted sm:px-8 lg:px-10">
+        <div
+          className={`${styles.content} type-secondary flex flex-wrap items-center justify-between gap-x-6 text-muted`}
+        >
           <p>
             Open source under the{" "}
             <a
               href={licenseUrl}
               target="_blank"
               rel="noreferrer noopener"
-              className="inline-flex min-h-11 items-center underline decoration-border underline-offset-4 hover:text-foreground focus-visible:outline-none focus-visible:text-accent"
+              className="inline-flex min-h-11 items-center underline decoration-border-strong underline-offset-4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               MIT License
             </a>
@@ -108,9 +99,9 @@ export function LandingPage() {
             href={docsUrl}
             target="_blank"
             rel="noreferrer noopener"
-            className="inline-flex min-h-11 items-center hover:text-foreground focus-visible:outline-none focus-visible:text-accent"
+            className="inline-flex min-h-11 items-center underline decoration-border-strong underline-offset-4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
-            Docs
+            Docs &amp; source
           </a>
         </div>
       </footer>

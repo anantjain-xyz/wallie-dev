@@ -98,18 +98,21 @@ describe("/login page", () => {
     expect(mocked.ensureProfileForUser).toHaveBeenCalledTimes(1);
   });
 
-  it("renders the email magic-link form by default", async () => {
+  it("renders the sign-in email request by default", async () => {
     const html = renderToStaticMarkup(
       await LoginPage({
         searchParams: Promise.resolve({}),
       }),
     );
 
-    expect(html).toContain("Send magic link");
+    expect(html).toContain("Send sign-in email");
     expect(html).toContain('name="email"');
     expect(html).toContain("you@company.com");
     expect(html).toContain("Sign in to Wallie");
-    expect(html).toContain("Use your email to create a workspace");
+    expect(html).toContain(
+      "After you sign in, Wallie opens your workspace or asks you to create one.",
+    );
+    expect(html).toContain('id="main-content" tabindex="-1"');
     expect(html).toContain("data-wallie-mark");
     expect(html).not.toContain("wallie-logo-minimal.png");
     expect(html).not.toContain('aria-label="Wallie home"');
@@ -130,9 +133,10 @@ describe("/login page", () => {
       }),
     );
 
-    expect(html).toContain("Enter the six-digit code from your email");
-    expect(html).toContain("Check your email");
-    expect(html).toContain("Continue with code");
+    expect(html).toContain("Open the sign-in link in your email, or enter the 6-digit code below.");
+    expect(html).toMatch(/<h1[^>]*>Check your email<\/h1>/);
+    expect(html).toContain("Verify code");
+    expect(html).toContain('name="next" value="/w/acme"');
     expect(html).toContain('href="/login?next=%2Fw%2Facme"');
     expect(html).not.toContain("owner@example.com");
   });

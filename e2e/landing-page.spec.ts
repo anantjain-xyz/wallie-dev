@@ -6,7 +6,7 @@ test("the shared skip link bypasses the landing header and reaches hosted sign-i
   await page.goto("/");
   const skip = page.getByRole("link", { name: "Skip to main content" });
   const main = page.getByRole("main");
-  const hosted = main.getByRole("link", { name: "Get started" });
+  const hosted = main.getByRole("link", { name: "Start with email" });
 
   await page.keyboard.press("Tab");
   await expect(skip).toBeFocused();
@@ -15,11 +15,14 @@ test("the shared skip link bypasses the landing header and reaches hosted sign-i
   await expect(main).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(hosted).toBeFocused();
-  await expect(hosted).toHaveAccessibleDescription("Sign in by email, then set up your workspace.");
+  await expect(hosted).toHaveAccessibleDescription(
+    "For a new hosted workspace, connect a GitHub repository, a sandbox, and your agent credentials. Linear is optional.",
+  );
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole("heading", { name: "Sign in to Wallie" })).toBeVisible();
   await expect(page.getByLabel("Work email")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send sign-in email" })).toBeVisible();
 });
 
 test("the narrow landing shows a static workflow before the provider lists", async ({ page }) => {
@@ -28,8 +31,8 @@ test("the narrow landing shows a static workflow before the provider lists", asy
   await page.goto("/");
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
   const workflow = page.getByRole("figure", { name: "Example workflow" });
-  const agents = page.getByRole("list", { name: "Supported coding agents" });
-  const sandboxes = page.getByRole("list", { name: "Supported sandboxes" });
+  const agents = page.getByRole("list", { name: "Coding agents" });
+  const sandboxes = page.getByRole("list", { name: "Sandboxes" });
 
   await expect(workflow).toBeInViewport({ ratio: 1 });
   await expect(workflow.getByText("Approve plan", { exact: true })).toBeVisible();

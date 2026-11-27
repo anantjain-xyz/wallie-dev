@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { ConsentRecovery } from "../consent-recovery";
 
 export const metadata: Metadata = {
-  title: { absolute: "Authorization unavailable | Wallie" },
+  title: { absolute: "Start authorization again · Wallie" },
   referrer: "no-referrer",
   robots: { index: false, follow: false },
 };
