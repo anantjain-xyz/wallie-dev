@@ -3,6 +3,7 @@
 import Link from "next/link";
 import {
   createContext,
+  useCallback,
   useContext,
   useLayoutEffect,
   useState,
@@ -35,24 +36,35 @@ export function useBlockPersonalSettings(blocked: boolean) {
   }, [blocked, setBlockers]);
 }
 
-export function PersonalSettingsLink(props: Omit<ComponentProps<typeof Link>, "onNavigate">) {
-  const blocked = useContext(PersonalNavigationContext)?.blocked;
+export function usePersonalSettingsGuard() {
+  const blocked = useContext(PersonalNavigationContext)?.blocked ?? false;
   const [showWarning, setShowWarning] = useState(false);
+  if (!blocked && showWarning) setShowWarning(false);
+  const stopNavigation = useCallback(() => {
+    if (!blocked) return false;
+    setShowWarning(true);
+    return true;
+  }, [blocked]);
+  const warning =
+    blocked && showWarning ? (
+      <p className="my-1 w-full type-secondary text-muted" role="status">
+        Save or discard your changes before opening Personal settings.
+      </p>
+    ) : null;
+  return { stopNavigation, warning };
+}
+
+export function PersonalSettingsLink(props: Omit<ComponentProps<typeof Link>, "onNavigate">) {
+  const { stopNavigation, warning } = usePersonalSettingsGuard();
   return (
     <>
       <Link
         {...props}
         onNavigate={(event) => {
-          if (!blocked) return;
-          event.preventDefault();
-          setShowWarning(true);
+          if (stopNavigation()) event.preventDefault();
         }}
       />
-      {blocked && showWarning ? (
-        <p className="my-1 w-full type-secondary text-muted" role="status">
-          Save or discard your changes before opening Personal settings.
-        </p>
-      ) : null}
+      {warning}
     </>
   );
 }
