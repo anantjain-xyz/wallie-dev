@@ -9,6 +9,7 @@ import {
   SETTINGS_CATEGORY_LINKS,
   type SettingsCategory,
 } from "@/features/settings/settings-categories";
+import { usePersonalSettingsGuard } from "@/features/settings/personal-settings-navigation";
 
 type SettingsCategoryNavProps = {
   activeCategory: SettingsCategory;
@@ -23,7 +24,7 @@ type SettingsHashRoute = {
 
 const HASH_ROUTES: Record<string, SettingsHashRoute> = {
   "cloud-execution": { anchor: "verify", category: "integrations" },
-  "connected-clients": { anchor: "connected-clients", category: "workspace" },
+  "connected-clients": { anchor: "connected-clients", category: "personal" },
   "connector-resources": { anchor: "connector-resources", category: "integrations" },
   "coding-agent": { anchor: "runtime", category: "integrations" },
   "danger-zone": { anchor: "danger-zone", category: "workspace" },
@@ -35,9 +36,10 @@ const HASH_ROUTES: Record<string, SettingsHashRoute> = {
   "linear-routing": { anchor: "linear", category: "integrations" },
   maintenance: { anchor: "maintenance", category: "advanced" },
   members: { anchor: "members", category: "workspace" },
+  "oauth-clients": { anchor: "oauth-clients", category: "workspace" },
   pipeline: { anchor: "pipeline", category: "integrations" },
-  profile: { anchor: "profile", category: "workspace" },
-  "provider-access": { anchor: "provider-access", category: "integrations" },
+  profile: { anchor: "profile", category: "personal" },
+  "provider-access": { anchor: "provider-access", category: "personal" },
   "rate-limits": { anchor: "rate-limits", category: "advanced" },
   repository: { anchor: "repository", category: "integrations" },
   "run-history": { anchor: "run-history", category: "advanced" },
@@ -48,6 +50,7 @@ const HASH_ROUTES: Record<string, SettingsHashRoute> = {
   vercel: { anchor: "sandbox", category: "integrations" },
   verify: { anchor: "verify", category: "integrations" },
   workspace: { anchor: "workspace", category: "workspace" },
+  "workspace-oauth-connections": { anchor: "workspace-oauth-connections", category: "workspace" },
   "workspace-secrets": { anchor: "workspace-secrets", category: "integrations" },
 };
 
@@ -65,15 +68,14 @@ const SETTINGS_CATEGORY_SUBMENUS: Record<
     { id: "factory-configuration", label: "Default factory" },
     { id: "pipeline", label: "Pipeline" },
     { id: "runtime", label: "Agent runtime" },
-    { id: "provider-access", label: "Your provider access" },
     { id: "verify", label: "Verify setup" },
   ],
   workspace: [
-    { id: "workspace", label: "Workspace" },
+    { id: "workspace", label: "General" },
     { id: "factories", label: "Factories" },
-    { id: "members", label: "Team access" },
-    { id: "profile", label: "Your profile" },
-    { id: "connected-clients", label: "Connected clients" },
+    { id: "members", label: "Members" },
+    { id: "oauth-clients", label: "OAuth clients" },
+    { id: "workspace-oauth-connections", label: "OAuth connections" },
     { id: "danger-zone", label: "Danger zone" },
   ],
   advanced: [
@@ -81,6 +83,11 @@ const SETTINGS_CATEGORY_SUBMENUS: Record<
     { id: "run-history", label: "Retention and exports" },
     { id: "maintenance", label: "Maintenance" },
     { id: "rate-limits", label: "Rate limits" },
+  ],
+  personal: [
+    { id: "profile", label: "Profile" },
+    { id: "provider-access", label: "Provider access" },
+    { id: "connected-clients", label: "Connected clients" },
   ],
 };
 
@@ -101,12 +108,18 @@ export function preloadSettingsCategory(category: SettingsCategory) {
       void import("@/features/settings/islands/advanced-islands");
       break;
     case "workspace":
+    case "personal":
       void import("@/features/settings/islands/workspace-islands");
       break;
   }
 }
 
-const managerAnchors = new Set(["run-history", "maintenance"]);
+const managerAnchors = new Set([
+  "run-history",
+  "maintenance",
+  "oauth-clients",
+  "workspace-oauth-connections",
+]);
 
 function settingsCategorySubmenu(category: SettingsCategory, canManage: boolean) {
   const submenu = SETTINGS_CATEGORY_SUBMENUS[category];
@@ -122,9 +135,12 @@ export function SettingsCategoryNav({
   const router = useRouter();
   const search = useSearchParams().toString();
   const [activeAnchor, setActiveAnchor] = useState<string | null>(null);
+  const { stopNavigation: stopPersonalNavigation, warning: personalWarning } =
+    usePersonalSettingsGuard();
   const activeSection = activeAnchor === "factory-setup" ? "factories" : activeAnchor;
   const [jumpOpen, setJumpOpen] = useState(false);
   const jumpId = useId();
+  const workspaceLabelId = useId();
   const reachTarget = useCallback((target: HTMLElement) => {
     const heading = target.querySelector<HTMLElement>("[data-settings-heading]");
     heading?.focus({ preventScroll: true });
@@ -158,6 +174,14 @@ export function SettingsCategoryNav({
       pending = null;
       if (!route || (!canManage && managerAnchors.has(route.anchor))) {
         setActiveAnchor(null);
+        return;
+      }
+      if (
+        activeCategory !== "personal" &&
+        route.category === "personal" &&
+        stopPersonalNavigation()
+      ) {
+        window.history.replaceState(null, "", window.location.pathname + window.location.search);
         return;
       }
       if (route.category !== activeCategory || hash !== `#${route.anchor}`) {
@@ -211,15 +235,18 @@ export function SettingsCategoryNav({
       observer?.disconnect();
       window.removeEventListener("hashchange", syncActiveHash);
     };
-  }, [activeCategory, canManage, pathname, reachTarget, router, search]);
+  }, [activeCategory, canManage, pathname, reachTarget, router, search, stopPersonalNavigation]);
 
   return (
     <nav
       aria-label="Settings categories"
       className="self-start lg:sticky lg:top-[calc(var(--shell-scroll-padding)+16px)] lg:max-h-[calc(100dvh-var(--shell-scroll-padding)-16px)] lg:overflow-y-auto"
     >
-      <ul className="grid grid-cols-3 gap-1 lg:flex lg:flex-col lg:gap-2">
-        {SETTINGS_CATEGORY_LINKS.map((category) => {
+      <p className="mb-1 px-2 type-label text-muted lg:px-3" id={workspaceLabelId}>
+        Workspace settings
+      </p>
+      <ul aria-labelledby={workspaceLabelId} className="grid grid-cols-3 gap-1 lg:flex lg:flex-col">
+        {SETTINGS_CATEGORY_LINKS.filter(({ id }) => id !== "personal").map((category) => {
           const isActive = category.id === activeCategory;
           return (
             <li className="min-w-0" key={category.id}>
@@ -230,15 +257,25 @@ export function SettingsCategoryNav({
                 onFocus={() => preloadSettingsCategory(category.id)}
                 onPointerEnter={() => preloadSettingsCategory(category.id)}
               >
-                <span className="block">{category.label}</span>
-                <span className="mt-0.5 hidden font-normal leading-4 text-muted type-annotation lg:block">
-                  {category.description}
-                </span>
+                {category.label}
               </Link>
             </li>
           );
         })}
       </ul>
+      <Link
+        aria-current={activeCategory === "personal" ? "page" : undefined}
+        className="settings-anchor mt-2 min-h-9 aria-[current=page]:bg-control-hover aria-[current=page]:text-foreground"
+        href={`/w/${workspaceSlug}/settings?category=personal`}
+        onFocus={() => preloadSettingsCategory("personal")}
+        onNavigate={(event) => {
+          if (stopPersonalNavigation()) event.preventDefault();
+        }}
+        onPointerEnter={() => preloadSettingsCategory("personal")}
+      >
+        Personal
+      </Link>
+      {personalWarning}
       <button
         aria-controls={jumpId}
         aria-expanded={jumpOpen}

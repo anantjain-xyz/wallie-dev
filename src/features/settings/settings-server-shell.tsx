@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { Suspense, type ReactNode } from "react";
 
 import { AdvancedRateLimits } from "@/features/settings/advanced-rate-limits";
@@ -28,6 +27,7 @@ import {
   WorkspaceSecretsIntegrationIsland,
 } from "@/features/settings/islands/integration-islands";
 import { PipelineIsland } from "@/features/settings/islands/pipeline-island";
+import { PersonalSettingsNavigation } from "@/features/settings/personal-settings-navigation";
 import {
   DangerActionsIsland,
   WorkspaceIdentityIsland,
@@ -39,7 +39,7 @@ import {
   WorkspaceMemberSettings,
   WorkspacePersonalProfile,
 } from "@/features/settings/workspace-member-settings";
-import { workspaceFactoryDefinitionPath, workspaceSettingsPath } from "@/lib/routes";
+import { workspaceFactoryDefinitionPath } from "@/lib/routes";
 
 type SettingsServerShellProps = {
   automationPreview?: ReactNode;
@@ -48,11 +48,13 @@ type SettingsServerShellProps = {
   defaultFactoryName?: Promise<string | undefined>;
   initialData: SettingsInitialData;
   personalConnections?: ReactNode;
-  searchState: { codexStatus: string | null; githubStatus: string | null };
+  personalProviderAccess?: ReactNode;
+  searchState: { githubStatus: string | null };
   setupData: Promise<SettingsSetupData>;
   usage: Promise<WorkspaceUsageData>;
   workspaceFactories?: ReactNode;
   workspaceInvitations: Promise<WorkspaceInvitationsSnapshot>;
+  workspaceOAuthClients?: ReactNode;
   workspaceProfile?: Promise<SettingsWorkspaceProfile>;
 };
 
@@ -145,7 +147,6 @@ async function WorkspaceConnectionDetails({ initialData, setupData }: SettingsSe
 async function IntegrationDetails({
   defaultFactoryName,
   initialData,
-  searchState,
   setupData,
 }: SettingsServerShellProps) {
   const setup = await settle(setupData);
@@ -168,11 +169,7 @@ async function IntegrationDetails({
         />
       </Section>
       <PipelineIsland data={data} factoryName={factoryName} />
-      <RuntimeIntegrationIsland
-        codexStatus={searchState.codexStatus}
-        defaultFactoryName={factoryName}
-        initialData={data}
-      />
+      <RuntimeIntegrationIsland defaultFactoryName={factoryName} initialData={data} />
       <VerifySetupIsland defaultFactoryName={factoryName} initialData={data} />
     </>
   );
@@ -288,7 +285,6 @@ function AdvancedCategory(props: SettingsServerShellProps) {
 }
 
 function WorkspaceCategory(props: SettingsServerShellProps) {
-  const providerHref = `${workspaceSettingsPath(props.initialData.workspace.slug, { category: "integrations" })}#provider-access`;
   return (
     <div className="space-y-10 sm:space-y-12">
       <WorkspaceIdentityIsland initialData={props.initialData} />
@@ -298,28 +294,32 @@ function WorkspaceCategory(props: SettingsServerShellProps) {
         invitations={props.workspaceInvitations}
         setup={props.setupData}
       />
-      <Section
-        title="Personal settings"
-        tagline="These settings belong to your account, not the whole workspace."
-      >
-        <div className="space-y-6">
-          {props.workspaceProfile ? (
-            <WorkspacePersonalProfile profile={props.workspaceProfile} />
-          ) : null}
-          {props.personalConnections ? (
-            <Suspense fallback={<SettingsSectionFallback label="connected clients" />}>
-              {props.personalConnections}
-            </Suspense>
-          ) : null}
-          <p className="type-secondary text-muted">
-            Looking for credentials that let you run agents?{" "}
-            <Link className="font-medium text-accent underline" href={providerHref}>
-              Open your provider access
-            </Link>
-          </p>
-        </div>
-      </Section>
+      {props.initialData.canManage && props.workspaceOAuthClients ? (
+        <Suspense fallback={<SettingsSectionFallback label="workspace OAuth clients" />}>
+          {props.workspaceOAuthClients}
+        </Suspense>
+      ) : null}
       <DangerActionsIsland initialData={props.initialData} />
+    </div>
+  );
+}
+
+function PersonalCategory(props: SettingsServerShellProps) {
+  return (
+    <div className="space-y-10 sm:space-y-12">
+      {props.workspaceProfile ? (
+        <WorkspacePersonalProfile profile={props.workspaceProfile} />
+      ) : null}
+      {props.personalProviderAccess ? (
+        <Suspense fallback={<SettingsSectionFallback label="provider access" />}>
+          {props.personalProviderAccess}
+        </Suspense>
+      ) : null}
+      {props.personalConnections ? (
+        <Suspense fallback={<SettingsSectionFallback label="connected clients" />}>
+          {props.personalConnections}
+        </Suspense>
+      ) : null}
     </div>
   );
 }
@@ -330,6 +330,8 @@ function ActiveCategory(props: SettingsServerShellProps) {
       return <AdvancedCategory {...props} />;
     case "workspace":
       return <WorkspaceCategory {...props} />;
+    case "personal":
+      return <PersonalCategory {...props} />;
     default:
       return <IntegrationsCategory {...props} />;
   }
@@ -343,14 +345,16 @@ export function SettingsServerShell(props: SettingsServerShellProps) {
           <h1 className="type-page-title">Settings</h1>
         </header>
         <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-12">
-          <SettingsCategoryNav
-            activeCategory={props.category}
-            canManage={props.initialData.canManage}
-            workspaceSlug={props.initialData.workspace.slug}
-          />
-          <div className="min-w-0" id="settings-sections">
-            <ActiveCategory {...props} />
-          </div>
+          <PersonalSettingsNavigation key={props.initialData.workspace.id}>
+            <SettingsCategoryNav
+              activeCategory={props.category}
+              canManage={props.initialData.canManage}
+              workspaceSlug={props.initialData.workspace.slug}
+            />
+            <div className="min-w-0" id="settings-sections">
+              <ActiveCategory {...props} />
+            </div>
+          </PersonalSettingsNavigation>
         </div>
       </div>
     </div>

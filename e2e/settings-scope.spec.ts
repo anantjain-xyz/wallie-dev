@@ -122,7 +122,16 @@ test("changing connector selection never retargets or drops the default factory 
   const model = page.locator("#runtime").getByRole("textbox", { name: "Model" });
   await model.fill("gpt-unsaved");
   await expect(factory).toContainText("Save or discard your edits before publishing.");
-  await expect(page.locator("#provider-access")).toContainText("belong to your account");
+  await expect(page.locator("#provider-access")).toHaveCount(0);
+  const providerAccess = page.locator("#runtime").getByRole("link", { name: "Provider access" });
+  await expect(providerAccess).toHaveAttribute(
+    "href",
+    "/w/northwind/settings?category=personal&provider=codex#provider-access",
+  );
+  await providerAccess.click();
+  await expect(
+    page.getByText("Save or discard your changes before opening Personal settings."),
+  ).toBeVisible();
 
   await connectors.getByRole("combobox", { name: "Factory", exact: true }).click();
   await page.getByRole("option", { name: "Product factory", exact: true }).click();
@@ -133,6 +142,42 @@ test("changing connector selection never retargets or drops the default factory 
     "href",
     "/w/northwind/settings/factory-definition#candidate-tests",
   );
+});
+
+test("every Personal entry preserves another runtime section's unsaved edits", async ({ page }) => {
+  await page.goto("/dev/settings?category=integrations&state=provider-blocked");
+  const runtime = page.locator("#runtime");
+  const attempts = runtime.getByRole("spinbutton", { name: /Maximum repair attempts/u });
+  await expect(attempts).toBeEditable();
+  const initial = await attempts.inputValue();
+  await attempts.fill(initial === "7" ? "8" : "7");
+  const expected = await attempts.inputValue();
+  await page.evaluate(() => {
+    window.location.hash = "profile";
+  });
+  await expect(
+    page
+      .getByRole("navigation", { name: "Settings categories" })
+      .getByText("Save or discard your changes before opening Personal settings."),
+  ).toBeVisible();
+  await expect(page).toHaveURL((url) => url.pathname === "/dev/settings" && !url.hash);
+  await expect(attempts).toHaveValue(expected);
+  for (const [region, name] of [
+    [runtime, "Provider access"],
+    [page.locator("#verify"), "Open provider access"],
+    [page.getByRole("navigation", { name: "Settings categories" }), "Personal"],
+  ] as const) {
+    await region.getByRole("link", { name, exact: true }).click();
+    await expect(
+      region.getByText("Save or discard your changes before opening Personal settings."),
+    ).toBeVisible();
+    await expect(page).toHaveURL((url) => url.pathname === "/dev/settings");
+    await expect(attempts).toHaveValue(expected);
+  }
+  await attempts.fill(initial);
+  await expect(
+    page.getByText("Save or discard your changes before opening Personal settings."),
+  ).toHaveCount(0);
 });
 
 test("delivery blockers stay visible when technical details are closed", async ({ page }) => {
@@ -200,7 +245,7 @@ test("delivery blockers stay visible when technical details are closed", async (
   await expect(delivery.getByText("Attempts 1")).toBeVisible();
 });
 
-test("the 320px workspace fixture separates team actions from personal tasks", async ({ page }) => {
+test("the 320px settings fixture separates workspace and personal actions", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 760 });
   for (const role of ["owner", "admin", "member"] as const) {
     await page.goto(`/dev/settings?category=workspace&role=${role}#members`);
@@ -217,17 +262,28 @@ test("the 320px workspace fixture separates team actions from personal tasks", a
       await expect(invite).toBeFocused();
     }
     await expect(team.getByRole("button", { name: "Edit profile" })).toHaveCount(0);
-    await expect(page.getByRole("heading", { name: "Your profile" })).toBeVisible();
-    await expect(
-      page.locator("#profile").getByRole("button", { name: "Edit profile" }),
-    ).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Connected clients" })).toBeVisible();
+    await expect(page.locator("#profile")).toHaveCount(0);
+    await expect(page.locator("#connected-clients")).toHaveCount(0);
     await expect(
       page.locator("#danger-zone").getByRole("button", {
         name: role === "owner" ? "Delete workspace" : "Leave workspace",
         exact: true,
       }),
     ).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      320,
+    );
+
+    await page.goto(`/dev/settings?category=workspace&role=${role}#profile`);
+    await expect(page).toHaveURL(
+      (url) => url.searchParams.get("category") === "personal" && url.hash === "#profile",
+    );
+    await expect(page.getByRole("heading", { name: "Profile", exact: true })).toBeFocused();
+    await expect(page.getByRole("button", { name: "Edit profile" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Provider access", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Connected clients" })).toBeVisible();
+    await expect(page.locator("#members")).toHaveCount(0);
+    await expect(page.locator("#danger-zone")).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
       320,
     );

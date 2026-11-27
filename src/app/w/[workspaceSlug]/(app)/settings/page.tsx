@@ -5,6 +5,7 @@ import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-option
 import { AutomationPreviewLink } from "@/features/settings/automation-preview-link";
 import { ConnectorSettingsSection } from "@/features/settings/connector-settings/section";
 import { PersonalOAuthConnections } from "@/features/settings/personal-oauth-connections";
+import { PersonalProviderAccess } from "@/features/settings/personal-provider-access";
 import { loadSettingsPageData } from "@/features/settings/data";
 import { parseSettingsCategory } from "@/features/settings/settings-categories";
 import {
@@ -12,6 +13,7 @@ import {
   SettingsServerShell,
 } from "@/features/settings/settings-server-shell";
 import { WorkspaceFactoriesSection } from "@/features/settings/workspace-factories-section";
+import { WorkspaceOAuthClients } from "@/features/settings/workspace-oauth-clients";
 
 type SettingsPageProps = {
   params: Promise<{
@@ -22,15 +24,19 @@ type SettingsPageProps = {
     codex_connect?: string;
     category?: string | string[];
     factory?: string | string[];
+    afterOAuthClient?: string | string[];
     afterOAuthGrant?: string | string[];
     oauthView?: string | string[];
+    provider?: string;
   }>;
 };
 
 export default async function SettingsPage({ params, searchParams }: SettingsPageProps) {
   const { workspaceSlug } = await params;
   const resolvedSearchParams = await searchParams;
-  const category = parseSettingsCategory(resolvedSearchParams.category);
+  const category = parseSettingsCategory(
+    resolvedSearchParams.category ?? (resolvedSearchParams.codex_connect ? "personal" : undefined),
+  );
   const data = await loadSettingsPageData(workspaceSlug, category);
   const afterOAuthGrant = z.string().uuid().safeParse(resolvedSearchParams.afterOAuthGrant).data;
   const initialData = await data.initialData;
@@ -68,7 +74,7 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
       }
       initialData={initialData}
       personalConnections={
-        category === "workspace" ? (
+        category === "personal" ? (
           <PersonalOAuthConnections
             afterOAuthGrant={afterOAuthGrant}
             history={resolvedSearchParams.oauthView === "history"}
@@ -76,9 +82,20 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
           />
         ) : undefined
       }
+      personalProviderAccess={
+        data.personalProviderContext ? (
+          <PersonalProviderAccess
+            canManageWorkspace={initialData.canManage}
+            codexStatus={resolvedSearchParams.codex_connect}
+            context={data.personalProviderContext}
+            requestedProvider={resolvedSearchParams.provider}
+            workspaceId={initialData.workspace.id}
+            workspaceSlug={workspaceSlug}
+          />
+        ) : undefined
+      }
       searchState={{
         githubStatus: resolvedSearchParams.github ?? null,
-        codexStatus: resolvedSearchParams.codex_connect ?? null,
       }}
       setupData={data.setupData}
       usage={data.usage}
@@ -93,6 +110,17 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
         ) : undefined
       }
       workspaceInvitations={data.workspaceInvitations}
+      workspaceOAuthClients={
+        category === "workspace" && initialData.canManage ? (
+          <WorkspaceOAuthClients
+            afterOAuthClient={
+              z.string().uuid().safeParse(resolvedSearchParams.afterOAuthClient).data
+            }
+            afterOAuthGrant={afterOAuthGrant}
+            workspaceSlug={workspaceSlug}
+          />
+        ) : undefined
+      }
       workspaceProfile={data.workspaceProfile}
     />
   );

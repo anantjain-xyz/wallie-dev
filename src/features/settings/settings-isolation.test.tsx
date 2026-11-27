@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen } from "@testing-library/react";
-import { Profiler, useLayoutEffect } from "react";
+import { Profiler, useLayoutEffect, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { SettingsPageData } from "@/features/settings/data";
@@ -10,20 +10,26 @@ import type { SandboxSettingsResponse } from "@/lib/sandbox-connections/contract
 const renders = vi.hoisted(() => ({ github: 0, runtime: 0, vercel: 0 }));
 
 vi.mock("@/features/settings/agent-config-section", () => ({
-  AgentConfigSection: ({
-    sandboxConnectionLabel,
-    sandboxConnectionReady,
-  }: {
-    sandboxConnectionLabel: string;
-    sandboxConnectionReady: boolean;
-  }) => {
+  AgentConfigSection: ({ extraContent }: { extraContent: ReactNode }) => {
     renders.runtime += 1;
-    return (
-      <output>
-        Sandbox {sandboxConnectionLabel} {sandboxConnectionReady ? "ready" : "blocked"}
-      </output>
-    );
+    return extraContent;
   },
+}));
+vi.mock("@/features/settings/factory-settings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/settings/factory-settings")>()),
+  FactorySettingsForm: ({ children }: { children: (revision: object) => ReactNode }) =>
+    children({}),
+}));
+vi.mock("@/features/settings/factory-sandbox-provider-settings", () => ({
+  FactorySandboxProviderSettings: ({ settings }: { settings: SandboxSettingsResponse }) => (
+    <output>
+      Sandbox {settings.activeProvider === "e2b" ? "E2B" : "Vercel Sandbox"}{" "}
+      {settings.connections[settings.activeProvider]?.status === "connected" ? "ready" : "blocked"}
+    </output>
+  ),
+}));
+vi.mock("@/features/settings/execution-policy-section", () => ({
+  ExecutionPolicySection: () => null,
 }));
 
 vi.mock("@/features/settings/github-install-section", () => ({
@@ -230,7 +236,7 @@ describe("Settings client-island isolation", () => {
     render(
       <>
         <VercelIntegrationIsland initialData={initialData} />
-        <RuntimeIntegrationIsland codexStatus={null} initialData={initialData} />
+        <RuntimeIntegrationIsland initialData={initialData} />
         <SaveBeforeRuntimeEffect />
       </>,
     );
@@ -243,7 +249,7 @@ describe("Settings client-island isolation", () => {
     render(
       <>
         <VercelIntegrationIsland initialData={data("workspace-saving")} />
-        <RuntimeIntegrationIsland codexStatus={null} initialData={data("workspace-viewing")} />
+        <RuntimeIntegrationIsland initialData={data("workspace-viewing")} />
       </>,
     );
 
@@ -273,7 +279,7 @@ describe("Settings client-island isolation", () => {
           <VercelIntegrationIsland initialData={initialData} />
         </Profiler>
         <Profiler id="runtime" onRender={() => (profilerCommits.runtime += 1)}>
-          <RuntimeIntegrationIsland codexStatus={null} initialData={initialData} />
+          <RuntimeIntegrationIsland initialData={initialData} />
         </Profiler>
       </>,
     );

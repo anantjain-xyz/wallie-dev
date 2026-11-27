@@ -7,8 +7,10 @@ import {
   type WorkspaceOnboardingData,
 } from "@/features/onboarding/data";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
+import { normalizeAgentProviderName, type AgentProvider } from "@/lib/agent-config/contracts";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 import { describeRateLimits, type RateLimitScope } from "@/lib/rate-limit";
+import { loadWorkspaceSandboxOverview, providerLabel } from "@/lib/sandbox-connections/server";
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -92,10 +94,18 @@ export type SettingsSetupData = Omit<
 
 export type SettingsWorkspaceProfile = { avatarUrl: string | null; fullName: string | null };
 
+export type PersonalProviderContext = {
+  model?: string;
+  provider: AgentProvider;
+  sandboxLabel: string;
+  sandboxReady: boolean;
+};
+
 export type WorkspaceInvitationsSnapshot = { asOf: number; invitations: WorkspaceInvitation[] };
 
 export type SettingsPageDataLoader = {
   initialData: Promise<SettingsInitialData>;
+  personalProviderContext?: Promise<PersonalProviderContext>;
   setupData: Promise<SettingsSetupData>;
   usage: Promise<WorkspaceUsageData>;
   workspaceInvitations: Promise<WorkspaceInvitationsSnapshot>;
@@ -341,7 +351,7 @@ export async function loadSettingsPageData(
     let initialData: Promise<SettingsInitialData>;
     let setupData: Promise<SettingsSetupData>;
 
-    if (category === "advanced" || category === "workspace") {
+    if (category === "advanced" || category === "personal" || category === "workspace") {
       initialData = Promise.resolve({
         canManage,
         currentMember: memberSummary,
@@ -349,7 +359,7 @@ export async function loadSettingsPageData(
         workspace: workspaceSummary,
       });
       setupData =
-        category === "advanced"
+        category !== "workspace"
           ? Promise.resolve(createEmptySettingsSetupData(workspace.id))
           : withServerTiming(
               "settings.section.setup",
@@ -476,7 +486,7 @@ export async function loadSettingsPageData(
           );
 
     const workspaceProfile =
-      category === "workspace"
+      category === "personal"
         ? observeDeferredSection(
             withServerTiming(
               "settings.section.profile",
@@ -494,8 +504,46 @@ export async function loadSettingsPageData(
           )
         : undefined;
 
+    const personalProviderContext =
+      category === "personal"
+        ? observeDeferredSection(
+            withServerTiming(
+              "settings.section.personal-provider",
+              { workspaceId: workspace.id },
+              async (): Promise<PersonalProviderContext> => {
+                const admin = createSupabaseAdminClient();
+                const [runtime, sandbox] = await Promise.all([
+                  admin
+                    .from("workspace_agent_config")
+                    .select("key, value_json")
+                    .eq("workspace_id", workspace.id)
+                    .in("key", ["agent_provider", "agent_model"]),
+                  loadWorkspaceSandboxOverview(admin, workspace.id),
+                ]);
+                if (runtime.error) throw runtime.error;
+                const provider = runtime.data.find(
+                  ({ key }) => key === "agent_provider",
+                )?.value_json;
+                const model = runtime.data.find(({ key }) => key === "agent_model")?.value_json;
+                return {
+                  model: typeof model === "string" ? model : undefined,
+                  provider:
+                    normalizeAgentProviderName(
+                      typeof provider === "string" ? provider : undefined,
+                    ) ?? "codex",
+                  sandboxLabel: providerLabel(sandbox.activeProvider),
+                  sandboxReady:
+                    sandbox.enabledProviders.includes(sandbox.activeProvider) &&
+                    sandbox.connections[sandbox.activeProvider]?.status === "connected",
+                };
+              },
+            ),
+          )
+        : undefined;
+
     return {
       initialData,
+      personalProviderContext,
       setupData: observeDeferredSection(setupData),
       usage: observeDeferredSection(usage),
       workspaceInvitations: observeDeferredSection(workspaceInvitations),

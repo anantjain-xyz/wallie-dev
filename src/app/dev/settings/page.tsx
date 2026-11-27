@@ -10,6 +10,7 @@ import { parseSettingsCategory } from "@/features/settings/settings-categories";
 import { SettingsServerShell } from "@/features/settings/settings-server-shell";
 import { Section } from "@/features/settings/settings-ui";
 import { WorkspaceFactoriesSection } from "@/features/settings/workspace-factories-section";
+import { PersonalProviderAccess } from "@/features/settings/personal-provider-access";
 
 const workspaceId = "11111111-1111-4111-8111-111111111111";
 const defaultFactory = {
@@ -37,11 +38,12 @@ export default async function SettingsPreviewPage({
     role?: string;
     factory?: string;
     github?: string;
+    provider?: string;
   }>;
 }) {
   if (isProductionDeploy()) notFound();
 
-  const { category, factory, github, role, state } = await searchParams;
+  const { category, factory, github, provider, role, state } = await searchParams;
   const selectedCategory = parseSettingsCategory(category);
   if (state === "loading") {
     return (
@@ -135,6 +137,14 @@ export default async function SettingsPreviewPage({
     data.github.repositories = [];
     data.github.primaryProfile = null;
   }
+  if (state === "provider-blocked") {
+    data.setupHealth.codexConnection = {
+      ...data.setupHealth.codexConnection,
+      connected: false,
+      credentialType: null,
+      status: "missing",
+    };
+  }
   if (state === "missing-usage") {
     data.usage = {
       totalCostUsd: null,
@@ -172,13 +182,28 @@ export default async function SettingsPreviewPage({
         defaultFactoryName={Promise.resolve(defaultFactory.name)}
         initialData={data}
         personalConnections={
-          selectedCategory === "workspace" ? (
-            <Section anchorId="connected-clients" heading="h3" title="Connected clients">
+          selectedCategory === "personal" ? (
+            <Section anchorId="connected-clients" title="Connected clients">
               <p className="type-secondary text-muted">No active connections.</p>
             </Section>
           ) : undefined
         }
-        searchState={{ codexStatus: null, githubStatus: github ?? null }}
+        personalProviderAccess={
+          selectedCategory === "personal" ? (
+            <PersonalProviderAccess
+              canManageWorkspace={canManage}
+              context={Promise.resolve({
+                provider: "codex",
+                sandboxLabel: "Vercel Sandbox",
+                sandboxReady: false,
+              })}
+              requestedProvider={provider}
+              workspaceId={workspaceId}
+              workspaceSlug={data.workspace.slug}
+            />
+          ) : undefined
+        }
+        searchState={{ githubStatus: github ?? null }}
         setupData={setupData}
         usage={Promise.resolve(data.usage)}
         workspaceFactories={

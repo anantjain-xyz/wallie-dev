@@ -80,7 +80,7 @@ function settingsCategory(
       github: null,
       workspace: { id: "workspace-1", name: "Acme", slug: "acme" },
     } as never,
-    searchState: { codexStatus: null, githubStatus: null },
+    searchState: { githubStatus: null },
     setupData: Promise.resolve({
       agentConfig: { agent_provider: "codex" },
       rateLimits: [
@@ -144,9 +144,12 @@ describe("Settings server shell", () => {
   });
 
   it.each([
-    ["pending invitations", "workspaceInvitations", ["Workspace members island", "Edit profile"]],
-    ["active members", "setupData", ["No pending invitations.", "Edit profile"]],
-    ["your profile", "workspaceProfile", ["No pending invitations.", "Workspace members island"]],
+    [
+      "pending invitations",
+      "workspaceInvitations",
+      ["Workspace members island", "Danger zone island"],
+    ],
+    ["active members", "setupData", ["No pending invitations.", "Danger zone island"]],
   ] as const)(
     "isolates failure of %s from the other workspace reads",
     async (label, key, healthy) => {
@@ -160,6 +163,20 @@ describe("Settings server shell", () => {
       if (key === "workspaceInvitations") expect(html).not.toContain("No pending invitations.");
     },
   );
+
+  it("keeps personal connections usable if the profile read fails", async () => {
+    const html = await renderStream(
+      settingsCategory("personal", false, {
+        personalConnections: <p>Personal connected clients</p>,
+        workspaceProfile: rejected("your profile"),
+      }),
+    );
+
+    expect(html).toContain('id="profile"');
+    expect(html.replaceAll(/<!--.*?-->/g, "")).toContain("Could not load your profile.");
+    expect(html).toContain("Personal connected clients");
+    expect(html).not.toContain("Workspace members island");
+  });
 
   it("keeps the Members heading and anchor while the subsections load", async () => {
     const setup = Promise.withResolvers<SettingsSetupData>();
@@ -250,23 +267,37 @@ describe("Settings server shell", () => {
   it("does not render invitations for ordinary members", async () => {
     const html = await renderSettingsCategory("workspace", false);
     expect(html).toContain("Workspace members island");
-    expect(html).toContain("Edit profile");
+    expect(html).not.toContain("Edit profile");
     expect(html).not.toContain("Pending invitations");
     expect(html).not.toContain("Invite member");
   });
 
-  it("groups team invitations ahead of separate profile and connected client tasks", async () => {
-    const html = await renderStream(
-      settingsCategory("workspace", true, {
-        personalConnections: <p>Personal connected clients</p>,
-      }),
-    );
+  it("keeps team and OAuth administration in Workspace and account tasks in Personal", async () => {
+    const props = {
+      personalConnections: <p>Personal connected clients</p>,
+      personalProviderAccess: <p>Personal provider access</p>,
+      workspaceOAuthClients: <p>Restricted workspace registration</p>,
+    };
+    const [workspace, memberWorkspace, personal] = await Promise.all([
+      renderStream(settingsCategory("workspace", true, props)),
+      renderStream(settingsCategory("workspace", false, props)),
+      renderStream(settingsCategory("personal", false, props)),
+    ]);
 
-    expect(html.indexOf('id="members"')).toBeGreaterThanOrEqual(0);
-    expect(html.indexOf('id="members"')).toBeLessThan(html.indexOf("Pending invitations"));
-    expect(html.indexOf("Pending invitations")).toBeLessThan(html.indexOf('id="profile"'));
-    expect(html.indexOf('id="profile"')).toBeLessThan(html.indexOf("Personal connected clients"));
-    expect(html).toContain("Open your provider access");
+    expect(workspace).toContain('id="members"');
+    expect(workspace.indexOf('id="members"')).toBeLessThan(
+      workspace.indexOf("Pending invitations"),
+    );
+    expect(workspace).toContain("Restricted workspace registration");
+    expect(workspace).not.toContain('id="profile"');
+    expect(workspace).not.toContain("Personal provider access");
+    expect(workspace).not.toContain("Personal connected clients");
+    expect(memberWorkspace).not.toContain("Restricted workspace registration");
+    expect(personal).toContain('id="profile"');
+    expect(personal).toContain("Personal provider access");
+    expect(personal).toContain("Personal connected clients");
+    expect(personal).not.toContain("Restricted workspace registration");
+    expect(personal).not.toContain('id="members"');
   });
 
   it("keeps GitHub and selected factory connectors available if integration details fail", async () => {
