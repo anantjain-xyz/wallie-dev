@@ -1,6 +1,7 @@
 import Link from "next/link";
 
-import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
+import { PAGE_HEADER_TITLE_CLASS, PageContainer, PageHeader } from "@/components/ui/page-shell";
+import { FactoryAuthoringFocus } from "@/features/factories/factory-authoring-focus";
 import {
   AgentDirectoryDraftScope,
   AgentDirectoryFactorySelector,
@@ -20,6 +21,7 @@ export default async function AgentsPage({
     factory?: string | string[];
     after?: string | string[];
     q?: string | string[];
+    new?: string | string[];
   }>;
 }) {
   const [{ workspaceSlug }, query] = await Promise.all([params, searchParams]);
@@ -35,62 +37,116 @@ export default async function AgentsPage({
 
   const { factory, canEditPrompt, workspaceId } = scope;
   const { q, after } = agentListQuery(query);
+  const factoryQuery = { factory: factory.id };
+  const directoryQuery = { ...factoryQuery, q };
+  const selector = (
+    <AgentDirectoryFactorySelector factories={factories} selectedValue={factory.id} />
+  );
+
+  if (canEditPrompt && query.new === "1") {
+    return (
+      <AgentDirectoryDraftScope>
+        <PageContainer className="pt-5 sm:pt-10">
+          <PageHeader
+            actions={selector}
+            actionsRightOnDesktop
+            description="Creates an unpublished prompt revision."
+            eyebrow={
+              <Link
+                className="underline underline-offset-4"
+                href={`${workspaceAgentsPath(workspaceSlug, { ...directoryQuery, after })}#new-agent`}
+              >
+                Back to agents
+              </Link>
+            }
+            eyebrowAsPlain
+            title={
+              <h1
+                className={`${PAGE_HEADER_TITLE_CLASS} scroll-mt-24`}
+                id="new-agent"
+                tabIndex={-1}
+              >
+                New agent
+              </h1>
+            }
+            titleAsChild
+          />
+          <FactoryAuthoringFocus target="new-agent" />
+          <AgentPromptForm
+            factoryId={factory.id}
+            form={{ kind: "create" }}
+            key={factory.id}
+            listQuery={{ q, after }}
+            workspaceId={workspaceId}
+            workspaceSlug={workspaceSlug}
+          />
+        </PageContainer>
+      </AgentDirectoryDraftScope>
+    );
+  }
+
   const { agents, nextAfterId, implementationAgentId, usesFactoryDefault } = await loadAgentsList(
     scope,
     { afterId: after, search: q },
   );
-  const factoryQuery = { factory: factory.id };
-  const directoryQuery = { ...factoryQuery, q };
+  const empty = !agents.length && !q && !after;
+  const newAgent = canEditPrompt ? (
+    <Link
+      className="ui-button ui-button-primary"
+      href={`${workspaceAgentsPath(workspaceSlug, { ...directoryQuery, after, new: "1" })}#new-agent`}
+      id="new-agent"
+    >
+      New agent
+    </Link>
+  ) : null;
 
-  const directory = (
+  return (
     <PageContainer className="pt-5 sm:pt-10">
       <PageHeader
         title="Agents"
-        description="Agents are named sets of instructions. The published definition sets the execution harness, such as Codex or Claude Code."
         actions={
           <>
-            <AgentDirectoryFactorySelector factories={factories} selectedValue={factory.id} />
-            {canEditPrompt ? (
-              <Link className="ui-button ui-button-primary" href="#new-agent">
-                New agent
-              </Link>
-            ) : null}
+            {selector}
+            {!empty ? newAgent : null}
           </>
         }
         actionsRightOnDesktop
       />
+      {newAgent ? <FactoryAuthoringFocus target="new-agent" /> : null}
       <div className="space-y-8">
         <section aria-label="Factory agents" className="ui-sheet divide-y divide-border">
-          <form
-            action={workspaceAgentsPath(workspaceSlug)}
-            className="flex flex-wrap items-end gap-2 px-4 py-4 sm:px-5"
-            key={`${factory.id}:${q ?? ""}`}
-            method="get"
-            role="search"
-          >
-            <input name="factory" type="hidden" value={factory.id} />
-            <label className="min-w-0 flex-1 basis-52 space-y-1.5">
-              <span className="block type-label text-foreground">
-                Search agents by name or slug
-              </span>
-              <input
-                autoComplete="off"
-                className="ui-input"
-                defaultValue={q}
-                maxLength={120}
-                name="q"
-                type="search"
-              />
-            </label>
-            <button className="ui-button" type="submit">
-              Search
-            </button>
-            {q && (
-              <Link className="ui-button" href={workspaceAgentsPath(workspaceSlug, factoryQuery)}>
-                Clear search
-              </Link>
-            )}
-          </form>
+          {!empty && (
+            <form
+              action={workspaceAgentsPath(workspaceSlug)}
+              className="flex flex-wrap items-end gap-2 px-4 py-4 sm:px-5"
+              key={`${factory.id}:${q ?? ""}`}
+              method="get"
+              role="search"
+            >
+              <input name="factory" type="hidden" value={factory.id} />
+              <label className="min-w-0 flex-1 basis-52 space-y-1.5">
+                <span className="block type-label text-foreground">
+                  Search agents by name or slug
+                </span>
+                <input
+                  autoComplete="off"
+                  className="ui-input"
+                  defaultValue={q}
+                  maxLength={120}
+                  name="q"
+                  type="search"
+                />
+              </label>
+              <button className="ui-button" type="submit">
+                Search
+              </button>
+              {q && (
+                <Link className="ui-button" href={workspaceAgentsPath(workspaceSlug, factoryQuery)}>
+                  Clear search
+                </Link>
+              )}
+            </form>
+          )}
           {agents.length ? (
             <ul className="divide-y divide-border">
               {agents.map((agent) => (
@@ -123,13 +179,16 @@ export default async function AgentsPage({
               ))}
             </ul>
           ) : (
-            <p className="type-secondary px-4 py-5 text-muted sm:px-5">
-              {after
-                ? "No more agents on this page."
-                : q
-                  ? "No matching agents."
-                  : "No agents in this factory yet."}
-            </p>
+            <div className="space-y-3 px-4 py-5 sm:px-5">
+              <p className="type-secondary text-muted">
+                {after
+                  ? "No more agents on this page."
+                  : q
+                    ? "No matching agents."
+                    : "No agents in this factory yet."}
+              </p>
+              {empty ? newAgent : null}
+            </div>
           )}
           {after || nextAfterId ? (
             <div className="flex flex-wrap gap-2 px-4 py-3 sm:px-5">
@@ -155,19 +214,7 @@ export default async function AgentsPage({
             </div>
           ) : null}
         </section>
-        {canEditPrompt && (
-          <PageSection anchorId="new-agent" title="Create an agent">
-            <AgentPromptForm
-              factoryId={factory.id}
-              form={{ kind: "create" }}
-              key={factory.id}
-              workspaceId={workspaceId}
-              workspaceSlug={workspaceSlug}
-            />
-          </PageSection>
-        )}
       </div>
     </PageContainer>
   );
-  return <AgentDirectoryDraftScope>{directory}</AgentDirectoryDraftScope>;
 }

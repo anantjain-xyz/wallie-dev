@@ -149,6 +149,7 @@ it("suggests an editable identifier and retries a generated collision without ch
   vi.stubGlobal("fetch", fetch);
   render(<AgentPromptForm {...scope} form={{ kind: "create" }} />);
   fireEvent.change(screen.getByLabelText("Agent name"), { target: { value: "Rélease Review" } });
+  fireEvent.click(screen.getByText("Advanced", { exact: true }));
   const identifier = screen.getByLabelText("Identifier");
   expect(identifier).toHaveValue("release-review");
   fireEvent.change(identifier, { target: { value: "weekly-review" } });
