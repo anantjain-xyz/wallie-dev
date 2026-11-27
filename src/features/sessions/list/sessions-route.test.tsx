@@ -1,10 +1,16 @@
+import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import SessionsRoutePage from "@/app/w/[workspaceSlug]/(app)/sessions/page";
 import type { FactorySelectionOption } from "@/features/factories/factory-selection";
 
-const mocked = vi.hoisted(() => ({ factories: vi.fn(), load: vi.fn(), page: vi.fn() }));
+const mocked = vi.hoisted(() => ({
+  context: vi.fn(),
+  factories: vi.fn(),
+  load: vi.fn(),
+  page: vi.fn(),
+}));
 
 vi.mock("@/features/factories/factory-options-data", () => ({
   loadWorkspaceFactoryOptions: mocked.factories,
@@ -12,6 +18,10 @@ vi.mock("@/features/factories/factory-options-data", () => ({
 vi.mock("@/features/factories/factory-selector", () => ({ FactorySelector: () => null }));
 vi.mock("@/features/sessions/list/data", () => ({ loadSessionListPageData: mocked.load }));
 vi.mock("@/features/sessions/list/sessions-page", () => ({ SessionsPage: mocked.page }));
+vi.mock("@/features/workspaces/authenticated-context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/workspaces/authenticated-context")>()),
+  loadAuthenticatedWorkspaceContext: mocked.context,
+}));
 
 const payments: FactorySelectionOption = {
   id: "payments-id",
@@ -38,8 +48,33 @@ async function renderRoute(factory?: string | string[]) {
 describe("Sessions ledger factory selection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocked.context.mockResolvedValue({
+      currentMember: { kind: "human", is_active: true, role: "member" },
+    });
     mocked.load.mockResolvedValue({});
-    mocked.page.mockReturnValue(<p>Ledger results</p>);
+    mocked.page.mockImplementation(({ factorySelector }: { factorySelector: ReactNode }) => (
+      <>
+        {factorySelector}
+        <p>Ledger results</p>
+      </>
+    ));
+  });
+
+  it.each(["owner", "admin"])(
+    "links a workspace %s to Settings even with one factory",
+    async (role) => {
+      mocked.context.mockResolvedValue({ currentMember: { kind: "human", is_active: true, role } });
+      mocked.factories.mockResolvedValue([defaultFactory]);
+      const html = await renderRoute();
+      expect(html).toContain(
+        'href="/w/acme/settings?category=workspace#factories">Manage factories',
+      );
+    },
+  );
+
+  it("does not show workspace factory management to a factory-only manager", async () => {
+    mocked.factories.mockResolvedValue([{ ...payments, canManage: true }]);
+    expect(await renderRoute(payments.id)).not.toContain("Manage factories");
   });
 
   it("prefers an accessible active default and allows the unscoped preferences", async () => {

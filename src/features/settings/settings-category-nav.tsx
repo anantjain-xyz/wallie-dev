@@ -27,7 +27,9 @@ const HASH_ROUTES: Record<string, SettingsHashRoute> = {
   "connector-resources": { anchor: "connector-resources", category: "integrations" },
   "coding-agent": { anchor: "runtime", category: "integrations" },
   "danger-zone": { anchor: "danger-zone", category: "workspace" },
+  factories: { anchor: "factories", category: "workspace" },
   "factory-configuration": { anchor: "factory-configuration", category: "integrations" },
+  "factory-setup": { anchor: "factory-setup", category: "workspace" },
   github: { anchor: "github", category: "integrations" },
   linear: { anchor: "linear", category: "integrations" },
   "linear-routing": { anchor: "linear", category: "integrations" },
@@ -68,6 +70,7 @@ const SETTINGS_CATEGORY_SUBMENUS: Record<
   ],
   workspace: [
     { id: "workspace", label: "Workspace" },
+    { id: "factories", label: "Factories" },
     { id: "members", label: "Team access" },
     { id: "profile", label: "Your profile" },
     { id: "connected-clients", label: "Connected clients" },
@@ -119,6 +122,7 @@ export function SettingsCategoryNav({
   const router = useRouter();
   const search = useSearchParams().toString();
   const [activeAnchor, setActiveAnchor] = useState<string | null>(null);
+  const activeSection = activeAnchor === "factory-setup" ? "factories" : activeAnchor;
   const [jumpOpen, setJumpOpen] = useState(false);
   const jumpId = useId();
   const reachTarget = useCallback((target: HTMLElement) => {
@@ -127,7 +131,9 @@ export function SettingsCategoryNav({
     setActiveAnchor(target.id);
     setJumpOpen(false);
     window.requestAnimationFrame(() => {
-      if (target.isConnected) target.scrollIntoView({ block: "start" });
+      window.requestAnimationFrame(() => {
+        if (target.isConnected) target.scrollIntoView({ block: "start" });
+      });
     });
   }, []);
 
@@ -250,8 +256,8 @@ export function SettingsCategoryNav({
         {settingsCategorySubmenu(activeCategory, canManage).map((item) => (
           <li key={item.id}>
             <a
-              aria-current={item.id === activeAnchor ? "location" : undefined}
-              className={`settings-anchor min-h-9 lg:min-h-0 ${item.id === activeAnchor ? "settings-anchor-active" : ""}`}
+              aria-current={item.id === activeSection ? "location" : undefined}
+              className={`settings-anchor min-h-9 lg:min-h-0 ${item.id === activeSection ? "settings-anchor-active" : ""}`}
               href={`#${item.id}`}
               onClick={(event) => {
                 if (

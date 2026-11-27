@@ -225,6 +225,11 @@ export function workspaceSettingsPath(workspaceSlug: string, query?: Record<stri
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/settings`, query);
 }
 
+export function workspaceFactoriesPath(workspaceSlug: string, factory?: string) {
+  const path = workspaceSettingsPath(workspaceSlug, { category: "workspace", factory });
+  return `${path}#${factory ? "factory-setup" : "factories"}`;
+}
+
 export function workspaceAutomationPreviewPath(
   workspaceSlug: string,
   query?: {

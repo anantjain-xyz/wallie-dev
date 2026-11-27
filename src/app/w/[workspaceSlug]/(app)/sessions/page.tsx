@@ -7,10 +7,14 @@ import {
   FACTORY_QUERY_PARAM,
   resolveFactorySelection,
 } from "@/features/factories/factory-selection";
-import { FactorySelector } from "@/features/factories/factory-selector";
+import { SessionsFactoryControls } from "@/features/sessions/components/sessions-factory-controls";
 import { SessionsViewTitle } from "@/features/sessions/components/sessions-view-navigation";
 import { loadSessionListPageData } from "@/features/sessions/list/data";
 import { SessionsPage } from "@/features/sessions/list/sessions-page";
+import {
+  isWorkspaceOperator,
+  loadAuthenticatedWorkspaceContext,
+} from "@/features/workspaces/authenticated-context";
 import { workspaceSessionsPath } from "@/lib/routes";
 import {
   readSessionSearchContinuation,
@@ -27,7 +31,10 @@ type SessionsPageProps = {
 
 export default async function SessionsRoutePage({ params, searchParams }: SessionsPageProps) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
-  const factories = await loadWorkspaceFactoryOptions(workspaceSlug);
+  const [factories, { currentMember }] = await Promise.all([
+    loadWorkspaceFactoryOptions(workspaceSlug),
+    loadAuthenticatedWorkspaceContext(workspaceSlug),
+  ]);
   const requested = search[FACTORY_QUERY_PARAM];
   const activeFactories = factories.filter((factory) => factory.status === "active");
   const selection =
@@ -36,15 +43,27 @@ export default async function SessionsRoutePage({ params, searchParams }: Sessio
         ? resolveFactorySelection(activeFactories, undefined, { useFirstVisible: true })
         : { kind: "all" as const }
       : resolveFactorySelection(factories, requested);
+  const canManageFactories = isWorkspaceOperator(currentMember);
+  const factorySelector =
+    factories.length > 0 || canManageFactories ? (
+      <SessionsFactoryControls
+        canManageFactories={canManageFactories}
+        factories={factories}
+        selectedValue={
+          selection.kind === "factory"
+            ? selection.factory.id
+            : factories.length === 0
+              ? "unavailable"
+              : selection.kind
+        }
+        workspaceSlug={workspaceSlug}
+      />
+    ) : null;
   if (selection.kind === "unavailable" || factories.length === 0)
     return (
       <PageContainer className="pt-5 sm:pt-10">
         <PageHeader
-          actions={
-            factories.length > 0 && (
-              <FactorySelector allowAll factories={factories} selectedValue="unavailable" />
-            )
-          }
+          actions={factorySelector}
           actionsRightOnDesktop
           title={
             <SessionsViewTitle factory="unavailable" view="list" workspaceSlug={workspaceSlug} />
@@ -103,13 +122,7 @@ export default async function SessionsRoutePage({ params, searchParams }: Sessio
       factoryQuery={factoryQuery}
       factoryId={factory?.id}
       factoryName={factory?.name}
-      factorySelector={
-        <FactorySelector
-          allowAll
-          factories={factories}
-          selectedValue={factory ? factory.id : "all"}
-        />
-      }
+      factorySelector={factorySelector}
       initialData={data}
       initialNow={initialNow}
       readOnly={selection.kind === "all"}

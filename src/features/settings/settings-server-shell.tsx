@@ -51,6 +51,7 @@ type SettingsServerShellProps = {
   searchState: { codexStatus: string | null; githubStatus: string | null };
   setupData: Promise<SettingsSetupData>;
   usage: Promise<WorkspaceUsageData>;
+  workspaceFactories?: ReactNode;
   workspaceInvitations: Promise<WorkspaceInvitationsSnapshot>;
   workspaceProfile?: Promise<SettingsWorkspaceProfile>;
 };
@@ -291,6 +292,7 @@ function WorkspaceCategory(props: SettingsServerShellProps) {
   return (
     <div className="space-y-10 sm:space-y-12">
       <WorkspaceIdentityIsland initialData={props.initialData} />
+      {props.workspaceFactories}
       <WorkspaceMemberSettings
         initialData={props.initialData}
         invitations={props.workspaceInvitations}

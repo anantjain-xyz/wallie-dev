@@ -15,7 +15,7 @@ export const SETTINGS_CATEGORY_LINKS: ReadonlyArray<{
     label: "Integrations",
   },
   {
-    description: "Workspace identity, team access, and personal settings",
+    description: "Workspace identity, factories, team access, and personal settings",
     id: "workspace",
     label: "Workspace",
   },
