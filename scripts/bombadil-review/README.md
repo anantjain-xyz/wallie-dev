@@ -1,6 +1,7 @@
 # Manual Bombadil review check
 
-Run this from the repository root in a disposable Linux development VM with Docker,
+Run this from the repository root in a disposable Linux development VM with local Docker Engine
+28+ at `/var/run/docker.sock`,
 Supabase CLI, `psql`, `socat`, `ip`, unprivileged user/network namespaces, and Chrome or
 Chromium. Install Wallie's usual dependencies with `pnpm install --frozen-lockfile`.
 Ports 55320–55329 must be free on the Docker host. This does not touch the normal
@@ -17,8 +18,9 @@ chmod +x "$tool/bombadil"
 BOMBADIL="$tool/bombadil" CHROME=chromium bash scripts/bombadil-review/run.sh
 ```
 
-The launcher uses the Wallie source at `HEAD` and takes about a minute or two after
-the Supabase images are cached. Use `approve`, `reject`, or `negative` as an argument
+The launcher uses the Wallie source at `HEAD` and takes a few minutes after
+the Supabase images are cached. It warms the Sessions list before the bounded
+40-second browser trace. Use `approve`, `reject`, or `negative` as an argument
 to run just one case. The negative control deliberately expects two new Build runs
 instead of one. Running `negative` alone preserves Bombadil's exit code 2; `all`
 expects that code and the named property violation. A run without an accepted exact review and
@@ -35,8 +37,9 @@ against the review heading after a real reload.
 
 **What's faked:** the synthetic reviewer signs in before tracing. The existing
 release-test transport uses a local Git repo and fake provider/agent output, not a
-live integration or the worker daemon. The browser and app have only loopback
-network access, with tunnels to the disposable Supabase API and DB. Chrome uses a
+live integration or the worker daemon. Supabase ports publish on host loopback
+only. The browser and app have only loopback access in their namespace, with
+tunnels to that disposable API and DB. Chrome uses a
 throwaway profile; the fixture uses fallback fonts. The spec only offers the
 review decision, fixed rejection text, reload, and navigation between this session
 and Sessions. It does not run Bombadil's default generators.
@@ -56,6 +59,8 @@ Set `results` to the printed directory and use `firstViolationState` from
 offline; a fresh invocation reseeds the DB and samples new actions.
 Bombadil's best-effort `--reproduce` needs the original starting state, spec and
 browser options; an old trace alone cannot replay the disposed database or login.
+If a forced kill prevented cleanup, run `supabase stop --project-id <printed-project-id> --no-backup`
+for the printed fixture project, then remove its same-named Docker network if it remains.
 For optional static checking, use the v0.8.0 release's `bombadil-npm-package.tar.gz`
 declarations in a scratch directory and TypeScript's `--allowJs --checkJs --strict`
 on the spec with its generated scenario JSON.

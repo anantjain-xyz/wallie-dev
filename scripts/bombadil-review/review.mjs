@@ -210,6 +210,14 @@ async function run(name) {
       void poll();
     }, scenario);
     const page = context.pages()[0];
+    const directory = await page.goto(origin + listPath, {
+      timeout: 45_000,
+      waitUntil: "domcontentloaded",
+    });
+    assert(
+      directory?.ok() && new URL(page.url()).pathname === listPath,
+      "The local Sessions list did not become ready",
+    );
     const navigation = await page.goto(origin + sessionPath, {
       timeout: 90_000,
       waitUntil: "domcontentloaded",
@@ -231,6 +239,7 @@ async function run(name) {
     );
     const trace = join(results, `${name}.bin`);
     const testStart = performance.now();
+    const traceSeconds = 40;
     let exit = 0;
     let driverError = "";
     try {
@@ -242,7 +251,7 @@ async function run(name) {
           "--remote-debugger",
           "http://127.0.0.1:55301",
           "--time-limit",
-          "22s",
+          `${traceSeconds}s`,
           "--exit-on-violation",
           "--instrument-javascript=",
           "--width",
@@ -254,7 +263,7 @@ async function run(name) {
           origin + sessionPath,
           spec,
         ],
-        { timeout: 32_000, maxBuffer: 2 * 1024 ** 2 },
+        { timeout: (traceSeconds + 10) * 1000, maxBuffer: 2 * 1024 ** 2 },
       );
     } catch (error) {
       exit = error.code ?? error.signal ?? 1;
@@ -293,8 +302,9 @@ async function run(name) {
       )
         reloadMatches++;
     }
-    const { state: persisted } = await read();
-    const accepted = persisted.approval + persisted.feedback;
+    const finalView = states.at(-1).snapshots.find((snapshot) => snapshot.name === "review")?.value;
+    const { state: dbAtTraceEnd } = await read();
+    const accepted = dbAtTraceEnd.approval + dbAtTraceEnd.feedback;
     const summary = {
       exit,
       seconds,
@@ -305,7 +315,7 @@ async function run(name) {
       accepted,
       violations: [...violations],
       firstViolationState,
-      persisted,
+      dbAtTraceEnd,
     };
     console.log(name, JSON.stringify(summary));
     await writeFile(join(results, `${name}.json`), JSON.stringify(summary, null, 2) + "\n");
@@ -317,11 +327,11 @@ async function run(name) {
     );
     assert.equal(await worker.outcome, 0, `${name}: the deterministic worker did not complete`);
     assert(
-      reloadMatches > 0 || name === "negative",
-      `${name}: no matching review after post-decision reload`,
+      finalView?.matchesReload || name === "negative",
+      `${name}: the review did not settle on the persisted artifact after reload`,
     );
     assert(
-      persisted.finishedJobs === 1 && matchesDecision(persisted, decision, 1),
+      dbAtTraceEnd.finishedJobs === 1 && matchesDecision(dbAtTraceEnd, decision, 1),
       `${name}: the scoped database did not record exactly the expected transition`,
     );
   } catch (error) {
