@@ -673,6 +673,6 @@ it("keeps approval disabled when review evidence is unavailable", () => {
   renderBar({ sessionId: "session" });
   expect(screen.getByRole("button", { name: "Approve & advance" })).toBeDisabled();
   expect(screen.getByText("Could not confirm blocking requests.")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Refresh review" }));
+  fireEvent.click(screen.getByRole("button", { name: "Reload review comments" }));
   expect(approvalState.refresh).toHaveBeenCalled();
 });

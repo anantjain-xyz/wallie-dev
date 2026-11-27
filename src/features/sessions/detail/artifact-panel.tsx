@@ -8,6 +8,7 @@ import {
   type RefObject,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -16,6 +17,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 
 import { useChangeMotion } from "@/components/ui/use-change-motion";
 import { CheckIcon } from "@/components/shared/icons/check-icon";
+import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
 import { Spinner } from "@/components/shared/spinner";
 import { TimeDisplay } from "@/components/shared/time-display";
 import { useOptionalToast } from "@/components/ui/toast";
@@ -27,7 +29,12 @@ import type {
 import { cn } from "@/lib/utils";
 import { InlineArtifactReview } from "@/features/sessions/review/inline-artifact-review";
 import type { ReviewSessionReadOnlyReason } from "@/features/sessions/review/comment-access";
-import { SCREENSHOT_EVIDENCE_PARAM } from "@/features/wallie/browser-evidence-contracts";
+import {
+  isBrowserScreenshotHash,
+  parseBrowserRecordingHash,
+  SCREENSHOT_EVIDENCE_PARAM,
+} from "@/features/wallie/browser-evidence-contracts";
+import { useBrowserEvidenceHash } from "@/features/wallie/browser-evidence-client";
 import { ArtifactEvidenceInspector } from "@/features/wallie/artifact-evidence-inspector";
 
 export type DisplayedArtifactIdentity = Pick<
@@ -64,6 +71,7 @@ type ArtifactPanelProps = {
    */
   rejectionCount?: number;
   retainBriefFor?: { artifactId: string; version: number };
+  versionNamedAbove?: boolean;
   /** Fires when the reviewer is (or is not) viewing a non-latest version. */
   onViewingHistoricalChange?: (viewingHistorical: boolean) => void;
   /** Identity of the body actually presented, including cached or lazily loaded output. */
@@ -91,8 +99,9 @@ type CachedArtifactBody = Omit<SessionArtifactBody, "sanitizedHtml"> & {
   sanitizedHtml?: string | null;
 };
 
-const ARTIFACT_TABS: ArtifactTab[] = ["rendered", "raw", "versions", "compare"];
-const REVIEW_ARTIFACT_TABS: ArtifactTab[] = ["brief", "rendered", "compare", "raw", "versions"];
+const VIEW_TABS = ["rendered", "raw"] as const;
+const REVIEW_VIEW_TABS = ["brief", "rendered", "raw"] as const;
+const HISTORY_TABS = ["versions", "compare"] as const;
 export const ARTIFACT_ID_PARAM = "artifactId";
 export const ARTIFACT_VERSION_PARAM = "artifactVersion";
 export const ARTIFACT_STAGE_PARAM = "artifactStage";
@@ -299,6 +308,7 @@ function ArtifactPanelStage({
   sessionId,
   specification = false,
   stageSlug,
+  versionNamedAbove = false,
 }: ArtifactPanelProps & {
   bodyCache: Map<string, CachedArtifactBody>;
   currentStageKey: string;
@@ -461,11 +471,12 @@ function ArtifactPanelStage({
     ((isAwaitingReview && !readOnlyReason) ||
       (retainBriefFor?.artifactId === visibleBody.id &&
         retainBriefFor.version === visibleBody.version));
-  const tabs = hasReviewBrief ? REVIEW_ARTIFACT_TABS : ARTIFACT_TABS;
+  const viewTabs = hasReviewBrief ? REVIEW_VIEW_TABS : VIEW_TABS;
+  const tabs: ArtifactTab[] = [...viewTabs, ...HISTORY_TABS];
   const defaultTab = hasReviewBrief && !searchParams.has("reviewThread") ? "brief" : "rendered";
   const activeTab = selectedTab && tabs.includes(selectedTab) ? selectedTab : defaultTab;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     onViewingHistoricalChange?.(viewingHistorical);
     return () => onViewingHistoricalChange?.(false);
   }, [onViewingHistoricalChange, viewingHistorical]);
@@ -1145,7 +1156,7 @@ function ArtifactPanelStage({
   const displayedArtifactId = bodyHasContent ? visibleBody.id : undefined;
   const displayedArtifactStage = bodyHasContent ? visibleBody.stageSlug : undefined;
   const displayedArtifactVersion = bodyHasContent ? visibleBody.version : undefined;
-  useEffect(() => {
+  useLayoutEffect(() => {
     onDisplayedArtifactChange?.(
       displayedArtifactStage && displayedArtifactVersion !== undefined
         ? {
@@ -1181,42 +1192,62 @@ function ArtifactPanelStage({
     compare: hasReviewBrief ? "Compare versions" : "Compare",
   };
 
-  const artifactLabel = specification ? "Specification" : `${stageSlug} artifact`;
-  const versionHeading =
-    viewingVersion === null
-      ? artifactLabel
-      : `${artifactLabel} · version ${viewingVersion}${viewingIsLatest ? " (latest)" : ""}`;
-
   return (
     <div>
-      <h3 className="sr-only" id="artifact-version-heading">
-        {versionHeading}
-      </h3>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+      {!versionNamedAbove && activeTab !== "versions" && viewingVersion !== null ? (
+        <p className="mb-2 text-xs font-medium text-muted">
+          v{viewingVersion}
+          {viewingIsLatest ? " · Latest" : " · Historical"}
+        </p>
+      ) : null}
+      <div className="mb-3 flex flex-wrap items-end gap-x-2 gap-y-1 sm:gap-x-4">
         <div
           aria-label={specification ? "Specification views" : "Artifact views"}
-          className="flex flex-wrap gap-1"
+          className="flex min-w-0 flex-wrap items-start gap-x-2 gap-y-1 sm:gap-x-4"
           role="tablist"
         >
-          {tabs.map((tab) => (
-            <TabButton
-              key={tab}
-              active={activeTab === tab}
-              controls={`artifact-${tab}-panel`}
-              label={tabLabels[tab]}
-              onClick={() => selectTab(tab)}
-              onKeyDown={handleTabKeyDown}
-              ref={(node) => {
-                if (node) tabRefs.current.set(tab, node);
-                else tabRefs.current.delete(tab);
-              }}
-              tabId={`artifact-${tab}-tab`}
-            />
+          {(
+            [
+              { label: "View", tabs: viewTabs },
+              { label: "History", tabs: HISTORY_TABS },
+            ] as const
+          ).map((group) => (
+            <div aria-label={group.label} key={group.label} role="group">
+              <span aria-hidden="true" className="type-annotation block text-muted">
+                {group.label}
+              </span>
+              <div className="flex flex-wrap gap-1">
+                {group.tabs.map((tab) => (
+                  <TabButton
+                    key={tab}
+                    active={activeTab === tab}
+                    controls={`artifact-${tab}-panel`}
+                    label={tabLabels[tab]}
+                    shortLabel={
+                      tab === "brief"
+                        ? "Brief"
+                        : tab === "rendered" && hasReviewBrief
+                          ? "Full"
+                          : tab === "compare"
+                            ? "Compare"
+                            : undefined
+                    }
+                    onClick={() => selectTab(tab)}
+                    onKeyDown={handleTabKeyDown}
+                    ref={(node) => {
+                      if (node) tabRefs.current.set(tab, node);
+                      else tabRefs.current.delete(tab);
+                    }}
+                    tabId={`artifact-${tab}-tab`}
+                  />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
         {activeTab === "brief" ? (
           <button
-            className="min-h-9 rounded-[4px] border border-border px-3 text-xs font-medium hover:bg-control-muted"
+            className="min-h-11 rounded-[4px] px-2 text-xs text-muted hover:text-foreground hover:underline focus-visible:outline-accent sm:min-h-8"
             onClick={() => {
               setSelectedTab("rendered");
               setOpenComments(true);
@@ -1227,25 +1258,15 @@ function ArtifactPanelStage({
             Comments
           </button>
         ) : null}
-      </div>
-
-      {activeTab !== "versions" && visibleBody?.id ? (
-        <div className="mb-3">
-          <ArtifactEvidenceInspector
-            source={{
-              kind: "review",
-              sessionId,
-              artifactId: visibleBody.id,
-              artifactLinkQuery: new URLSearchParams({
-                [ARTIFACT_STAGE_PARAM]: stageSlug,
-                [ARTIFACT_ID_PARAM]: visibleBody.id,
-                [ARTIFACT_VERSION_PARAM]: String(visibleBody.version),
-                [SCREENSHOT_EVIDENCE_PARAM]: "1",
-              }).toString(),
-            }}
+        {activeTab !== "versions" && visibleBody?.id ? (
+          <ArtifactEvidenceTools
+            artifactId={visibleBody.id}
+            sessionId={sessionId}
+            stageSlug={stageSlug}
+            version={visibleBody.version}
           />
-        </div>
-      ) : null}
+        ) : null}
+      </div>
 
       {activeTab === "versions" ? (
         <div aria-labelledby="artifact-versions-tab" id="artifact-versions-panel" role="tabpanel">
@@ -1260,7 +1281,7 @@ function ArtifactPanelStage({
             <EmptyHint text="No artifact versions recorded for this stage." />
           ) : null}
           {metadata && metadata.length > 0 ? (
-            <ul aria-labelledby="artifact-version-heading" className="space-y-2">
+            <ul aria-label="Artifact versions" className="space-y-2">
               {metadata.map((artifact) => {
                 const isLatest = artifact.id
                   ? artifact.id === latestArtifactId
@@ -1362,7 +1383,6 @@ function ArtifactPanelStage({
               displayMode={activeTab}
               initialFormattedArtifact={initialFormattedArtifact}
               initialFormattedArtifactKey={initialFormattedArtifactKey}
-              initialNow={initialNow}
               onCopyResult={(result) => {
                 if (result === "success") {
                   pushToast({
@@ -1379,7 +1399,6 @@ function ArtifactPanelStage({
                 }
               }}
               sessionId={sessionId}
-              showLatestBadge={viewingIsLatest}
               historical={persistStageInUrl || !viewingIsLatest}
               openComments={openComments}
               onShowRaw={showRawArtifact}
@@ -1396,24 +1415,79 @@ function ArtifactPanelStage({
   );
 }
 
+function ArtifactEvidenceTools({
+  artifactId,
+  sessionId,
+  stageSlug,
+  version,
+}: {
+  artifactId: string;
+  sessionId: string;
+  stageSlug: string;
+  version: number;
+}) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  const hash = useBrowserEvidenceHash();
+  useLayoutEffect(() => {
+    if (ref.current && (isBrowserScreenshotHash(hash) || parseBrowserRecordingHash(hash))) {
+      ref.current.open = true;
+    }
+  }, [hash, artifactId]);
+
+  return (
+    <details className="group/evidence min-w-0 open:w-full" ref={ref}>
+      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-1 rounded-[4px] px-2 text-xs text-muted hover:text-foreground focus-visible:outline-accent sm:min-h-8 [&::-webkit-details-marker]:hidden">
+        Evidence
+        <ChevronDownIcon aria-hidden="true" className="size-3.5 group-open/evidence:rotate-180" />
+      </summary>
+      <div className="hidden min-w-0 border-t border-border py-3 group-open/evidence:block">
+        <ArtifactEvidenceInspector
+          source={{
+            kind: "review",
+            sessionId,
+            artifactId,
+            artifactLinkQuery: new URLSearchParams({
+              [ARTIFACT_STAGE_PARAM]: stageSlug,
+              [ARTIFACT_ID_PARAM]: artifactId,
+              [ARTIFACT_VERSION_PARAM]: String(version),
+              [SCREENSHOT_EVIDENCE_PARAM]: "1",
+            }).toString(),
+          }}
+        />
+      </div>
+    </details>
+  );
+}
+
 type TabButtonProps = {
   active: boolean;
   controls: string;
   label: string;
+  shortLabel?: string;
   onClick: () => void;
   onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
   ref: React.Ref<HTMLButtonElement>;
   tabId: string;
 };
 
-function TabButton({ active, controls, label, onClick, onKeyDown, ref, tabId }: TabButtonProps) {
+function TabButton({
+  active,
+  controls,
+  label,
+  shortLabel,
+  onClick,
+  onKeyDown,
+  ref,
+  tabId,
+}: TabButtonProps) {
   return (
     <button
       ref={ref}
       aria-controls={controls}
+      aria-label={shortLabel ? label : undefined}
       aria-selected={active}
       className={cn(
-        "rounded-[4px] px-2.5 py-1 text-xs font-medium",
+        "min-h-11 rounded-[4px] px-2 py-1 text-xs font-medium focus-visible:outline-accent sm:min-h-8 sm:px-2.5",
         active ? "bg-control-muted text-foreground" : "text-muted hover:text-foreground",
       )}
       id={tabId}
@@ -1423,7 +1497,7 @@ function TabButton({ active, controls, label, onClick, onKeyDown, ref, tabId }: 
       tabIndex={active ? 0 : -1}
       type="button"
     >
-      {label}
+      {shortLabel ?? label}
     </button>
   );
 }
@@ -1434,10 +1508,8 @@ function ArtifactBodyView({
   displayMode,
   initialFormattedArtifact,
   initialFormattedArtifactKey,
-  initialNow,
   onCopyResult,
   sessionId,
-  showLatestBadge,
   historical,
   openComments,
   onShowRaw,
@@ -1448,10 +1520,8 @@ function ArtifactBodyView({
   displayMode: "rendered" | "raw";
   initialFormattedArtifact: ReactNode | null;
   initialFormattedArtifactKey: string | null;
-  initialNow: string;
   onCopyResult: (result: "success" | "failure") => void;
   sessionId: string;
-  showLatestBadge: boolean;
   historical: boolean;
   openComments: boolean;
   onShowRaw: () => void;
@@ -1511,16 +1581,11 @@ function ArtifactBodyView({
 
   return (
     <div>
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <p className="type-annotation uppercase tracking-wide text-muted">
-          v{artifact.version}
-          {showLatestBadge ? " · Latest" : ""} ·{" "}
-          <TimeDisplay initialNow={initialNow} value={artifact.createdAt} />
-        </p>
-        {showRaw && isMarkdown ? (
+      {showRaw && isMarkdown ? (
+        <div className="mb-2 flex justify-end">
           <button
             type="button"
-            className="inline-grid items-center justify-center rounded-[4px] border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-control-muted"
+            className="inline-grid min-h-11 items-center justify-center rounded-[4px] border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-control-muted focus-visible:outline-accent sm:min-h-8"
             aria-disabled={copyPending}
             aria-busy={copyPending}
             onClick={() => {
@@ -1537,8 +1602,8 @@ function ArtifactBodyView({
               </span>
             </span>
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
       {isMarkdown && artifact.id ? (
         <InlineArtifactReview
           key={artifact.id}

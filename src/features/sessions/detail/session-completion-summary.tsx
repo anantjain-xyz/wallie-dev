@@ -1,6 +1,5 @@
 "use client";
 
-import { useChangeMotion } from "@/components/ui/use-change-motion";
 import type { SessionReviewSession } from "@/features/sessions/detail/data";
 
 /** Approval completes the pipeline; it does not prove that a PR merged or deployed. */
@@ -9,13 +8,12 @@ export function SessionCompletionSummary({
 }: {
   session: Pick<SessionReviewSession, "phaseStatus" | "pullRequests">;
 }) {
-  const motionRef = useChangeMotion<HTMLElement>(session.phaseStatus);
   if (session.phaseStatus !== "approved") return null;
 
   const linkedPullRequests = session.pullRequests.filter((pr) => pr.pullRequestUrl);
 
   return (
-    <section ref={motionRef} aria-label="Session result" className="ui-sheet mb-5 p-4 sm:p-5">
+    <section aria-label="Session result" className="ui-sheet mb-5 p-4 sm:p-5">
       <div className="flex items-start gap-3">
         <span
           aria-hidden="true"
@@ -28,7 +26,7 @@ export function SessionCompletionSummary({
             stroke="currentColor"
             strokeWidth="2"
           >
-            <path className="ui-completion-check" pathLength="1" d="m5 12 4 4L19 6" />
+            <path d="m5 12 4 4L19 6" />
           </svg>
         </span>
         <div className="min-w-0 flex-1">

@@ -73,7 +73,9 @@ test("title and archive state render before their delayed responses", async ({ p
   await expect(page.getByRole("button", { name: "Archive" })).toBeEnabled();
 });
 
-test("approve and reject expose optimistic status while delayed", async ({ page }) => {
+test("approve and reject expose pending feedback without treating it as accepted", async ({
+  page,
+}) => {
   await signIn(page, `${workspacePath}/sessions/1`);
 
   const approveGate = delayedResponse();
@@ -95,15 +97,18 @@ test("approve and reject expose optimistic status while delayed", async ({ page 
         id: "a2b2c3d4-0001-4000-8000-000000000001",
         phaseStatus: "in_progress",
         rejectionCount: 0,
-        updatedAt: "2026-07-17T20:02:00.000Z",
+        updatedAt: new Date().toISOString(),
       },
     });
   });
 
-  await page.getByRole("button", { name: "Approve stage" }).click();
-  await expect(page.getByText("Drafting", { exact: true }).first()).toBeVisible();
+  await page.getByRole("button", { name: "Approve Plan" }).click();
+  await expect(page.getByRole("heading", { name: "Review Plan v1" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Plan: Completed" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Approving/ })).toBeDisabled();
   approveGate.release();
+  await expect(page.getByRole("heading", { name: "Plan approved" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Next stage: Queued" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Approving/ })).toBeHidden();
 
   await page.unroute("**/api/sessions/*/phase-action");
@@ -132,10 +137,10 @@ test("approve and reject expose optimistic status while delayed", async ({ page 
     });
   });
 
-  await page.getByRole("button", { name: "Request changes and rerun" }).click();
+  await page.getByRole("button", { name: "Request changes" }).click();
   await page.getByLabel("Feedback for Wallie").fill("Preserve this feedback");
   await page.getByRole("button", { name: "Queue rerun" }).click();
-  await expect(page.getByText("Rejected", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Sending feedback…")).toBeAttached();
   await expect(page.getByRole("button", { name: /Queueing/ })).toBeDisabled();
   await expect(page.getByLabel("Feedback for Wallie")).toHaveValue("Preserve this feedback");
   rejectGate.release();

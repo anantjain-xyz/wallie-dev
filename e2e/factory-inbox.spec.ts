@@ -296,11 +296,11 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
     await stale.goto(originalHref);
     await expect(stale.getByText(defaultReview.body, { exact: true })).toBeVisible();
     await expect(stale.getByText("This review link is no longer current.")).toBeVisible();
-    await expect(stale.getByRole("button", { name: "Approve stage" })).toHaveCount(0);
+    await expect(stale.getByRole("button", { name: /^Approve / })).toHaveCount(0);
     await stale.close();
 
     await defaultLink.press("Enter");
-    const approval = page.getByRole("button", { name: "Approve stage" });
+    const approval = page.getByRole("button", { name: /^Approve / });
     await expect(approval).toBeEnabled();
     const fullArtifact = page.getByRole("tab", { name: "Full artifact" });
     if (await fullArtifact.count()) await fullArtifact.click();

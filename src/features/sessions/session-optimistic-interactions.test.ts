@@ -261,10 +261,11 @@ describe("optimistic session interactions", () => {
       }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Approve stage" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve Plan" }));
 
     expect(screen.getByText("Artifact ready")).toBeTruthy();
-    expect(screen.queryByText("Final-stage approval may also archive the session.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Plan: Completed" })).toBeNull();
+    expect(screen.queryByText("Build queued.")).toBeNull();
     expect((screen.getByRole("button", { name: /Approving/ }) as HTMLButtonElement).disabled).toBe(
       true,
     );
@@ -275,6 +276,7 @@ describe("optimistic session interactions", () => {
     expect(screen.queryByRole("button", { name: "Stop run" })).toBeNull();
 
     await act(async () => releaseResponse());
+    expect(await screen.findByText("Build queued.")).toBeTruthy();
     await waitFor(() =>
       expect((screen.getByRole("button", { name: "Stop run" }) as HTMLButtonElement).disabled).toBe(
         true,
@@ -282,7 +284,7 @@ describe("optimistic session interactions", () => {
     );
   });
 
-  it("disables optimistic Unarchive while terminal approval is pending", async () => {
+  it("keeps archive actions locked without claiming terminal approval while pending", async () => {
     let releaseResponse!: () => void;
     mocked.fetch.mockImplementation(
       () =>
@@ -334,12 +336,14 @@ describe("optimistic session interactions", () => {
       }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Approve stage" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve Build" }));
 
-    const unarchive = screen.getByRole("button", { name: "Unarchive" }) as HTMLButtonElement;
-    expect(unarchive.disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "Unarchive" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Session complete" })).toBeNull();
+    const archive = screen.getByRole("button", { name: "Archive" }) as HTMLButtonElement;
+    expect(archive.disabled).toBe(true);
     expect(mocked.fetch).toHaveBeenCalledTimes(1);
-    fireEvent.click(unarchive);
+    fireEvent.click(archive);
     expect(mocked.fetch).toHaveBeenCalledTimes(1);
 
     await act(async () => releaseResponse());

@@ -463,16 +463,16 @@ async function installSessionOpenProbe(page: Page) {
           body?.textContent?.includes(
             "The checkout path waits on inventory, tax, and shipping before it can show a total.",
           ) &&
-          /v1\s*·\s*Latest/.test(panel?.textContent ?? "");
+          /Review Plan v1/.test(
+            document.getElementById("session-review-handoff-heading")?.textContent ?? "",
+          );
         if (artifactReady) mark("artifact");
         const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
         const enabled = (label: string) =>
           buttons.some(
             (button) => button.innerText.trim() === label && !button.disabled && visible(button),
           );
-        return (
-          stageReady && artifactReady && enabled("Approve stage") && enabled("Request changes")
-        );
+        return stageReady && artifactReady && enabled("Approve Plan") && enabled("Request changes");
       };
       const check = () => {
         if (reviewReady()) {

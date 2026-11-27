@@ -537,7 +537,7 @@ test(journeyTitle, async ({ browser, page, baseURL }, testInfo) => {
     });
     await expect(specification.getByText(draft)).toBeVisible();
     await expect(clarification.getByText(question)).toBeVisible();
-    await expect(page.getByRole("button", { name: "Approve stage" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Approve / })).toHaveCount(0);
     await page.screenshot({
       path: testInfo.outputPath("01-specification-clarification-desktop.png"),
       fullPage: true,
@@ -733,7 +733,7 @@ ${revision}`,
       });
     }
     await expectRevisedScope();
-    await expect(page.getByRole("button", { name: "Approve stage" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: /^Approve / })).toBeEnabled();
 
     await page.getByRole("button", { name: "Conversation", exact: true }).click();
     const conversation = page.getByRole("region", { name: "Conversation", exact: true });
@@ -755,7 +755,7 @@ ${revision}`,
 
     await specification.getByRole("button", { name: /Version 1/ }).click();
     await expect(specification.getByText(draft)).toBeVisible();
-    await expect(page.getByRole("button", { name: "Approve stage" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Approve / })).toHaveCount(0);
     await specification.getByRole("tab", { name: "Versions", exact: true }).click();
     await specification.getByRole("button", { name: /Version 2/ }).click();
     await expectRevisedScope();
@@ -787,7 +787,7 @@ ${revision}`,
     await page.goto(firstReviewPath);
     await expect(page.getByText("This review link is no longer current.")).toBeVisible();
     await expect(specification.getByText(draft)).toBeVisible();
-    await expect(page.getByRole("button", { name: "Approve stage" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Approve / })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Request changes" })).toHaveCount(0);
     const openCurrentReview = page.getByRole("link", { name: "Open current review" });
     await expect(openCurrentReview).toHaveAttribute("href", detail);
@@ -822,7 +822,7 @@ ${revision}`,
       }),
     );
     await expect(page.getByRole("heading", { name: "This page isn’t available" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Approve stage" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Approve / })).toHaveCount(0);
     await page.screenshot({
       path: testInfo.outputPath("09-exact-review-unavailable-desktop.png"),
       fullPage: true,
@@ -833,7 +833,7 @@ ${revision}`,
     if (fixture.triageGraph) {
       await expect(specification.getByText(acceptanceCriterion, { exact: true })).toBeVisible();
     }
-    const approve = page.getByRole("button", { name: "Approve stage" });
+    const approve = page.getByRole("button", { name: /^Approve / });
     await expect(approve).toBeEnabled();
     await page.screenshot({
       path: testInfo.outputPath("08-exact-review-current-desktop.png"),

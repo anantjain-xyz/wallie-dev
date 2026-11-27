@@ -107,9 +107,7 @@ describe("ArtifactPanel", () => {
 
     expect(screen.getByText("Latest formatted")).toBeTruthy();
     expect(screen.queryByText("# Latest")).toBeNull();
-    expect(
-      screen.getByRole("heading", { level: 3, name: /build artifact · version 2/i }),
-    ).toBeTruthy();
+    expect(screen.getByText("v2 · Latest")).toBeTruthy();
     await waitFor(() => expect(fetch).not.toHaveBeenCalled());
   });
 
@@ -574,9 +572,7 @@ describe("ArtifactPanel", () => {
       expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Rendered" })),
     );
     expect(await screen.findByText("Earlier")).toBeTruthy();
-    expect(
-      screen.getByRole("heading", { level: 3, name: /build artifact · version 1$/i }),
-    ).toBeTruthy();
+    expect(screen.getByText("v1 · Historical")).toBeTruthy();
     expect(
       document.querySelectorAll(".artifact-content, .artifact-heading-1").length,
     ).toBeGreaterThan(0);
@@ -1141,9 +1137,7 @@ describe("ArtifactPanel", () => {
         stageSlug: "plan",
       }),
     );
-    await waitFor(() =>
-      expect(screen.getByRole("heading", { level: 3, name: /plan artifact/i })).toBeTruthy(),
-    );
+    await waitFor(() => expect(screen.getByText("Plan formatted")).toBeTruthy());
 
     allowAuthoritativeAuthor = true;
     view.rerender(
@@ -1287,7 +1281,7 @@ describe("ArtifactPanel", () => {
         stageSlug: "plan",
       }),
     );
-    await screen.findByRole("heading", { level: 3, name: /plan artifact/i });
+    await screen.findByText("Plan formatted");
 
     // Reject landed on the current stage while this panel was unmounted.
     view.rerender(
@@ -1374,7 +1368,7 @@ describe("ArtifactPanel", () => {
         stageSlug: "plan",
       }),
     );
-    await screen.findByRole("heading", { level: 3, name: /plan artifact/i });
+    await screen.findByText("Plan formatted");
 
     // Two rejections landed while away (v2 rejected → v3 produced → v3 rejected).
     view.rerender(
@@ -1505,7 +1499,7 @@ describe("ArtifactPanel", () => {
     );
 
     await waitFor(() => expectClientUrl("/w/demo/sessions/1"));
-    expect(screen.getByRole("heading", { level: 3, name: /^land artifact$/i })).toBeTruthy();
+    expect(screen.getByText("This stage has not started yet.")).toBeTruthy();
   });
 
   it("keeps latest body loading independent from a selected-version fetch", async () => {

@@ -162,9 +162,7 @@ for (const viewport of viewports) {
           artifact.getByText("Version 1 is ready for review.", { exact: true }),
         ).toBeVisible();
         await expect(artifact.getByRole("button", { name: "Comments", exact: true })).toBeVisible();
-        await expect(
-          artifact.getByRole("button", { name: "Approve stage", exact: true }),
-        ).toBeVisible();
+        await expect(artifact.getByRole("button", { name: /^Approve / })).toBeVisible();
         await expect(
           page
             .getByRole("region", { name: "Session runs" })

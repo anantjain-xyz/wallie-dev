@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { useApprovalReview, type ApprovalReviewDelivery } from "./use-approval-review";
 import type { BlockingReviewTarget } from "./blocking-review-target";
 import { formatDeliveryBlocker, readinessStateLabel } from "./review-evidence-presentation";
+import { SESSION_REVIEW_DECISION_ID } from "./session-review-handoff";
 import type { ReviewMode } from "@/features/sessions/detail/review-mode";
 import type {
   ArtifactReviewThread,
@@ -48,11 +49,22 @@ function threadQuote(thread: ArtifactReviewThread) {
     : "Artifact text";
 }
 
+export function reviewDeliveryState(
+  delivery: ApprovalReviewDelivery | null | undefined,
+  verificationState?: ApprovalReviewDelivery["state"],
+) {
+  if (verificationState !== undefined) {
+    return delivery?.required && delivery.state === verificationState ? delivery.state : "checking";
+  }
+  return delivery?.required ? delivery.state : null;
+}
+
 type SessionReviewBarProps = {
   sessionId?: string;
   attached?: boolean;
   approvalReview?: ReturnType<typeof useApprovalReview>;
   verificationState?: ApprovalReviewDelivery["state"];
+  deliveryEvidenceAvailable?: boolean;
   onRefreshReview?: () => void;
   stageNames?: Readonly<Record<string, string>>;
   exactReviewRevision?: number;
@@ -76,6 +88,7 @@ export function SessionReviewBar({
   attached = false,
   approvalReview: suppliedApprovalReview,
   verificationState,
+  deliveryEvidenceAvailable,
   onRefreshReview,
   stageNames,
   exactReviewRevision,
@@ -107,12 +120,15 @@ export function SessionReviewBar({
   const previewSequence = useRef(0);
   const feedbackFieldId = useId();
   const approveDescriptionId = useId();
+  const rejectDescriptionId = useId();
+  const decisionHeadingId = attached ? SESSION_REVIEW_DECISION_ID : undefined;
   const feedbackErrorId = useId();
   const feedbackCountId = useId();
   const feedbackRef = useRef<HTMLTextAreaElement | null>(null);
   const rejectInFlightRef = useRef(false);
   const rejectionArtifactRef = useRef<SessionReviewArtifact | null>(null);
   const requestChangesTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const approvalFocusRef = useRef<HTMLButtonElement | null>(null);
   const reviewRevisionRef = useRef<number | null>(null);
   const reviewLoadSequence = useRef(0);
   const reviewController = useRef<AbortController | null>(null);
@@ -125,24 +141,23 @@ export function SessionReviewBar({
   );
   const approvalReview = suppliedApprovalReview ?? currentApprovalReview;
   const firstBlocker = approvalReview.value?.blockingTarget;
+  const blockingCount = approvalReview.value?.blockingCount ?? 0;
   const refreshReview = onRefreshReview ?? (() => void approvalReview.refresh());
   const exactReviewClosed =
     exactReviewRevision !== undefined && (mode.kind !== "reviewable" || !approvalReview.value);
   // Server-owned PR delivery readiness gates only a configured final approval.
   // A missing evaluation is decided by the approval RPC, which fails closed.
   const delivery = approvalReview.value?.delivery ?? null;
-  const deliveryState =
-    verificationState !== undefined
-      ? !delivery?.required || delivery.state !== verificationState
-        ? "checking"
-        : delivery.state
-      : delivery?.required
-        ? delivery.state
-        : null;
+  const deliveryState = reviewDeliveryState(delivery, verificationState);
+  const deliveryBlocker = delivery?.blockers.find(
+    (blocker) => blocker.code !== "artifact_blocking_feedback_open",
+  );
+  const artifactUnverified = Boolean(sessionId) && !reviewArtifact;
   const approvalBlocked =
     Boolean(sessionId) &&
-    (!approvalReview.value ||
-      approvalReview.value.blockingCount > 0 ||
+    (artifactUnverified ||
+      !approvalReview.value ||
+      blockingCount > 0 ||
       (deliveryState !== null && deliveryState !== "ready"));
   const phaseActionBusy = phaseActionPending !== null;
   const displayedError = requestError ?? feedbackError;
@@ -289,6 +304,18 @@ export function SessionReviewBar({
     return () => window.cancelAnimationFrame(frame);
   }, [dialogOpen]);
 
+  useLayoutEffect(() => {
+    if (phaseActionBusy || !approvalFocusRef.current) return;
+    const button = approvalFocusRef.current;
+    approvalFocusRef.current = null;
+    if (document.activeElement !== document.body) return;
+    const target =
+      button.isConnected && !button.disabled
+        ? button
+        : document.getElementById("session-run-activity");
+    target?.focus({ preventScroll: true });
+  }, [phaseActionBusy]);
+
   if (!dialogOpen && (mode.kind === "other_stage" || mode.kind === "completed")) {
     return null;
   }
@@ -386,13 +413,28 @@ export function SessionReviewBar({
 
   return (
     <>
-      <div
+      <section
+        aria-labelledby={decisionHeadingId}
         className={cn(
           "bg-sheet/95 py-3 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] backdrop-blur",
           attached ? "rounded-b-[6px] border-t border-border" : "sticky bottom-0 z-20",
           "pb-[max(0.75rem,env(safe-area-inset-bottom))]",
         )}
       >
+        {attached ? (
+          <h3
+            className="mb-2 scroll-mt-20 rounded-[4px] text-sm font-semibold focus-visible:outline-accent"
+            id={decisionHeadingId}
+            tabIndex={-1}
+          >
+            Stage decision
+          </h3>
+        ) : null}
+        {attached && mode.kind === "reviewable" && artifactUnverified && !phaseActionBusy ? (
+          <p className="mb-2 text-xs text-muted" role="status">
+            Checking the displayed artifact before you can act…
+          </p>
+        ) : null}
         <div
           className={cn(
             "gap-2 sm:flex sm:items-center sm:justify-end",
@@ -404,8 +446,9 @@ export function SessionReviewBar({
           <button
             ref={requestChangesTriggerRef}
             type="button"
-            className="ui-button min-h-11 sm:min-h-9"
-            disabled={phaseActionBusy || exactReviewClosed}
+            aria-describedby={attached ? rejectDescriptionId : undefined}
+            className="ui-button min-h-11 min-w-0 whitespace-normal sm:min-h-9"
+            disabled={phaseActionBusy || artifactUnverified || exactReviewClosed}
             onClick={() => {
               setFeedbackError(null);
               rejectionArtifactRef.current = reviewArtifact ? { ...reviewArtifact } : null;
@@ -425,8 +468,10 @@ export function SessionReviewBar({
               aria-describedby={approveDescription ? approveDescriptionId : undefined}
               className="ui-button-primary min-h-11 min-w-0 whitespace-normal [overflow-wrap:anywhere] sm:min-h-9"
               disabled={phaseActionBusy || approvalBlocked}
-              onClick={() => {
+              onClick={(event) => {
                 if (phaseActionBusy || approvalBlocked) return;
+                if (document.activeElement === event.currentTarget)
+                  approvalFocusRef.current = event.currentTarget;
                 if (sessionId) onApprove(reviewArtifact, approvalReview.value?.reviewRevision);
                 else onApprove(reviewArtifact);
               }}
@@ -445,14 +490,15 @@ export function SessionReviewBar({
         </div>
         {mode.kind === "reviewable" && mode.canApprove && sessionId ? (
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted sm:justify-end">
-            <span role="status">
-              {approvalReview.error ??
-                (approvalReview.value
-                  ? approvalReview.value.blockingCount > 0
-                    ? `${approvalReview.value.blockingCount} open blocking request${approvalReview.value.blockingCount === 1 ? "" : "s"}.${firstBlocker ? "" : " Refresh review to locate the blocking feedback."}`
-                    : "No open blocking requests."
-                  : "Checking blocking requests…")}
-            </span>
+            {!phaseActionBusy &&
+            (approvalReview.error || !approvalReview.value || blockingCount > 0) ? (
+              <span role="status">
+                {approvalReview.error ??
+                  (approvalReview.value
+                    ? `${blockingCount} open blocking request${blockingCount === 1 ? "" : "s"}.${firstBlocker ? "" : " Reload review comments to locate the blocking feedback."}`
+                    : "Checking blocking requests…")}
+              </span>
+            ) : null}
             {firstBlocker ? (
               <button
                 ref={blockerTriggerRef}
@@ -465,34 +511,49 @@ export function SessionReviewBar({
                 <span className="text-muted">({blockerLabel(firstBlocker)})</span>
               </button>
             ) : null}
-            {deliveryState ? (
-              <span className="max-w-full" role="status">
-                PR delivery readiness:{" "}
-                {deliveryState === "checking"
-                  ? "Checking…"
-                  : `${readinessStateLabel(deliveryState)}.`}
-                {deliveryState !== "ready" && deliveryState !== "checking" && delivery?.blockers[0]
-                  ? ` ${formatDeliveryBlocker(delivery.blockers[0])}`
-                  : null}
-              </span>
-            ) : null}
             <button
               ref={refreshTriggerRef}
               type="button"
-              className="min-h-11 shrink-0 text-accent underline"
+              className="min-h-11 min-w-0 text-left text-accent underline underline-offset-2 focus-visible:outline-accent"
               disabled={phaseActionBusy}
-              onClick={refreshReview}
+              onClick={() => void approvalReview.refresh()}
             >
-              Refresh review
+              Reload review comments
             </button>
+            {deliveryState ? (
+              <div className="flex min-w-0 basis-full flex-wrap items-center gap-x-2 sm:justify-end">
+                <span className="max-w-full" role="status">
+                  GitHub delivery readiness:{" "}
+                  {deliveryState === "checking"
+                    ? "Checking…"
+                    : `${readinessStateLabel(deliveryState)}.`}
+                  {deliveryState !== "checking" && deliveryBlocker
+                    ? ` ${formatDeliveryBlocker(deliveryBlocker)}`
+                    : null}
+                </span>
+                {deliveryEvidenceAvailable && deliveryState !== "ready" ? (
+                  <a
+                    className="inline-flex min-h-11 items-center text-accent hover:underline"
+                    href="#review-evidence"
+                  >
+                    View GitHub evidence
+                  </a>
+                ) : null}
+              </div>
+            ) : null}
           </div>
+        ) : null}
+        {attached ? (
+          <p id={rejectDescriptionId} className="mt-2 text-xs leading-5 text-muted sm:text-right">
+            Requesting changes queues another {stageName} attempt with your feedback.
+          </p>
         ) : null}
         {mode.kind === "reviewable" && mode.canApprove && approveDescription ? (
           <p id={approveDescriptionId} className="mt-2 text-xs leading-5 text-muted sm:text-right">
             {approveDescription}
           </p>
         ) : null}
-      </div>
+      </section>
 
       <Dialog
         open={Boolean(blockingTarget)}
