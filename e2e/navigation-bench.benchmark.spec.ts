@@ -5,6 +5,7 @@ import {
   expect,
   test,
   type Browser,
+  type BrowserContext,
   type CDPSession,
   type Page,
   type Request,
@@ -187,12 +188,24 @@ async function waitForShellHydration(page: Page) {
 }
 
 async function waitForPipeline(page: Page) {
+  const pipeline = page.getByRole("heading", { level: 1, name: "Pipeline", exact: true });
+  const sessions = page.getByRole("heading", { level: 1, name: "Sessions", exact: true });
+  await expect(pipeline.or(sessions)).toBeVisible();
+  const sessionsView = await sessions.isVisible();
+  if (sessionsView) {
+    const current = page
+      .getByRole("navigation", { name: "Sessions views" })
+      .locator('[aria-current="page"]');
+    await expect(current).toBeVisible();
+    await expect(current).toHaveText("Board");
+  }
+  const board = page.getByRole("region", { name: "Pipeline board" });
+  await expect(board).toBeVisible();
   await expect(
-    page.getByRole("heading", { level: 1, name: "Pipeline", exact: true }),
+    board.locator(`a[href="${sessionPath}"], a[href^="${sessionPath}?"]`).first(),
   ).toBeVisible();
-  await expect(page.getByRole("region", { name: "Pipeline board" })).toBeVisible();
-  await expect(page.locator(`a[href^="${workspacePath}/sessions/"]`).first()).toBeVisible();
   await waitForShellHydration(page);
+  return sessionsView;
 }
 
 async function waitForSessions(page: Page) {
@@ -205,7 +218,7 @@ async function waitForSessions(page: Page) {
 }
 
 async function waitForSession(page: Page) {
-  await expect(page).toHaveURL(sessionPath);
+  await expect(page).toHaveURL((url) => url.pathname === sessionPath);
   await expect(
     page.getByRole("heading", { level: 1, name: sessionTitle, exact: true }),
   ).toBeVisible();
@@ -784,8 +797,7 @@ test("measures five logged-in navigation flows", async ({ browser }) => {
   const setup = await browser.newContext();
   const setupPage = await setup.newPage();
   await signIn(setupPage, workspacePath);
-  const storageState = "/tmp/wallie-navigation-bench-storage.json";
-  await setup.storageState({ path: storageState });
+  const storageState = await setup.storageState();
   await setup.close();
 
   const samples: FlowSample[] = [];
@@ -802,8 +814,12 @@ test("measures five logged-in navigation flows", async ({ browser }) => {
       samples.push(
         await measure(browser, storageState, "sessions-switch", run, async (page, begin) => {
           await page.goto(workspacePath, { waitUntil: "commit" });
-          await waitForPipeline(page);
-          const link = await visibleNavLink(page, "Sessions");
+          const sessionsView = await waitForPipeline(page);
+          const link = sessionsView
+            ? page
+                .getByRole("navigation", { name: "Sessions views" })
+                .getByRole("link", { name: "List", exact: true })
+            : await visibleNavLink(page, "Sessions");
           await begin();
           const startedAt = await page.evaluate(() => performance.now());
           await link.click();
@@ -906,7 +922,7 @@ test("measures five logged-in navigation flows", async ({ browser }) => {
 
 async function measure(
   browser: Browser,
-  storageState: string,
+  storageState: Awaited<ReturnType<BrowserContext["storageState"]>>,
   flow: FlowId,
   run: number,
   runFlow: (page: Page, begin: () => Promise<void>) => Promise<number>,

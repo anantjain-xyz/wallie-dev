@@ -47,6 +47,8 @@ The workflows run five jobs on pull requests and main pushes:
 - `Lint and Format` retains fast validation; `Test` runs Vitest directly instead of repeating `check:fast` through `pnpm check`.
 - Required check names `lint-and-format`, `test`, and `route-budgets` are preserved to match the existing GitHub ruleset. `database-tests` also remains an automatic CI job.
 
+The [signed-in runtime benchmark](../performance/authenticated-runtime.md) has a separate, path-scoped CI job. It uses a production build and disposable Supabase to gate response size and correctness, and records HTTP timing without enforcing latency thresholds.
+
 ## Verification lanes
 
 | Lane                       | Command                                           | What it proves                                                                            | What it does not prove                                      |

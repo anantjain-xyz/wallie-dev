@@ -49,6 +49,7 @@ const classifiedScripts = {
     "test:benchmark:interaction",
     "test:benchmark:content-visibility",
     "bench:navigation",
+    "bench:authenticated",
   ],
 } as const;
 

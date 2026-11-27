@@ -1,0 +1,88 @@
+name: Authenticated performance
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/authenticated-performance.yml"
+      - "docs/performance/authenticated-runtime.md"
+      - "scripts/bench/**"
+      - "supabase/**"
+      - "src/**"
+      - "public/**"
+      - "middleware.ts"
+      - "next.config.ts"
+      - "postcss.config.mjs"
+      - "tsconfig.json"
+      - "package.json"
+      - "pnpm-lock.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: authenticated-performance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  authenticated-performance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SUPABASE_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test the response gate
+        run: node --test scripts/bench/runtime-http.test.mjs
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@aa3515eac405eac768fa4a72147c22d88a283c7b
+        with:
+          version: 2.113.0
+
+      - name: Start isolated local Supabase
+        run: |
+          if ! command -v psql >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+          fi
+          if ! supabase start --exclude studio,edge-runtime,logflare,vector,supavisor >/dev/null 2>&1; then
+            docker ps -a --filter name=supabase_ --format '{{.Names}} {{.Status}}'
+            echo '::error::Unable to start local Supabase'
+            exit 1
+          fi
+
+      - name: Verify signed-in runtime responses
+        run: pnpm bench:authenticated
+
+      - name: Upload timing and budget results
+        if: "!cancelled()"
+        uses: actions/upload-artifact@v4
+        with:
+          name: authenticated-runtime
+          path: bench-results/authenticated-runtime.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Stop local Supabase
+        if: always()
+        run: supabase stop --no-backup >/dev/null 2>&1

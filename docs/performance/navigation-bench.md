@@ -66,8 +66,8 @@ These probes add work. Keep diagnostic traces separate from untraced latency sam
 
 The clock stops when the content below is visible and the workspace shell has hydrated. A run that misses that content, throws a page error, or returns HTTP 500 is a failed run.
 
-1. `pipeline-load`. A new browser context opens `/w/acme-corp`. Ready when the Pipeline heading, the pipeline board, and a session link are visible.
-2. `sessions-switch`. From a loaded pipeline page, click Sessions. Ready when the Sessions heading and a session row are visible.
+1. `pipeline-load`. A new browser context opens `/w/acme-corp`. Ready when the Pipeline heading (or Sessions with Board selected), the board, and the fixture session link are visible.
+2. `sessions-switch`. From a loaded board, click List (Sessions in the legacy navigation). Ready when the Sessions heading and a session row are visible.
 3. `session-open`. From the sessions list, open `[bench] Checkout latency`. Ready when that heading, the pipeline stage navigation, and a stage button are visible.
 4. `settings-switch`. From the pipeline page, click Settings. Ready when the Settings heading, the GitHub section, and the Pipeline section are visible.
 5. `new-session-modal`. From the pipeline page, click New session. Ready when the title field and the stage picker are visible.

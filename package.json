@@ -56,6 +56,7 @@
     "test:e2e:factory-reference": "pnpm build && playwright test e2e/factory-reference.spec.ts --output=test-results/factory-reference",
     "test:benchmark:interaction": "pnpm build && playwright test e2e/interaction-rum.benchmark.spec.ts --repeat-each=2",
     "bench:navigation": "node scripts/bench-navigation.mjs",
+    "bench:authenticated": "node scripts/bench/authenticated-runtime.mjs",
     "test:benchmark:content-visibility": "pnpm build && playwright test e2e/content-visibility.benchmark.spec.ts",
     "test:watch": "vitest",
     "db:types": "SUPABASE_TELEMETRY_DISABLED=1 supabase gen types typescript --local > src/lib/supabase/database.types.ts && prettier --write src/lib/supabase/database.types.ts",
