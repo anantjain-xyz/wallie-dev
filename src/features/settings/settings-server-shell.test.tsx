@@ -21,7 +21,8 @@ vi.mock("@/features/settings/islands/advanced-islands", () => ({
   RunHistoryIsland: () => <p>Run history island</p>,
   VerifySetupIsland: () => <p>Verify setup island</p>,
 }));
-vi.mock("@/features/settings/islands/workspace-islands", () => ({
+vi.mock("@/features/settings/islands/workspace-islands", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/settings/islands/workspace-islands")>()),
   DangerActionsIsland: () => <p>Danger zone island</p>,
   WorkspaceIdentityIsland: () => <p>Workspace identity island</p>,
 }));

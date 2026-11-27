@@ -6,10 +6,12 @@ import type {
   SettingsWorkspaceProfile,
   WorkspaceInvitationsSnapshot,
 } from "@/features/settings/data";
+import {
+  WorkspaceInvitationsIsland,
+  WorkspaceMembersIsland,
+  WorkspaceProfileIsland,
+} from "@/features/settings/islands/workspace-islands";
 import { Section } from "@/features/settings/settings-ui";
-import { WorkspaceInvitationsSection } from "@/features/settings/workspace-invitations-section";
-import { WorkspaceMembersSection } from "@/features/settings/workspace-members-section";
-import { WorkspaceProfileSection } from "@/features/settings/workspace-profile-section";
 import { WorkspaceSettingsLoadError } from "@/features/settings/workspace-settings-load-error";
 
 async function WorkspaceSettingsRead<T>({
@@ -62,7 +64,7 @@ export function WorkspaceMemberSettings({
               data={setup}
               error={<WorkspaceSettingsLoadError label="active members" />}
               render={({ workspaceMembers }) => (
-                <WorkspaceMembersSection
+                <WorkspaceMembersIsland
                   canManage={canManage}
                   currentMemberId={currentMember.id}
                   workspaceId={workspace.id}
@@ -88,7 +90,7 @@ export function WorkspaceMemberSettings({
                 </InvitationPlaceholder>
               }
               render={(snapshot) => (
-                <WorkspaceInvitationsSection snapshot={snapshot} workspaceId={workspace.id} />
+                <WorkspaceInvitationsIsland snapshot={snapshot} workspaceId={workspace.id} />
               )}
             />
           </Suspense>
@@ -109,7 +111,7 @@ export function WorkspacePersonalProfile({
         <WorkspaceSettingsRead
           data={profile}
           error={<WorkspaceSettingsLoadError label="your profile" />}
-          render={(value) => <WorkspaceProfileSection initialProfile={value} />}
+          render={(value) => <WorkspaceProfileIsland initialProfile={value} />}
         />
       </Suspense>
     </Section>

@@ -39,9 +39,10 @@ afterEach(() => {
 describe("New factory dialog", () => {
   it("suggests a canonical address, respects edits, and returns focus on cancel", async () => {
     const { user, trigger } = setup();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     trigger.focus();
     await user.keyboard("{Enter}");
-    const dialog = screen.getByRole("dialog", { name: "New factory" });
+    const dialog = await screen.findByRole("dialog", { name: "New factory" });
     const name = within(dialog).getByRole("textbox", { name: "Factory name" });
     const address = within(dialog).getByRole("textbox", { name: "Address" });
     expect(dialog).toHaveAccessibleDescription(/Northwind/);
@@ -64,7 +65,7 @@ describe("New factory dialog", () => {
     vi.stubGlobal("fetch", fetch);
     const { user, trigger } = setup();
     await user.click(trigger);
-    await user.type(screen.getByRole("textbox", { name: "Factory name" }), "Payments");
+    await user.type(await screen.findByRole("textbox", { name: "Factory name" }), "Payments");
     const address = screen.getByRole("textbox", { name: "Address" });
     await user.clear(address);
     await user.type(address, "Payments--Team");
@@ -87,7 +88,7 @@ describe("New factory dialog", () => {
     vi.stubGlobal("fetch", fetch);
     const { user, trigger } = setup();
     await user.click(trigger);
-    const name = screen.getByRole("textbox", { name: "Factory name" });
+    const name = await screen.findByRole("textbox", { name: "Factory name" });
     const address = screen.getByRole("textbox", { name: "Address" });
     await user.type(name, "Default");
     await user.click(screen.getByRole("button", { name: "Create factory" }));
@@ -140,7 +141,7 @@ describe("New factory dialog", () => {
     vi.stubGlobal("fetch", fetch);
     const { user, trigger } = setup();
     await user.click(trigger);
-    const dialog = within(screen.getByRole("dialog"));
+    const dialog = within(await screen.findByRole("dialog"));
     const name = dialog.getByRole("textbox", { name: "Factory name" });
     const address = dialog.getByRole("textbox", { name: "Address" });
     await user.type(name, "Support Ops");
