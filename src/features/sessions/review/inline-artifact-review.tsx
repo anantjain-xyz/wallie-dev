@@ -1,5 +1,6 @@
 "use client";
 
+import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import {
   type CSSProperties,
@@ -86,6 +87,7 @@ export function InlineArtifactReview({
   source,
   historical,
   initiallyOpen = false,
+  commentControlHost,
   readOnlyReason: sessionReadOnlyReason = null,
   displayMode = "rendered",
   onShowRaw,
@@ -98,6 +100,7 @@ export function InlineArtifactReview({
   source: string;
   historical: boolean;
   initiallyOpen?: boolean;
+  commentControlHost?: HTMLElement | null;
   readOnlyReason?: ReviewSessionReadOnlyReason | null;
   displayMode?: "rendered" | "raw";
   onShowRaw?: () => void;
@@ -306,6 +309,36 @@ export function InlineArtifactReview({
     (target?.isConnected ? target : opener.current)?.focus({ preventScroll: true });
   }
 
+  const commentsControl = (
+    <button
+      ref={opener}
+      id="artifact-review-open"
+      type="button"
+      aria-expanded={open}
+      aria-controls="artifact-review-panel"
+      className={cn(
+        "min-h-11 rounded-[4px] text-xs font-medium focus-visible:outline-accent hover:bg-control-muted",
+        commentControlHost === undefined ? "border border-border px-3" : "px-1 sm:min-h-8 sm:px-2",
+        open ? "border-accent bg-accent-soft text-accent" : "text-muted hover:text-foreground",
+      )}
+      onClick={(event) => {
+        returnFocus.current = event.currentTarget;
+        if (open) closeComments();
+        else setPanelState("open");
+      }}
+    >
+      Comments
+      {loadedThreads ? (
+        <span
+          aria-hidden="true"
+          className="ml-1 rounded bg-control-muted px-1 text-muted max-[410px]:hidden"
+        >
+          {loadedThreads.counts.open}
+        </span>
+      ) : null}
+    </button>
+  );
+
   return (
     <div
       className={styles.workspace}
@@ -318,37 +351,16 @@ export function InlineArtifactReview({
       }}
     >
       <div className="min-w-0">
-        <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-border pb-3">
-          <button
-            ref={opener}
-            id="artifact-review-open"
-            type="button"
-            aria-expanded={open}
-            aria-controls="artifact-review-panel"
-            className={cn(
-              "min-h-11 rounded-[4px] border border-border px-3 text-xs font-medium hover:bg-control-muted",
-              open && "border-accent bg-accent-soft text-accent",
-            )}
-            onClick={(event) => {
-              returnFocus.current = event.currentTarget;
-              if (open) closeComments();
-              else setPanelState("open");
-            }}
-          >
-            Comments
-            {loadedThreads ? (
-              <span aria-hidden="true" className="ml-1.5 rounded bg-control-muted px-1 text-muted">
-                {loadedThreads.counts.open}
-              </span>
-            ) : null}
-          </button>
-          {readOnlyReason &&
-          (open || selection || selectionIssue || readOnlyReason !== "loading") ? (
-            <p id={permissionNoticeId} className="text-xs text-muted">
-              {reviewReadOnlyMessage(readOnlyReason)}
-            </p>
-          ) : null}
-        </div>
+        {commentControlHost === undefined ? (
+          <div className="mb-3">{commentsControl}</div>
+        ) : commentControlHost ? (
+          createPortal(commentsControl, commentControlHost)
+        ) : null}
+        {readOnlyReason && (open || selection || selectionIssue || readOnlyReason !== "loading") ? (
+          <p id={permissionNoticeId} className="mb-2 text-xs text-muted">
+            {reviewReadOnlyMessage(readOnlyReason)}
+          </p>
+        ) : null}
         {selectionIssue && !readOnly ? (
           <p role="status" className="mb-3 text-xs text-muted">
             {selectionIssue}{" "}

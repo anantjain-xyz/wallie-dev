@@ -97,9 +97,8 @@ export function FactoryRepositoryBindingsEditor({
   );
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2">
+    <div className="space-y-3">
       <SelectField
-        className="sm:col-span-2"
         label="Default writable repository"
         onValueChange={(next) => onChange({ repository: next })}
         options={[
@@ -109,27 +108,36 @@ export function FactoryRepositoryBindingsEditor({
         value={repository}
         wrap
       />
-      <RepositoryBindingList
-        addLabel="Add writable repository…"
-        available={unassigned}
-        label="Other writable repositories"
-        onChange={(values) =>
-          onChange({ writableRepositories: values.length ? values : undefined })
-        }
-        selected={writableRepositories.map(toSelected)}
-      />
-      <RepositoryBindingList
-        addLabel="Add context repository…"
-        available={unassigned}
-        label="Read-only context repositories"
-        onChange={(values) =>
-          onChange({ readContextRepositories: values.length ? values : undefined })
-        }
-        selected={readContextRepositories.map(toSelected)}
-      />
-      <p className="type-annotation text-muted sm:col-span-2">
-        Each session uses one writable repository. Context repositories are available for reading.
-      </p>
+      {unassigned.length || writableRepositories.length || readContextRepositories.length ? (
+        <details className="space-y-2">
+          <summary className="w-fit cursor-pointer py-1 text-sm font-medium">
+            Additional repository bindings
+          </summary>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <RepositoryBindingList
+              addLabel="Add writable repository…"
+              available={unassigned}
+              label="Other writable repositories"
+              onChange={(values) =>
+                onChange({ writableRepositories: values.length ? values : undefined })
+              }
+              selected={writableRepositories.map(toSelected)}
+            />
+            <RepositoryBindingList
+              addLabel="Add context repository…"
+              available={unassigned}
+              label="Read-only context repositories"
+              onChange={(values) =>
+                onChange({ readContextRepositories: values.length ? values : undefined })
+              }
+              selected={readContextRepositories.map(toSelected)}
+            />
+            <p className="type-annotation text-muted sm:col-span-2">
+              Each session uses one writable repository. Context repositories are read-only.
+            </p>
+          </div>
+        </details>
+      ) : null}
     </div>
   );
 }

@@ -26,7 +26,7 @@ export function SessionStageWorkspace({
   emptyText: string;
   evidence?: ReactNode;
   focus: SessionStageFocus;
-  reviewControls: ReactNode;
+  reviewControls?: ReactNode;
   stageName: string;
   stageSlug: string;
 }) {
@@ -45,7 +45,7 @@ export function SessionStageWorkspace({
                 <h2 className="text-base font-semibold text-foreground">{artifactHeading}</h2>
               </div>
             )}
-            <div className="min-w-0 p-4 sm:p-5">{artifact}</div>
+            <div className="min-w-0 p-3 sm:p-5">{artifact}</div>
           </>
         ) : null}
         {reviewControls}

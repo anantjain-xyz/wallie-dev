@@ -29,7 +29,7 @@ it("jumps to the one decision without changing an exact link or its evidence has
   jump.focus();
   fireEvent.click(jump);
   expect(heading).toHaveFocus();
-  expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({ block: "start", behavior: "instant" });
+  expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({ block: "nearest", behavior: "instant" });
   expect(window.location.href.endsWith(url)).toBe(true);
 });
 

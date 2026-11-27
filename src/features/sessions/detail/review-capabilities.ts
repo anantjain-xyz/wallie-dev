@@ -9,6 +9,8 @@ import type { StageExecution } from "./stage-execution";
 export type SessionReviewCapabilities = {
   canApprove: boolean;
   canManageRetainedContent: boolean;
+  factoryId?: string;
+  factoryName?: string;
   failedStageSlug: string | null;
   hasFailedRun: boolean;
   latestRun: StageExecution | null;
@@ -56,18 +58,38 @@ export function canApproveSessionStage(
 }
 
 async function resolveViewerCapabilities({
+  includeFactoryScope,
   memberUserId,
   sessionId,
   stageId,
   supabase,
   workspaceId,
 }: {
+  includeFactoryScope: boolean;
   memberUserId: string;
   sessionId: string;
   stageId: string;
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
   workspaceId: string;
-}): Promise<Pick<SessionReviewCapabilities, "canApprove" | "canManageRetainedContent">> {
+}): Promise<
+  Pick<
+    SessionReviewCapabilities,
+    "canApprove" | "canManageRetainedContent" | "factoryId" | "factoryName"
+  >
+> {
+  const sessionColumns =
+    "pipeline_id, workspace_id, factory_id, execute_pinned_definition, factory_definition_revision_id";
+  const sessionQuery = supabase.from("sessions");
+  const sessionRead = (
+    includeFactoryScope
+      ? sessionQuery.select(
+          `${sessionColumns}, factory:factories!sessions_workspace_factory_fkey(name)`,
+        )
+      : sessionQuery.select(sessionColumns)
+  )
+    .eq("id", sessionId)
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
   const [{ data: member, error: memberError }, { data: session, error: sessionError }] =
     await Promise.all([
       supabase
@@ -78,14 +100,7 @@ async function resolveViewerCapabilities({
         .eq("is_active", true)
         .eq("kind", "human")
         .maybeSingle(),
-      supabase
-        .from("sessions")
-        .select(
-          "pipeline_id, workspace_id, factory_id, execute_pinned_definition, factory_definition_revision_id",
-        )
-        .eq("id", sessionId)
-        .eq("workspace_id", workspaceId)
-        .maybeSingle(),
+      sessionRead,
     ]);
 
   if (memberError || sessionError || !member || !session) {
@@ -99,7 +114,17 @@ async function resolveViewerCapabilities({
       member,
     ),
   ]);
-  return { canApprove: canApproveSessionStage(stage, member), canManageRetainedContent };
+  const factory = "factory" in session ? session.factory : null;
+  const factoryName =
+    factory && typeof factory === "object" && "name" in factory && typeof factory.name === "string"
+      ? factory.name
+      : undefined;
+  return {
+    canApprove: canApproveSessionStage(stage, member),
+    canManageRetainedContent,
+    ...(includeFactoryScope ? { factoryId: session.factory_id } : {}),
+    ...(factoryName ? { factoryName } : {}),
+  };
 }
 
 export async function resolveLatestRunFailure({
@@ -133,12 +158,14 @@ export async function resolveLatestRunFailure({
 }
 
 export async function loadSessionReviewCapabilities({
+  includeFactoryScope = false,
   memberUserId,
   sessionId,
   stageId,
   supabase,
   workspaceId,
 }: {
+  includeFactoryScope?: boolean;
   memberUserId: string;
   sessionId: string;
   stageId: string;
@@ -146,7 +173,14 @@ export async function loadSessionReviewCapabilities({
   workspaceId: string;
 }): Promise<SessionReviewCapabilities> {
   const [viewer, failure] = await Promise.all([
-    resolveViewerCapabilities({ memberUserId, sessionId, stageId, supabase, workspaceId }),
+    resolveViewerCapabilities({
+      includeFactoryScope,
+      memberUserId,
+      sessionId,
+      stageId,
+      supabase,
+      workspaceId,
+    }),
     resolveLatestRunFailure({ sessionId, supabase }),
   ]);
 

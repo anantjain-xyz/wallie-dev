@@ -86,6 +86,7 @@ export type SessionReviewSession = {
 /** The only session-detail data serialized into the critical client surface. */
 export type SessionReviewData = {
   creatorDisplayName: string | null;
+  factoryName?: string;
   retainedContent?: { canManage: boolean; erasedAt: string | null };
   session: SessionReviewSession;
   workspaceSlug: string;
@@ -107,6 +108,7 @@ export type SessionReviewRepository = {
 export type SessionDetailPageData = {
   activityContext: SessionActivityContext;
   canReview: boolean;
+  factoryId: string | null;
   failedStageSlug: string | null;
   hasFailedRun: boolean;
   latestRun: StageExecution | null;
@@ -215,6 +217,7 @@ async function loadSessionDetailPageDataWithTiming(
   const [capabilities, erasure, workflowInspection] = await Promise.all([
     timing.segment("review.authorization", () =>
       loadSessionReviewCapabilities({
+        includeFactoryScope: true,
         memberUserId: user.id,
         sessionId: payload.session.id,
         stageId: payload.session.currentStageId,
@@ -232,6 +235,7 @@ async function loadSessionDetailPageDataWithTiming(
       loadWorkflowInspectionHeader(supabase, payload.session.id),
     ),
   ]);
+  if (capabilities.factoryName) review.factoryName = capabilities.factoryName;
   const erasedAt = erasure?.data?.erased_at ?? null;
   if (capabilities.canManageRetainedContent || erasedAt) {
     review.retainedContent = { canManage: capabilities.canManageRetainedContent, erasedAt };
@@ -250,6 +254,7 @@ async function loadSessionDetailPageDataWithTiming(
       workspaceId: payload.activity.workspaceId,
     },
     canReview: capabilities.canApprove,
+    factoryId: capabilities.factoryId ?? null,
     failedStageSlug: capabilities.failedStageSlug,
     hasFailedRun: capabilities.hasFailedRun,
     latestRun: capabilities.latestRun,

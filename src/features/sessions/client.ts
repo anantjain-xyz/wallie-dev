@@ -20,6 +20,7 @@ export type CreateSessionInput = {
   attachmentIds?: string[];
   draftSpecification?: boolean;
   factoryDefinitionDigest?: string;
+  factoryId?: string;
   githubRepositoryId?: string | null;
   linearIssueUrl?: string | null;
   promptMd?: string | null;
@@ -72,11 +73,39 @@ export type SessionRepositoryOptionsResult = {
   canDraftSpecification?: boolean;
   defaultGithubRepositoryId: string | null;
   factoryDefinitionDigest?: string;
+  factoryId?: string;
+  linearIssueLinking?: boolean;
   pipelineId: string | null;
   repositoryOptions: SessionRepositoryOption[];
   routingOverrideOptions?: RoutingOverrideOptions;
   stageOptions: SessionCreationStageOption[];
 };
+
+export type SessionCreationFactory = { id: string; name: string };
+
+export async function loadSessionCreationFactoriesFromClient(input: {
+  signal: AbortSignal;
+  workspaceId: string;
+}): Promise<SessionCreationFactory[]> {
+  const response = await fetch(
+    `/api/workspaces/${encodeURIComponent(input.workspaceId)}/session-factories`,
+    { cache: "no-store", signal: input.signal },
+  );
+  const payload = (await response.json().catch(() => null)) as {
+    factories?: SessionCreationFactory[];
+    error?: string;
+  } | null;
+  if (!response.ok) throw new Error(payload?.error ?? "Couldn’t load factories.");
+  if (
+    !Array.isArray(payload?.factories) ||
+    payload.factories.some(
+      (factory) => typeof factory?.id !== "string" || typeof factory.name !== "string",
+    )
+  ) {
+    throw new Error("The factory list response was invalid.");
+  }
+  return payload.factories;
+}
 
 export async function uploadSessionAttachmentFromClient(input: {
   file: File;
@@ -168,30 +197,45 @@ export function isSessionPhaseMutationResult(
 }
 
 export async function loadSessionRepositoryOptionsFromClient(input: {
+  factoryId?: string;
   workspaceId: string;
 }): Promise<SessionRepositoryOptionsResult> {
-  const response = await fetch(`/api/workspaces/${input.workspaceId}/session-repositories`, {
-    cache: "no-store",
-    method: "GET",
-  });
+  const query = input.factoryId ? `?${new URLSearchParams({ factoryId: input.factoryId })}` : "";
+  const response = await fetch(
+    `/api/workspaces/${input.workspaceId}/session-repositories${query}`,
+    {
+      cache: "no-store",
+      method: "GET",
+    },
+  );
   const responsePayload = (await response.json().catch(() => null)) as {
     canDraftSpecification?: boolean;
     defaultGithubRepositoryId?: string | null;
     error?: string;
     factoryDefinitionDigest?: string;
+    factoryId?: string;
+    linearIssueLinking?: boolean;
     pipelineId?: string | null;
     repositoryOptions?: SessionRepositoryOption[];
     routingOverrideOptions?: unknown;
+    setupHref?: string;
     stageOptions?: SessionCreationStageOption[];
   } | null;
 
   if (!response.ok) {
-    throw new Error(responsePayload?.error ?? "Failed to load session options.");
+    throw new SessionCreationRejectedError(
+      responsePayload?.error ?? "Failed to load session options.",
+      response.status,
+      readSessionSetupHref(responsePayload?.setupHref),
+    );
   }
 
   if (
     !Array.isArray(responsePayload?.repositoryOptions) ||
     !Array.isArray(responsePayload?.stageOptions) ||
+    (input.factoryId !== undefined &&
+      (responsePayload.factoryId !== input.factoryId ||
+        typeof responsePayload.linearIssueLinking !== "boolean")) ||
     (responsePayload.factoryDefinitionDigest !== undefined &&
       (typeof responsePayload.factoryDefinitionDigest !== "string" ||
         !/^[0-9a-f]{64}$/.test(responsePayload.factoryDefinitionDigest)))
@@ -208,6 +252,12 @@ export async function loadSessionRepositoryOptionsFromClient(input: {
     ...(responsePayload.canDraftSpecification === true ? { canDraftSpecification: true } : {}),
     defaultGithubRepositoryId: responsePayload.defaultGithubRepositoryId ?? null,
     ...(factoryDefinitionDigest ? { factoryDefinitionDigest } : {}),
+    ...(input.factoryId
+      ? {
+          factoryId: responsePayload.factoryId,
+          linearIssueLinking: responsePayload.linearIssueLinking,
+        }
+      : {}),
     pipelineId: responsePayload.pipelineId ?? null,
     repositoryOptions: responsePayload.repositoryOptions,
     ...(factoryDefinitionDigest && overrideOptions.data
@@ -223,9 +273,14 @@ export class SessionCreationRejectedError extends Error {
   constructor(
     message: string,
     readonly status?: number,
+    readonly setupHref?: string,
   ) {
     super(message);
   }
+}
+
+function readSessionSetupHref(value: unknown) {
+  return typeof value === "string" && /^\/w\/[a-z0-9][a-z0-9-]*\//.test(value) ? value : undefined;
 }
 
 export async function createSessionFromClient(
@@ -243,6 +298,7 @@ export async function createSessionFromClient(
     ...(input.factoryDefinitionDigest
       ? { factoryDefinitionDigest: input.factoryDefinitionDigest }
       : {}),
+    ...(input.factoryId ? { factoryId: input.factoryId } : {}),
     ...(input.requestId ? { requestId: input.requestId } : {}),
     githubRepositoryId: input.githubRepositoryId?.trim() || null,
     linearIssueUrl,
@@ -262,6 +318,7 @@ export async function createSessionFromClient(
   const responsePayload = (await response.json().catch(() => null)) as {
     code?: string;
     error?: string;
+    setupHref?: string;
     canonicalUrl?: string;
     number?: number;
   } | null;
@@ -284,7 +341,11 @@ export async function createSessionFromClient(
       response.status !== 408 &&
       responsePayload?.code !== "session_request_conflict"
     ) {
-      throw new SessionCreationRejectedError(message, response.status);
+      throw new SessionCreationRejectedError(
+        message,
+        response.status,
+        readSessionSetupHref(responsePayload?.setupHref),
+      );
     }
     throw new Error(message);
   }

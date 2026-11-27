@@ -12,6 +12,7 @@ export type SessionCreationPreview = {
 };
 
 export type PendingSessionSnapshot = {
+  factoryName?: string;
   images: { clientId: string; fileName: string; previewUrl: string }[];
   linearIssueUrl: string | null;
   prompt: string;
@@ -71,7 +72,9 @@ export function PendingSessionCreation({
               {snapshot.title}
             </h1>
           }
-          description={snapshot.repositoryName}
+          description={
+            [snapshot.factoryName, snapshot.repositoryName].filter(Boolean).join(" · ") || null
+          }
         />
         <div className="mb-5 flex items-center gap-2 text-sm text-muted" role="status">
           <ShimmerText>Creating session…</ShimmerText>

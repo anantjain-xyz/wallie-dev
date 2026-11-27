@@ -225,6 +225,7 @@ test("the 320px settings fixture separates workspace and personal actions", asyn
       await page.keyboard.press("Escape");
       await expect(invite).toBeFocused();
     }
+    await expect(team.getByRole("button", { name: "Edit profile" })).toHaveCount(0);
     await expect(page.locator("#profile")).toHaveCount(0);
     await expect(page.locator("#connected-clients")).toHaveCount(0);
     await expect(

@@ -130,6 +130,7 @@ test("previews a saved routing policy and displays its historical decision after
 
     await test.step("Preview the saved draft by keyboard and verify stale and member requests", async () => {
       await page.goto(workspaceFactoryDefinitionPath(fixture.slug, { factory: fixture.factoryId }));
+      await page.getByText("Runtime and advanced settings", { exact: true }).click();
       const editor = page.getByRole("region", { name: "Model routing" });
       const disclosure = editor.getByRole("button", { name: "Edit Invoice delivery rule" });
       await expect(disclosure).toBeVisible({ timeout: 75_000 });

@@ -326,6 +326,7 @@ describe("session detail loader", () => {
               execute_pinned_definition: false,
               factory_definition_revision_id: null,
               factory_id: "factory-1",
+              factory: { name: "Delivery factory" },
               pipeline_id: payload.session.pipelineId,
               workspace_id: payload.activity.workspaceId,
             },
@@ -348,9 +349,14 @@ describe("session detail loader", () => {
     mocked.createSupabaseServerClient.mockResolvedValue({ from, rpc });
     mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-1" });
 
-    const result = await loadSessionDetailPageData("acme-corp", "18");
+    const result = await loadSessionDetailPageData("acme-corp", "18", {
+      factory: "another-factory",
+    });
 
     expect(result.canReview).toBe(true);
+    expect(result.factoryId).toBe("factory-1");
+    expect(result.review.factoryName).toBe("Delivery factory");
+    expect(result.review).not.toHaveProperty("factoryId");
     expect(result.review.retainedContent).toEqual({ canManage: true, erasedAt: null });
     expect(factoryMemberQuery.eq).toHaveBeenCalledWith("factory_id", "factory-1");
     expect(factoryMemberQuery.eq).toHaveBeenCalledWith("member_id", "member-1");

@@ -10,7 +10,7 @@ import { selectReviewedFactoryRoutingActivation } from "@/lib/model-routing/revi
 import { loadWorkspaceSandboxOverview } from "@/lib/sandbox-connections/server";
 import type { Database } from "@/lib/supabase/database.types";
 
-import { loadFactoryDefinitionCatalog } from "./authority";
+import { loadFactoryDefinitionCatalog, loadFactoryDefinitionRepositories } from "./authority";
 import { compileFactoryDefinition, factoryComponentRevisionsForSource } from "./compiler";
 import type {
   FactoryEditorContent,
@@ -23,13 +23,13 @@ import {
   mutationError,
   type FactoryDefinitionMutationFailure,
 } from "./mutations";
-import { serialFactoryDefinitionSchema } from "./schema";
+import { emptyFactorySetupSourceSchema, serialFactoryDefinitionSchema } from "./schema";
 import {
   catalogForStoredFactoryDefinition,
   latestFactoryDraft,
   loadStageAnchors,
 } from "./settings-persistence";
-import { loadSettingsBaseline } from "./settings-baseline";
+import { loadSettingsBaseline, type FactoryBaselineSetup } from "./settings-baseline";
 import {
   selectCurrentFactoryActivation,
   selectFactory,
@@ -198,14 +198,30 @@ async function loadEditorBaseline(
   client: Client,
   workspaceId: string,
   factory: { id: string; is_default: boolean },
+  setup: FactoryBaselineSetup | undefined,
 ) {
-  const { data: pipeline, error } = await selectFactoryBaselinePipeline(
+  const { data: livePipeline, error } = await selectFactoryBaselinePipeline(
     client,
     workspaceId,
     factory,
   );
   if (error) throw error;
-  if (!pipeline) return null;
+  let pipeline = livePipeline;
+  if (!pipeline && setup) {
+    const fallback = await client
+      .from("pipelines")
+      .select("id, name, is_default, operating_rules_md")
+      .eq("workspace_id", workspaceId)
+      .eq("factory_id", factory.id)
+      .order("created_at")
+      .order("id")
+      .limit(1)
+      .maybeSingle();
+    if (fallback.error) throw fallback.error;
+    pipeline = fallback.data;
+  }
+  if (!pipeline) return { baseline: null, pipelineAvailable: false };
+  if (setup && !setup.repositories.length) return { baseline: null, pipelineAvailable: true };
 
   const stages = await loadStageAnchors(client, workspaceId, pipeline.id);
   const bundle = await loadSettingsBaseline(
@@ -215,12 +231,16 @@ async function loadEditorBaseline(
     stages,
     pipeline.operating_rules_md,
     factory,
+    setup,
   );
-  if (!bundle) return null;
+  if (!bundle) return { baseline: null, pipelineAvailable: true };
 
   // The live baseline seeds authoring. The compiler checks current authority when it is previewed.
-  const source = serialFactoryDefinitionSchema.safeParse(factoryDefinitionFromBundle(bundle));
-  return source.success ? { source: source.data } : null;
+  const schema = bundle.stages.length
+    ? serialFactoryDefinitionSchema
+    : emptyFactorySetupSourceSchema;
+  const source = schema.safeParse(factoryDefinitionFromBundle(bundle));
+  return { baseline: source.success ? { source: source.data } : null, pipelineAvailable: true };
 }
 
 export async function loadFactoryEditorSnapshot(
@@ -231,7 +251,7 @@ export async function loadFactoryEditorSnapshot(
   const head = await loadEditorHead(client, workspaceId, factoryId);
   if (!head) return null;
   const { activation, activationNumber, draft, factory } = head;
-  const [published, workingDraft, baseline, sandbox] = await Promise.all([
+  const [published, workingDraft, sandbox, repositories] = await Promise.all([
     activation
       ? readEditorDocument(client, workspaceId, factory.id, {
           kind: "revision",
@@ -239,11 +259,50 @@ export async function loadFactoryEditorSnapshot(
         })
       : null,
     draft ? editorDocument(client, { workspaceId, factoryId: factory.id }, draft, "draft") : null,
-    !activation && !draft ? loadEditorBaseline(client, workspaceId, factory) : null,
     loadWorkspaceSandboxOverview(client, workspaceId),
+    factory.is_default ? null : loadFactoryDefinitionRepositories(client, workspaceId, factory.id),
   ]);
   // If the workspace is deleted during the load, the observed activation can no longer be resolved.
   if (activation && !published) return null;
+  const readySandboxProviders = sandbox.enabledProviders.filter(
+    (provider) => sandbox.connections[provider]?.status === "connected",
+  );
+  const initialSandboxProvider = readySandboxProviders.includes(sandbox.activeProvider)
+    ? sandbox.activeProvider
+    : (readySandboxProviders[0] ?? sandbox.activeProvider);
+  const workingPipelineId = published?.bundle.pipelineId ?? workingDraft?.bundle.pipelineId;
+  const [baselineSetup, workingPipeline] = await Promise.all([
+    !activation && !draft
+      ? loadEditorBaseline(
+          client,
+          workspaceId,
+          factory,
+          repositories ? { repositories, sandboxProvider: initialSandboxProvider } : undefined,
+        )
+      : null,
+    repositories && workingPipelineId
+      ? client
+          .from("pipelines")
+          .select("id")
+          .eq("workspace_id", workspaceId)
+          .eq("factory_id", factory.id)
+          .eq("id", workingPipelineId)
+          .maybeSingle()
+      : null,
+  ]);
+  if (workingPipeline?.error) throw workingPipeline.error;
+  const pipelineAvailable = baselineSetup?.pipelineAvailable ?? Boolean(workingPipeline?.data);
+  const remainingPipeline =
+    repositories && workingPipelineId && !pipelineAvailable
+      ? await client
+          .from("pipelines")
+          .select("id")
+          .eq("workspace_id", workspaceId)
+          .eq("factory_id", factory.id)
+          .limit(1)
+          .maybeSingle()
+      : null;
+  if (remainingPipeline?.error) throw remainingPipeline.error;
   let routingMode: FactoryEditorSnapshot["routingMode"];
   let routingCanary: FactoryEditorSnapshot["routingCanary"];
   let routingCanaryAlertId: FactoryEditorSnapshot["routingCanaryAlertId"];
@@ -278,10 +337,20 @@ export async function loadFactoryEditorSnapshot(
     ...(routingCanaryAlertId ? { routingCanaryAlertId } : {}),
     published: publishedDefinition,
     draft: draftDefinition,
-    baseline,
-    readySandboxProviders: sandbox.enabledProviders.filter(
-      (provider) => sandbox.connections[provider]?.status === "connected",
-    ),
+    baseline: baselineSetup?.baseline ?? null,
+    readySandboxProviders,
+    ...(repositories
+      ? {
+          setup: {
+            repositories: repositories
+              .map(({ id, full_name }) => ({ id, fullName: full_name }))
+              .sort((left, right) => left.fullName.localeCompare(right.fullName)),
+            hasPipeline: pipelineAvailable || Boolean(remainingPipeline?.data),
+            pipelineAvailable,
+            enabledSandboxProviders: sandbox.enabledProviders,
+          },
+        }
+      : {}),
   };
 }
 

@@ -1391,6 +1391,7 @@ describe("SessionDetailPageClient", () => {
   it("keeps creator and creation time in the compact session header", () => {
     const data = makeSessionDetailData();
     data.creatorDisplayName = "Ada Lovelace";
+    data.factoryName = "Delivery factory";
     const html = renderDetail({ data });
 
     expect(html).toContain("Ada Lovelace");
@@ -1400,6 +1401,8 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain(">2026-06-07 10:00 UTC</time>");
     expect(html).toContain("Original request");
     expect(html).toContain("acme/app");
+    expect(html).toContain("Factory: ");
+    expect(html).toContain("Delivery factory");
   });
 
   it("names the next selected stage without claiming to start it", () => {
@@ -1414,15 +1417,25 @@ describe("SessionDetailPageClient", () => {
     const html = renderDetail({ data });
     expect(html).toContain("Approve Product");
     expect(html).not.toContain("Approve &amp; start Security check");
-    expect(html).toContain("Approval queues the next selected stage (currently Security check).");
+    expect(html).toContain("Approval queues Security check.");
   });
 
-  it("attaches review controls to the artifact and keeps session context above stages", () => {
+  it("keeps the artifact and run content before the sticky decision in document order", () => {
     const html = renderDetail();
     const document = new DOMParser().parseFromString(html, "text/html");
     const artifact = document.querySelector('section[aria-label="Product artifact"]')!;
-    expect(artifact.textContent).toContain("Request changes");
-    expect(artifact.textContent).toContain("Approve Product");
+    const decision = document.getElementById("session-review-decision")!;
+    expect(decision.textContent).toContain("Request changes");
+    expect(decision.querySelector('[aria-label="Approve Product"]')?.textContent?.trim()).toMatch(
+      /Approve$/,
+    );
+    expect(
+      artifact.compareDocumentPosition(decision) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      document.getElementById("session-run-activity")!.compareDocumentPosition(decision) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(artifact.querySelector('[aria-label="Session context"]')).toBeNull();
     expect(document.querySelector('header [aria-label="Session context"]')).not.toBeNull();
     expect(html).not.toContain('aria-label="Current execution"');
@@ -1548,7 +1561,7 @@ describe("SessionDetailPageClient", () => {
   it("keeps Request changes when the viewer cannot approve", () => {
     const html = renderDetail({ canReview: false });
     expect(html).toContain("Request changes");
-    expect(html).toContain("You are not authorized to approve this stage.");
+    expect(html).toContain("Only stage approvers can approve.");
     expect(html).not.toContain("Approve Product");
   });
 
@@ -1772,7 +1785,9 @@ it("does not promise automatic archival for a Linear-linked manual-merge workflo
   const data = makeSessionDetailData();
   data.session.linearIssueId = "TEAM-123";
   const html = renderDetail({ data });
-  expect(html).toContain("Final-stage approval completes the session and may archive it.");
+  expect(html).toContain(
+    "Approval completes this session and may archive it. It doesn’t merge or deploy.",
+  );
   expect(html).not.toContain("completes and archives");
 });
 

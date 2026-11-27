@@ -159,6 +159,7 @@ export function StructuredFactoryDefinitionEditor({
   contextProposal,
   governanceHref,
   disabled,
+  expandAdvanced,
   namedReferences,
   onChange,
   publishedAgentRevision,
@@ -173,6 +174,7 @@ export function StructuredFactoryDefinitionEditor({
   contextProposal?: ContextDocumentReference;
   governanceHref?: string;
   disabled?: boolean;
+  expandAdvanced?: boolean;
   namedReferences?: ReferencePickerCatalog;
   onChange: (value: SerialFactoryDefinition) => void;
   publishedAgentRevision?: string;
@@ -300,23 +302,100 @@ export function StructuredFactoryDefinitionEditor({
     update("stages", next);
   }
 
-  return (
-    <fieldset className="min-w-0 space-y-7" disabled={disabled}>
-      <legend className="sr-only">Structured factory definition</legend>
-
-      <section aria-labelledby="definition-field-repositories" className="min-w-0 space-y-4">
-        <h3
-          className="type-section-title text-foreground"
-          id="definition-field-repositories"
-          tabIndex={-1}
-        >
-          Repository bindings
+  const advancedFields = (
+    <>
+      <section
+        aria-labelledby={`${editorId}-runtime`}
+        className="min-w-0 space-y-4 border-t border-border pt-6"
+      >
+        <h3 className="type-section-title text-foreground" id={`${editorId}-runtime`}>
+          Runtime
         </h3>
-        <FactoryRepositoryBindingsEditor
-          onChange={(patch) => onChange({ ...value, ...patch })}
-          repositories={repositories}
-          value={value}
-        />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <SelectField
+            id="definition-field-sandboxProvider"
+            disabled={disabled}
+            label="Sandbox provider"
+            onValueChange={(next) => {
+              if (disabled) return;
+              const provider = sandboxProviderSchema.safeParse(next);
+              if (provider.success) update("sandboxProvider", provider.data);
+            }}
+            options={SANDBOX_PROVIDERS.map((provider) => ({
+              label: sandboxLabels[provider],
+              value: provider,
+            }))}
+            value={value.sandboxProvider}
+          />
+          <SelectField
+            id="definition-field-agent-provider"
+            disabled={disabled}
+            label="Agent provider"
+            onValueChange={(next) => {
+              if (disabled) return;
+              const provider = agentConfigValueSchemas.agent_provider.safeParse(next);
+              if (!provider.success || provider.data === agent.provider) return;
+              updateAgent({
+                provider: provider.data,
+                model: getRecommendedAgentModel(provider.data),
+                effort: agentProviderSupportsEffort(provider.data) ? agent.effort : null,
+              });
+            }}
+            options={AGENT_PROVIDERS.map((provider) => ({
+              label: AGENT_PROVIDER_LABELS[provider],
+              value: provider,
+            }))}
+            value={agent.provider}
+          />
+          <TextField
+            id="definition-field-agent-model"
+            label="Model"
+            onChange={(model) => updateAgent({ model })}
+            value={agent.model}
+          />
+          <SelectField
+            id="definition-field-agent-effort"
+            disabled={
+              disabled || (!agentProviderSupportsEffort(agent.provider) && agent.effort === null)
+            }
+            emptyOption={AGENT_EFFORT_EMPTY_OPTION}
+            label="Reasoning effort"
+            onValueChange={(effort) => {
+              if (disabled) return;
+              if (!effort) {
+                updateAgent({ effort: null });
+                return;
+              }
+              const parsed = agentConfigValueSchemas.agent_effort.safeParse(effort);
+              if (parsed.success) updateAgent({ effort: parsed.data });
+            }}
+            options={AGENT_EFFORT_SELECT_OPTIONS}
+            value={agent.effort ?? ""}
+          />
+          {numericAgentFields.map(({ key, label, min, max }) => {
+            const number =
+              key === "stallTimeoutMs" ? stallTimeoutMsToMinutes(agent[key]) : agent[key];
+            return (
+              <Field key={key} label={label}>
+                <input
+                  className="ui-input"
+                  id={`definition-field-agent-${key}`}
+                  max={max}
+                  min={min}
+                  onChange={(event) => {
+                    const next = event.target.valueAsNumber;
+                    updateAgent({
+                      [key]: key === "stallTimeoutMs" ? stallTimeoutMinutesToMs(next) : next,
+                    });
+                  }}
+                  step={key === "stallTimeoutMs" ? "any" : 1}
+                  type="number"
+                  value={Number.isFinite(number) ? number : ""}
+                />
+              </Field>
+            );
+          })}
+        </div>
       </section>
 
       <section
@@ -326,7 +405,7 @@ export function StructuredFactoryDefinitionEditor({
         <h3 className="type-section-title text-foreground" id={`${editorId}-references`}>
           References
         </h3>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {referenceFields.map(({ key, label, empty, unavailable }) => {
             const options = namedReferences?.options[key] ?? [];
             const selected = findReference(options, value[key] ?? "");
@@ -645,98 +724,34 @@ export function StructuredFactoryDefinitionEditor({
         onChange={(next) => update("contextDocuments", next)}
       />
 
-      <section
-        aria-labelledby={`${editorId}-runtime`}
-        className="min-w-0 space-y-4 border-t border-border pt-6"
-      >
-        <h3 className="type-section-title text-foreground" id={`${editorId}-runtime`}>
-          Runtime
+      <ModelRoutingEditor
+        benchmarksHref={benchmarksHref}
+        catalog={namedReferences}
+        qualification={routingQualification}
+        disabled={disabled}
+        onChange={(next) => update("modelRouting", next)}
+        value={value.modelRouting}
+      />
+    </>
+  );
+
+  return (
+    <fieldset className="min-w-0 space-y-7" disabled={disabled}>
+      <legend className="sr-only">Structured factory definition</legend>
+
+      <section aria-labelledby="definition-field-repositories" className="min-w-0 space-y-4">
+        <h3
+          className="type-section-title text-foreground"
+          id="definition-field-repositories"
+          tabIndex={-1}
+        >
+          Repository bindings
         </h3>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <SelectField
-            id="definition-field-sandboxProvider"
-            disabled={disabled}
-            label="Sandbox provider"
-            onValueChange={(next) => {
-              if (disabled) return;
-              const provider = sandboxProviderSchema.safeParse(next);
-              if (provider.success) update("sandboxProvider", provider.data);
-            }}
-            options={SANDBOX_PROVIDERS.map((provider) => ({
-              label: sandboxLabels[provider],
-              value: provider,
-            }))}
-            value={value.sandboxProvider}
-          />
-          <SelectField
-            id="definition-field-agent-provider"
-            disabled={disabled}
-            label="Agent provider"
-            onValueChange={(next) => {
-              if (disabled) return;
-              const provider = agentConfigValueSchemas.agent_provider.safeParse(next);
-              if (!provider.success || provider.data === agent.provider) return;
-              updateAgent({
-                provider: provider.data,
-                model: getRecommendedAgentModel(provider.data),
-                effort: agentProviderSupportsEffort(provider.data) ? agent.effort : null,
-              });
-            }}
-            options={AGENT_PROVIDERS.map((provider) => ({
-              label: AGENT_PROVIDER_LABELS[provider],
-              value: provider,
-            }))}
-            value={agent.provider}
-          />
-          <TextField
-            id="definition-field-agent-model"
-            label="Model"
-            onChange={(model) => updateAgent({ model })}
-            value={agent.model}
-          />
-          <SelectField
-            id="definition-field-agent-effort"
-            disabled={
-              disabled || (!agentProviderSupportsEffort(agent.provider) && agent.effort === null)
-            }
-            emptyOption={AGENT_EFFORT_EMPTY_OPTION}
-            label="Reasoning effort"
-            onValueChange={(effort) => {
-              if (disabled) return;
-              if (!effort) {
-                updateAgent({ effort: null });
-                return;
-              }
-              const parsed = agentConfigValueSchemas.agent_effort.safeParse(effort);
-              if (parsed.success) updateAgent({ effort: parsed.data });
-            }}
-            options={AGENT_EFFORT_SELECT_OPTIONS}
-            value={agent.effort ?? ""}
-          />
-          {numericAgentFields.map(({ key, label, min, max }) => {
-            const number =
-              key === "stallTimeoutMs" ? stallTimeoutMsToMinutes(agent[key]) : agent[key];
-            return (
-              <Field key={key} label={label}>
-                <input
-                  className="ui-input"
-                  id={`definition-field-agent-${key}`}
-                  max={max}
-                  min={min}
-                  onChange={(event) => {
-                    const next = event.target.valueAsNumber;
-                    updateAgent({
-                      [key]: key === "stallTimeoutMs" ? stallTimeoutMinutesToMs(next) : next,
-                    });
-                  }}
-                  step={key === "stallTimeoutMs" ? "any" : 1}
-                  type="number"
-                  value={Number.isFinite(number) ? number : ""}
-                />
-              </Field>
-            );
-          })}
-        </div>
+        <FactoryRepositoryBindingsEditor
+          onChange={(patch) => onChange({ ...value, ...patch })}
+          repositories={repositories}
+          value={value}
+        />
       </section>
 
       <section
@@ -745,11 +760,11 @@ export function StructuredFactoryDefinitionEditor({
       >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3
-            className="type-section-title text-foreground"
+            className="type-section-title scroll-mt-24 text-foreground"
             id="definition-field-stages"
             tabIndex={-1}
           >
-            Workflow
+            Pipeline
           </h3>
           <button
             className="ui-button"
@@ -760,16 +775,26 @@ export function StructuredFactoryDefinitionEditor({
             Add stage
           </button>
         </div>
-        <Field label="Operating rules">
-          <textarea
-            className="ui-textarea font-mono"
-            id="definition-field-operatingRulesMd"
-            maxLength={20_000}
-            onChange={(event) => update("operatingRulesMd", event.target.value)}
-            rows={4}
-            value={value.operatingRulesMd}
-          />
-        </Field>
+        {!stages.length ? (
+          <p className="type-secondary text-muted">
+            Add the first stage. Stages run in order and wait for approval before continuing.
+          </p>
+        ) : null}
+        <details className="min-w-0 space-y-2">
+          <summary className="w-fit cursor-pointer py-1 text-sm font-medium">
+            Pipeline-wide rules
+          </summary>
+          <Field label="Operating rules">
+            <textarea
+              className="ui-textarea font-mono"
+              id="definition-field-operatingRulesMd"
+              maxLength={20_000}
+              onChange={(event) => update("operatingRulesMd", event.target.value)}
+              rows={4}
+              value={value.operatingRulesMd}
+            />
+          </Field>
+        </details>
         <p className="sr-only" role="status">
           {stageAnnouncement}
         </p>
@@ -883,7 +908,7 @@ export function StructuredFactoryDefinitionEditor({
                         id={`${stageField}-approverMemberIds`}
                         label="Approvers"
                         disabled={disabled}
-                        description="Choose who can approve this stage before the session advances."
+                        description="If no members are selected, workspace owners and admins can approve."
                         emptyMessage="No human members are available."
                         onValuesChange={(approverMemberIds) =>
                           updateStage(index, { approverMemberIds })
@@ -930,14 +955,16 @@ export function StructuredFactoryDefinitionEditor({
           })}
         </ol>
       </section>
-      <ModelRoutingEditor
-        benchmarksHref={benchmarksHref}
-        catalog={namedReferences}
-        qualification={routingQualification}
-        disabled={disabled}
-        onChange={(next) => update("modelRouting", next)}
-        value={value.modelRouting}
-      />
+      <details
+        className="min-w-0 border-t border-border pt-3"
+        id="definition-advanced"
+        open={expandAdvanced || undefined}
+      >
+        <summary className="w-fit cursor-pointer py-2 text-sm font-medium">
+          Runtime and advanced settings
+        </summary>
+        <div className="min-w-0 space-y-7 pt-3">{advancedFields}</div>
+      </details>
     </fieldset>
   );
 }

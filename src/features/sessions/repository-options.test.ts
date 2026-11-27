@@ -6,12 +6,17 @@ import {
 } from "@/features/sessions/repository-options";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
+const DEFAULT_FACTORY_ID = "00000000-0000-4000-8000-000000000010";
 
 function buildSupabase(rows: Array<Record<string, unknown>>) {
+  let selected = rows;
   const query = {
-    eq: vi.fn(() => query),
+    eq: vi.fn((column: string, value: unknown) => {
+      if (column === "factory_id") selected = selected.filter((row) => row.factory_id === value);
+      return query;
+    }),
     order: vi.fn(() => query),
-    range: vi.fn(async () => ({ data: rows, error: null })),
+    range: vi.fn(async () => ({ data: selected, error: null })),
     select: vi.fn(() => query),
   };
   const supabase = {
@@ -21,22 +26,31 @@ function buildSupabase(rows: Array<Record<string, unknown>>) {
 }
 
 describe("loadSessionRepositoryOptionsWithPrimary", () => {
-  it("returns authorized options and the primary candidate from one repository result", async () => {
+  it("returns valid default-owned repositories but excludes a non-default repo even for a workspace operator", async () => {
     const { query, supabase } = buildSupabase([
       {
         full_name: "acme/api",
+        factory_id: DEFAULT_FACTORY_ID,
         id: "repo-api",
         workspace_repository_profiles: [],
       },
       {
         full_name: "acme/web",
+        factory_id: DEFAULT_FACTORY_ID,
         id: "repo-web",
+        workspace_repository_profiles: [{ is_primary: true }],
+      },
+      {
+        full_name: "example/bench",
+        factory_id: "00000000-0000-4000-8000-000000000020",
+        id: "repo-bench",
         workspace_repository_profiles: [{ is_primary: true }],
       },
     ]);
 
     await expect(
       loadSessionRepositoryOptionsWithPrimary({
+        factoryId: DEFAULT_FACTORY_ID,
         supabase: supabase as never,
         workspaceId: WORKSPACE_ID,
       }),
@@ -50,8 +64,9 @@ describe("loadSessionRepositoryOptionsWithPrimary", () => {
     expect(supabase.from).toHaveBeenCalledTimes(1);
     expect(supabase.from).toHaveBeenCalledWith("github_repositories");
     expect(query.select).toHaveBeenCalledWith(
-      "id, full_name, workspace_repository_profiles(is_primary)",
+      "id, full_name, workspace_repository_profiles(is_primary), github_installations!inner(id)",
     );
+    expect(query.eq).toHaveBeenCalledWith("factory_id", DEFAULT_FACTORY_ID);
     expect(query.range).toHaveBeenCalledTimes(1);
   });
 });

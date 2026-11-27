@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
@@ -23,6 +23,7 @@ import {
   FactoryDefinitionSwitch,
   type FactoryDefinitionSelection,
 } from "@/features/factory-definition/factory-definition-switch";
+import { FactorySetupPanel } from "@/features/factory-definition/factory-setup-panel";
 import { FactoryMcpManifestInspector } from "@/features/factory-definition/mcp-manifest-inspector";
 import { useNamedReferences } from "@/features/factory-definition/named-references";
 import { PublishReview, type PublishTarget } from "@/features/factory-definition/publish-review";
@@ -66,11 +67,14 @@ import {
   MAX_FACTORY_SCORER_REVISIONS,
   type SerialFactoryDefinition,
 } from "@/lib/factory-definitions/schema";
+import {
+  factorySetupMutationResponseSchema,
+  type FactorySetupAction,
+} from "@/lib/factory-definitions/setup-contracts";
 import type { FactorySecretBindingScope } from "@/lib/factory-secret-bindings/contracts";
 import {
   workspaceAnalyticsPath,
   workspaceAgentsPath,
-  workspaceBasePath,
   workspaceBenchmarksPath,
   workspaceContextPath,
   workspaceFactoryDefinitionPath,
@@ -100,7 +104,8 @@ type Operation =
   | "activate-routing"
   | "select"
   | "history"
-  | "rollback";
+  | "rollback"
+  | "setup";
 const activationSavedSchema = z.object({ activation: z.object({ revisionId: z.string().uuid() }) });
 
 function sourceText(source: SerialFactoryDefinition) {
@@ -201,6 +206,16 @@ function errorText(error: unknown) {
   return error instanceof Error ? error.message : "Could not update the factory definition.";
 }
 
+function revealDefinitionControl(element: HTMLElement) {
+  for (
+    let disclosure = element.parentElement?.closest("details");
+    disclosure;
+    disclosure = disclosure.parentElement?.closest("details")
+  ) {
+    disclosure.open = true;
+  }
+}
+
 export function FactoryDefinitionEditor({
   contextProposal,
   invalidContextProposal,
@@ -212,7 +227,7 @@ export function FactoryDefinitionEditor({
   workspaceId,
   workspaceSlug,
   selection,
-  repositories,
+  repositories: initialRepositories,
   recoveryKey,
 }: {
   contextProposal?: ContextDocumentReference;
@@ -235,6 +250,12 @@ export function FactoryDefinitionEditor({
   const initialPromptRevisionId = initialAgent?.promptRevisionId;
   const editorApi = `${api}/editor`;
   const [snapshot, setSnapshot] = useState<FactoryEditorSnapshot | null>(null);
+  const [setupNeedsReload, setSetupNeedsReload] = useState(false);
+  const setupRepositories = snapshot?.setup?.repositories;
+  const repositories = useMemo(
+    () => setupRepositories?.map((repo) => ({ ...repo, isArchived: false })) ?? initialRepositories,
+    [initialRepositories, setupRepositories],
+  );
   const [history, setHistory] = useState<FactoryEditorHistory | null>(null);
   const [edit, setEdit] = useState<Edit | null>(null);
   const [selected, setSelected] = useState<FactoryEditorDocument | null>(null);
@@ -265,6 +286,7 @@ export function FactoryDefinitionEditor({
   const conflictReloadRef = useRef<HTMLButtonElement>(null);
   const editControlsRef = useRef<HTMLDivElement>(null);
   const scrolledSelectionUrl = useRef<string | null>(null);
+  const nextSetupFocus = useRef<string | null>(null);
   const dirty = edit ? editChanged(edit) : false;
   const latestSource = snapshot ? workingSource(snapshot) : undefined;
   const stale =
@@ -288,6 +310,11 @@ export function FactoryDefinitionEditor({
     history?.activations.find(({ revisionId }) => revisionId === selectedRevision)
       ?.activationNumber;
   const draft = snapshot?.draft ?? null;
+  const emptyPipeline = edit
+    ? edit.input.kind === "structured"
+      ? !edit.input.value.stages.length
+      : !dirty && !edit.original.stages.length
+    : false;
   const namedReferences = useNamedReferences(
     factoryId && snapshot ? `${editorApi}/references` : null,
     JSON.stringify(
@@ -375,6 +402,7 @@ export function FactoryDefinitionEditor({
   const anchorReady =
     Boolean(anchorCandidate) &&
     (!selection?.test || anchorCandidate?.id === (requestedRevision ?? requestedDraft));
+  const showHistory = !snapshot?.setup || Boolean(history?.activations.length || selection);
 
   const loadSelection = useCallback(
     async (target: Selection | null, manualActivation?: number) => {
@@ -426,6 +454,12 @@ export function FactoryDefinitionEditor({
   }, [busy, conflict, feedback, feedbackAtDraft]);
 
   useEffect(() => {
+    if (busy || !nextSetupFocus.current) return;
+    document.getElementById(nextSetupFocus.current)?.focus();
+    nextSetupFocus.current = null;
+  }, [busy]);
+
+  useEffect(() => {
     const { hash, href } = window.location;
     const candidateAnchor = anchorReady && hash === "#candidate-tests";
     const rollbackAnchor =
@@ -435,13 +469,16 @@ export function FactoryDefinitionEditor({
     const contextAnchor = Boolean(
       contextProposal && snapshot && hash === "#definition-context-documents",
     );
+    const setupAnchor =
+      snapshot && (hash === "#factory-setup" || hash === "#definition-field-stages");
     if (
-      (!candidateAnchor && !rollbackAnchor && !contextAnchor) ||
+      (!candidateAnchor && !rollbackAnchor && !contextAnchor && !setupAnchor) ||
       scrolledSelectionUrl.current === href
     )
       return;
     const anchor = document.getElementById(hash.slice(1));
     if (!anchor) return;
+    revealDefinitionControl(anchor);
     anchor.scrollIntoView?.({ block: "start" });
     if (contextAnchor) anchor.focus({ preventScroll: true });
     scrolledSelectionUrl.current = href;
@@ -473,6 +510,7 @@ export function FactoryDefinitionEditor({
         const current = await loadWorkspace(signal);
         if (signal.aborted) return;
         setSnapshot(current.snapshot);
+        setSetupNeedsReload(false);
         setHistory(current.history);
         const recovered = recoveryKey ? recoverableEdits.get(recoveryKey) : undefined;
         setEdit(
@@ -560,6 +598,7 @@ export function FactoryDefinitionEditor({
       const selectionAtStart = selectionRequest.current;
       const current = await loadWorkspace();
       setSnapshot(current.snapshot);
+      setSetupNeedsReload(false);
       setHistory(current.history);
       setPreview(null);
       setConflict(false);
@@ -596,6 +635,10 @@ export function FactoryDefinitionEditor({
       replaceInput({ kind: "json", text: sourceText(edit.input.value) });
       return;
     }
+    if (!dirty && !edit.original.stages.length) {
+      replaceInput({ kind: "structured", value: edit.original });
+      return;
+    }
     await run("preview", async () => {
       const content = await compile(edit);
       setEdit({ ...edit, input: { kind: "structured", value: content.source } });
@@ -629,6 +672,66 @@ export function FactoryDefinitionEditor({
       setEdit(editFrom(next, edit.input.kind));
       setPreview(null);
       setFeedback({ kind: "success", text: "Draft saved." }, true);
+    });
+  }
+
+  async function provision(action: FactorySetupAction) {
+    if (!snapshot?.setup || dirty || locked || setupNeedsReload) return;
+    await run("setup", async () => {
+      let acknowledged = false;
+      try {
+        await fetchFactoryEditor(
+          `${api}/setup`,
+          factorySetupMutationResponseSchema,
+          factoryEditorPost({
+            ...action,
+            expectedActivationNumber: snapshot.activationNumber,
+            expectedDraftId: snapshot.draft?.id ?? null,
+          }),
+        );
+        acknowledged = true;
+      } catch (error) {
+        if (
+          error instanceof FactoryEditorRequestError &&
+          [400, 401, 403, 404, 409, 422].includes(error.status)
+        ) {
+          throw error;
+        }
+      }
+      notifySessionRepositoriesChanged(workspaceId);
+      const current = await loadWorkspace().catch(() => null);
+      if (!current) {
+        setSetupNeedsReload(true);
+        setFeedback({
+          kind: "error",
+          text: acknowledged
+            ? "Setup was saved, but its current state couldn't be loaded. Reload definition before continuing."
+            : "Couldn't confirm the setup request. Reload definition before trying again.",
+        });
+        return;
+      }
+      setSnapshot(current.snapshot);
+      setHistory(current.history);
+      setEdit(editFrom(current.snapshot, edit?.input.kind));
+      setPreview(null);
+      refreshProfile();
+      if (!acknowledged) {
+        nextSetupFocus.current = "factory-setup";
+        setFeedback({
+          kind: "info",
+          text: "Couldn't confirm the setup request. Check the refreshed setup before trying again.",
+        });
+        return;
+      }
+      nextSetupFocus.current =
+        action.action === "create-pipeline" ? "definition-field-stages" : "factory-setup";
+      setFeedback({
+        kind: "success",
+        text:
+          action.action === "assign-repository"
+            ? "Repository assigned."
+            : "Pipeline created. Add a stage to start your draft.",
+      });
     });
   }
 
@@ -844,11 +947,7 @@ export function FactoryDefinitionEditor({
     <PageContainer className="max-w-[1240px]">
       <PageHeader
         title="Factory definition"
-        description={
-          factoryName
-            ? `Edit the configuration new sessions use in ${factoryName} and inspect its published revisions.`
-            : "Edit the configuration new sessions use and inspect published revisions."
-        }
+        description={factorySelection ? undefined : factoryName}
         actions={
           <>
             {factorySelection ? (
@@ -886,16 +985,35 @@ export function FactoryDefinitionEditor({
           workspaceSlug={workspaceSlug}
         />
       ) : null}
-      <div className="mb-6 space-y-2">
-        {!feedbackAtDraft ? <InlineActionMessage message={feedback} /> : null}
-        {loading ? (
-          <p className="type-secondary text-muted" role="status">
-            Loading definition…
-          </p>
-        ) : null}
-      </div>
-      {snapshot ? (
-        <div className="grid min-w-0 gap-10 xl:grid-cols-[minmax(0,1fr)_340px]">
+      {(!feedbackAtDraft && feedback) || loading ? (
+        <div className="mb-6 space-y-2">
+          {!feedbackAtDraft ? <InlineActionMessage message={feedback} /> : null}
+          {loading ? (
+            <p className="type-secondary text-muted" role="status">
+              Loading definition…
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {snapshot?.setup ? (
+        <FactorySetupPanel
+          api={api}
+          busy={locked || setupNeedsReload}
+          dirty={dirty}
+          onProvision={provision}
+          pending={pending === "setup"}
+          refresh={profileRefresh}
+          setup={snapshot.setup}
+          snapshot={snapshot}
+          workspaceSlug={workspaceSlug}
+        />
+      ) : null}
+      {snapshot && (edit || !snapshot.setup || conflict || selected) ? (
+        <div
+          className={
+            showHistory ? "grid min-w-0 gap-10 xl:grid-cols-[minmax(0,1fr)_340px]" : "min-w-0"
+          }
+        >
           <div className="min-w-0 space-y-8">
             <PageSection anchorId="definition" title="Working definition">
               <div className="ui-sheet space-y-5 p-4 sm:p-5">
@@ -1075,6 +1193,9 @@ export function FactoryDefinitionEditor({
                           factory: factoryId,
                         })}
                         disabled={busy}
+                        expandAdvanced={Boolean(
+                          initialAgent || initialScorerRevisionId || contextProposal,
+                        )}
                         repositories={repositories}
                         namedReferences={namedReferences}
                         publishedAgentRevision={snapshot.published?.source.implementationAgent}
@@ -1110,7 +1231,7 @@ export function FactoryDefinitionEditor({
                     <div className="flex flex-wrap items-center gap-2 border-t border-border pt-4">
                       <button
                         className="ui-button"
-                        disabled={locked}
+                        disabled={locked || emptyPipeline}
                         onClick={() => void validate()}
                         type="button"
                       >
@@ -1122,7 +1243,7 @@ export function FactoryDefinitionEditor({
                       </button>
                       <button
                         className="ui-button-primary"
-                        disabled={locked || (!dirty && Boolean(snapshot.draft))}
+                        disabled={locked || emptyPipeline || (!dirty && Boolean(snapshot.draft))}
                         onClick={() => void save()}
                         type="button"
                       >
@@ -1183,6 +1304,7 @@ export function FactoryDefinitionEditor({
                                           : null);
                                       if (!control) return;
                                       event.preventDefault();
+                                      revealDefinitionControl(control);
                                       control.focus({ preventScroll: true });
                                       control.scrollIntoView?.({ block: "center" });
                                     }}
@@ -1256,15 +1378,11 @@ export function FactoryDefinitionEditor({
                       </p>
                     ) : null}
                   </>
-                ) : (
+                ) : !snapshot.setup ? (
                   <p className="type-secondary text-muted">
                     <Link
                       className="text-accent underline underline-offset-2"
-                      href={
-                        factoryId
-                          ? `${workspaceBasePath(workspaceSlug)}?${new URLSearchParams({ factory: factoryId })}`
-                          : workspaceBasePath(workspaceSlug)
-                      }
+                      href={`${workspaceSettingsPath(workspaceSlug, { category: "integrations" })}#pipeline`}
                     >
                       Set up a pipeline
                     </Link>{" "}
@@ -1277,7 +1395,7 @@ export function FactoryDefinitionEditor({
                     </Link>{" "}
                     to create the first draft for this factory.
                   </p>
-                )}
+                ) : null}
               </div>
             </PageSection>
             <FactoryRoutingPreview
@@ -1332,20 +1450,22 @@ export function FactoryDefinitionEditor({
                 },
               ]}
             />
-            <PageSection anchorId="semantic-diff" title="Semantic diff">
-              {preview || snapshot.draft ? (
-                <FactorySemanticDiff
-                  before={snapshot.published?.bundle ?? null}
-                  after={(preview ?? snapshot.draft)?.bundle ?? null}
-                  afterLabel={preview ? "Validated edit" : "Saved draft"}
-                  {...diffOptions}
-                />
-              ) : (
-                <p className="type-secondary text-muted">
-                  Validate an edit to compare it with the published definition.
-                </p>
-              )}
-            </PageSection>
+            {preview || snapshot.draft || snapshot.published ? (
+              <PageSection anchorId="semantic-diff" title="Semantic diff">
+                {preview || snapshot.draft ? (
+                  <FactorySemanticDiff
+                    before={snapshot.published?.bundle ?? null}
+                    after={(preview ?? snapshot.draft)?.bundle ?? null}
+                    afterLabel={preview ? "Validated edit" : "Saved draft"}
+                    {...diffOptions}
+                  />
+                ) : (
+                  <p className="type-secondary text-muted">
+                    Validate an edit to compare it with the published definition.
+                  </p>
+                )}
+              </PageSection>
+            ) : null}
             {selected && !selectedMatchesDraft ? (
               <PageSection
                 anchorId="selected-revision-diff"
@@ -1439,81 +1559,87 @@ export function FactoryDefinitionEditor({
               </PageSection>
             ) : null}
           </div>
-          <FactoryRevisionHistory
-            activations={history?.activations ?? []}
-            activeActivationNumber={snapshot.activationNumber}
-            activeRevisionId={snapshot.published?.id ?? null}
-            selectedRevisionId={selectedRevision}
-            selectedActivationNumber={selectedActivationNumber}
-            selectedDocument={selected}
-            nextBeforeActivationNumber={history?.nextBeforeActivationNumber ?? null}
-            busy={busy}
-            canManage={!dirty && !stale && !conflict}
-            activationEligible={!restoreHeadChanged && revisionTests.eligible}
-            compareHref={selected && !selectedMatchesDraft ? "#selected-revision-diff" : undefined}
-            passingTest={revisionTests.passingTest}
-            testHref={
-              selected && revisionTests.passingTest
-                ? receiptHref(selected, revisionTests.passingTest.id)
-                : undefined
-            }
-            activationBlockReason={
-              restoreConflict ??
-              (dirty ? "Save or discard working edits before rolling back." : conflictReason) ??
-              (!revisionTests.eligible
-                ? (revisionTests.panel.error ??
-                  revisionTests.panel.eligibility?.reason ??
-                  "This revision needs a passing configuration test for the current activation.")
-                : null)
-            }
-            candidateTests={
-              historyCandidate ? (
-                <div
-                  className="scroll-mt-8"
-                  id={!draft || useHistoricalTestAnchor ? "candidate-tests" : undefined}
-                >
-                  {restoreConflict ? (
-                    <p className="ui-sheet type-secondary mb-3 p-4 text-muted" role="status">
-                      {restoreConflict}
-                    </p>
-                  ) : null}
-                  <div className="scroll-mt-8" id="selected-revision-tests">
-                    <CandidateTestPanel
-                      {...revisionTests.panel}
-                      activationNumber={activationNumber}
-                      target={{
-                        kind: historyCandidate.kind,
-                        id: historyCandidate.id,
-                        digest: historyCandidate.digest,
-                      }}
-                      purpose={isRollbackCandidate ? "rollback" : "history"}
-                      allowStart={!restoreHeadChanged && !locked && !dirty && revisionTests.canTest}
-                      disableReason={
-                        conflictReason ??
-                        (dirty && isRollbackCandidate
-                          ? "Save or discard your edits before testing a revision."
-                          : null)
-                      }
-                      evidenceHref={(test) => receiptHref(historyCandidate, test)}
-                    />
+          {showHistory ? (
+            <FactoryRevisionHistory
+              activations={history?.activations ?? []}
+              activeActivationNumber={snapshot.activationNumber}
+              activeRevisionId={snapshot.published?.id ?? null}
+              selectedRevisionId={selectedRevision}
+              selectedActivationNumber={selectedActivationNumber}
+              selectedDocument={selected}
+              nextBeforeActivationNumber={history?.nextBeforeActivationNumber ?? null}
+              busy={busy}
+              canManage={!dirty && !stale && !conflict}
+              activationEligible={!restoreHeadChanged && revisionTests.eligible}
+              compareHref={
+                selected && !selectedMatchesDraft ? "#selected-revision-diff" : undefined
+              }
+              passingTest={revisionTests.passingTest}
+              testHref={
+                selected && revisionTests.passingTest
+                  ? receiptHref(selected, revisionTests.passingTest.id)
+                  : undefined
+              }
+              activationBlockReason={
+                restoreConflict ??
+                (dirty ? "Save or discard working edits before rolling back." : conflictReason) ??
+                (!revisionTests.eligible
+                  ? (revisionTests.panel.error ??
+                    revisionTests.panel.eligibility?.reason ??
+                    "This revision needs a passing configuration test for the current activation.")
+                  : null)
+              }
+              candidateTests={
+                historyCandidate ? (
+                  <div
+                    className="scroll-mt-8"
+                    id={!draft || useHistoricalTestAnchor ? "candidate-tests" : undefined}
+                  >
+                    {restoreConflict ? (
+                      <p className="ui-sheet type-secondary mb-3 p-4 text-muted" role="status">
+                        {restoreConflict}
+                      </p>
+                    ) : null}
+                    <div className="scroll-mt-8" id="selected-revision-tests">
+                      <CandidateTestPanel
+                        {...revisionTests.panel}
+                        activationNumber={activationNumber}
+                        target={{
+                          kind: historyCandidate.kind,
+                          id: historyCandidate.id,
+                          digest: historyCandidate.digest,
+                        }}
+                        purpose={isRollbackCandidate ? "rollback" : "history"}
+                        allowStart={
+                          !restoreHeadChanged && !locked && !dirty && revisionTests.canTest
+                        }
+                        disableReason={
+                          conflictReason ??
+                          (dirty && isRollbackCandidate
+                            ? "Save or discard your edits before testing a revision."
+                            : null)
+                        }
+                        evidenceHref={(test) => receiptHref(historyCandidate, test)}
+                      />
+                    </div>
                   </div>
-                </div>
-              ) : null
-            }
-            onSelect={(activation) => void selectRevision(activation)}
-            onLoadMore={() => void loadMore()}
-            onRollback={rollback}
-            revisionHref={(revision, activation) =>
-              workspaceFactoryDefinitionPath(workspaceSlug, {
-                revision,
-                activation,
-                factory: factoryId,
-              })
-            }
-            sourceDraftHref={(draft) =>
-              workspaceFactoryDefinitionPath(workspaceSlug, { draft, factory: factoryId })
-            }
-          />
+                ) : null
+              }
+              onSelect={(activation) => void selectRevision(activation)}
+              onLoadMore={() => void loadMore()}
+              onRollback={rollback}
+              revisionHref={(revision, activation) =>
+                workspaceFactoryDefinitionPath(workspaceSlug, {
+                  revision,
+                  activation,
+                  factory: factoryId,
+                })
+              }
+              sourceDraftHref={(draft) =>
+                workspaceFactoryDefinitionPath(workspaceSlug, { draft, factory: factoryId })
+              }
+            />
+          ) : null}
         </div>
       ) : null}
     </PageContainer>
