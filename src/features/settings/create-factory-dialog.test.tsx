@@ -9,8 +9,8 @@ import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { CreateFactoryDialog } from "@/features/settings/create-factory-dialog";
 import { FACTORY_SLUG_TAKEN } from "@/lib/factories/contracts";
 
-const push = vi.hoisted(() => vi.fn());
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+const { push, refresh } = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push, refresh }) }));
 
 const workspaceId = "00000000-0000-4000-8000-000000000001";
 const factoryId = "00000000-0000-4000-8000-000000000002";
@@ -32,6 +32,7 @@ function setup() {
 afterEach(() => {
   cleanup();
   push.mockClear();
+  refresh.mockClear();
   vi.unstubAllGlobals();
 });
 
@@ -105,6 +106,7 @@ describe("New factory dialog", () => {
     expect(address).toHaveFocus();
     expect(name).toHaveValue("Default");
     expect(push).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
 
     await user.clear(address);
     await user.type(address, "internal");
@@ -118,5 +120,40 @@ describe("New factory dialog", () => {
       { scroll: false },
     );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      reason: "network request fails",
+      respond: () => Promise.reject(new TypeError("Disconnected")),
+    },
+    {
+      reason: "server returns 503",
+      respond: () => Promise.resolve(new Response(null, { status: 503 })),
+    },
+    {
+      reason: "receipt has no factory ID",
+      respond: () => Promise.resolve(Response.json({}, { status: 201 })),
+    },
+  ])("checks the authorized list rather than retrying when the $reason", async ({ respond }) => {
+    const fetch = vi.fn(respond);
+    vi.stubGlobal("fetch", fetch);
+    const { user, trigger } = setup();
+    await user.click(trigger);
+    const dialog = within(screen.getByRole("dialog"));
+    const name = dialog.getByRole("textbox", { name: "Factory name" });
+    const address = dialog.getByRole("textbox", { name: "Address" });
+    await user.type(name, "Support Ops");
+    await user.click(dialog.getByRole("button", { name: "Create factory" }));
+    expect(dialog.getByRole("alert")).toHaveTextContent("Couldn’t confirm creation");
+    expect(name).toHaveValue("Support Ops");
+    expect(address).toHaveValue("support-ops");
+    expect(dialog.queryByRole("button", { name: "Create factory" })).not.toBeInTheDocument();
+
+    await user.click(dialog.getByRole("button", { name: "Check factories" }));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(push).not.toHaveBeenCalled();
+    await waitFor(() => expect(trigger).toHaveFocus());
   });
 });

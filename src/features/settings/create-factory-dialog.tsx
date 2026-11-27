@@ -39,9 +39,12 @@ export function CreateFactoryDialog({
   const [navigating, startNavigation] = useTransition();
   const [name, setName] = useState("");
   const [editedSlug, setEditedSlug] = useState<string | null>(null);
-  const [error, setError] = useState<{ field: "name" | "slug" | "form"; message: string } | null>(
-    null,
-  );
+  const [error, setError] = useState<{
+    field: "name" | "slug" | "form" | "unconfirmed";
+    message: string;
+  } | null>(null);
+  const needsCheck = error?.field === "unconfirmed";
+  const fieldsLocked = submitting || needsCheck;
   const slug =
     editedSlug ?? slugifyAddress(name).slice(0, FACTORY_SLUG_MAX_LENGTH).replace(/-$/, "");
 
@@ -58,7 +61,7 @@ export function CreateFactoryDialog({
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (inFlight.current || navigating) return;
+    if (inFlight.current || navigating || needsCheck) return;
     const parsed = createFactorySchema.safeParse({ name, slug });
     if (!parsed.success) {
       const issue = parsed.error.issues[0];
@@ -77,6 +80,7 @@ export function CreateFactoryDialog({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(parsed.data),
       });
+      if (response.status >= 500) throw new Error();
       const payload = (await response.json().catch(() => null)) as {
         code?: unknown;
         error?: unknown;
@@ -86,8 +90,7 @@ export function CreateFactoryDialog({
         slugRef.current?.focus();
         return;
       }
-      const receipt = factoryReceiptSchema.safeParse(payload);
-      if (!response.ok || !receipt.success) {
+      if (!response.ok) {
         setError({
           field: "form",
           message: typeof payload?.error === "string" ? payload.error : genericError,
@@ -95,15 +98,19 @@ export function CreateFactoryDialog({
         return;
       }
 
+      const { factory } = factoryReceiptSchema.parse(payload);
       closingForNavigation.current = true;
       setOpen(false);
       startNavigation(() => {
-        router.push(workspaceFactoriesPath(workspaceSlug, receipt.data.factory.id), {
+        router.push(workspaceFactoriesPath(workspaceSlug, factory.id), {
           scroll: false,
         });
       });
     } catch {
-      setError({ field: "form", message: genericError });
+      setError({
+        field: "unconfirmed",
+        message: "Couldn’t confirm creation. Check the factory list before trying again.",
+      });
     } finally {
       inFlight.current = false;
       setSubmitting(false);
@@ -148,7 +155,7 @@ export function CreateFactoryDialog({
                 setName(event.currentTarget.value);
                 if (error?.field !== "slug" || editedSlug === null) setError(null);
               }}
-              readOnly={submitting}
+              readOnly={fieldsLocked}
               ref={nameRef}
               required
               value={name}
@@ -176,7 +183,7 @@ export function CreateFactoryDialog({
                 setEditedSlug(event.currentTarget.value);
                 if (error?.field !== "name") setError(null);
               }}
-              readOnly={submitting}
+              readOnly={fieldsLocked}
               ref={slugRef}
               required
               spellCheck={false}
@@ -191,7 +198,7 @@ export function CreateFactoryDialog({
               </p>
             ) : null}
           </div>
-          {error?.field === "form" ? (
+          {error?.field === "form" || needsCheck ? (
             <p className="ui-inline-message ui-inline-message-danger" role="alert">
               {error.message}
             </p>
@@ -208,10 +215,18 @@ export function CreateFactoryDialog({
             <button
               className="ui-button-primary min-h-11 sm:min-h-9"
               disabled={submitting}
-              type="submit"
+              onClick={
+                needsCheck
+                  ? () => {
+                      setOpen(false);
+                      router.refresh();
+                    }
+                  : undefined
+              }
+              type={needsCheck ? "button" : "submit"}
             >
               <ActionButtonLabel
-                idle="Create factory"
+                idle={needsCheck ? "Check factories" : "Create factory"}
                 pending={submitting}
                 pendingLabel="Creating…"
               />

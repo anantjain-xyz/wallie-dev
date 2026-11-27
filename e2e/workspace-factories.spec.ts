@@ -313,6 +313,38 @@ test("workspace factory creation preserves the default and lands in the returned
       ),
     ).toEqual([repository]);
 
+    await test.step("check the list after a committed create loses its response", async () => {
+      let committedStatus: number | undefined;
+      await page.route(
+        factoryApi,
+        async (route) => {
+          committedStatus = (await route.fetch()).status();
+          await route.abort();
+        },
+        { times: 1 },
+      );
+      await newFactory.press("Enter");
+      await name.fill("Support Ops");
+      await create.press("Enter");
+      const error = dialog.getByRole("alert");
+      await expect(error).toBeVisible();
+      expect(committedStatus).toBe(201);
+      await expect(error).toContainText("confirm creation", { timeout: 3000 });
+      await expect(name).toHaveValue("Support Ops");
+      await expect(address).toHaveValue("support-ops");
+      await expect(create).toHaveCount(0);
+      await capture(page, info, "07-mobile-check-factories");
+
+      await dialog.getByRole("button", { name: "Check factories" }).press("Enter");
+      await expect(dialog).toHaveCount(0);
+      await expect(newFactory).toBeFocused();
+      await expect(page).toHaveURL((url) => url.pathname + url.search + url.hash === factoriesPath);
+      await expect(factories.getByRole("listitem")).toHaveCount(3);
+      await expect(
+        factories.getByRole("listitem").filter({ hasText: "Support Ops" }),
+      ).toContainText("support-ops");
+    });
+
     for (const { role, email } of viewers) {
       await page.context().clearCookies();
       await signInViaMagicLink(page, sessionsPath, { baseURL: base, email });
@@ -321,7 +353,7 @@ test("workspace factory creation preserves the default and lands in the returned
       await expect(factoriesHeading).toBeVisible();
       if (role === "admin") {
         await expect(newFactory).toBeVisible();
-        await expect(factories.getByRole("listitem")).toHaveCount(2);
+        await expect(factories.getByRole("listitem")).toHaveCount(3);
         const createdAsAdmin = await page.request.post(factoryApi, {
           data: { name: "Operations", slug: "operations" },
         });
