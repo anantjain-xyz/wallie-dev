@@ -1081,6 +1081,13 @@ function CreateSessionDialogBody({
     }
   }
 
+  const visibleErrorMessage =
+    launchConflictsWithRetry || factoryConflictsWithRetry ? null : errorMessage;
+  const originalDraftAction = openOriginalDraft ? (
+    <button className="ui-button min-h-9" onClick={openOriginalDraft} type="button">
+      Open original draft
+    </button>
+  ) : null;
   const draftHasEdits = Boolean(
     prompt ||
     title ||
@@ -1122,7 +1129,7 @@ function CreateSessionDialogBody({
         title="Start a new session"
         onCloseAutoFocus={onCloseAutoFocus}
         onOpenAutoFocus={(event) => {
-          if (errorMessage) {
+          if (visibleErrorMessage) {
             event.preventDefault();
             errorRef.current?.focus();
           }
@@ -1149,7 +1156,18 @@ function CreateSessionDialogBody({
               }
             }}
           >
-            {errorMessage ? (
+            {launchConflictsWithRetry && !factoryConflictsWithRetry ? (
+              <div className="space-y-2 rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2">
+                <p className="text-sm text-warning" role="status">
+                  Another request is unconfirmed.
+                  {openOriginalDraft
+                    ? " Retry it from the original draft."
+                    : " Close this link and reopen New session to retry it."}
+                </p>
+                {originalDraftAction}
+              </div>
+            ) : null}
+            {visibleErrorMessage ? (
               <div
                 aria-live="polite"
                 id="create-session-error"
@@ -1158,7 +1176,7 @@ function CreateSessionDialogBody({
                 tabIndex={-1}
                 className="rounded-[6px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
               >
-                <p>{errorMessage}</p>
+                <p>{visibleErrorMessage}</p>
                 {setupHref ? (
                   <Link className="mt-1 inline-block underline" href={setupHref}>
                     Open setup
@@ -1216,6 +1234,7 @@ function CreateSessionDialogBody({
                   {unconfirmedAttempt.snapshot.factoryName ?? "the default factory"}. A session may
                   already exist. Return there to retry.
                 </p>
+                {originalDraftAction}
                 {scopeOptionsReady && targetFactoryId ? (
                   <button
                     className="ui-button min-h-9"
@@ -1239,9 +1258,9 @@ function CreateSessionDialogBody({
               <textarea
                 id="session-prompt"
                 disabled={dialogDisabled}
-                aria-describedby={errorMessage ? "create-session-error" : undefined}
+                aria-describedby={visibleErrorMessage ? "create-session-error" : undefined}
                 autoComplete="off"
-                autoFocus={!errorMessage && creationScope?.kind !== "all"}
+                autoFocus={!visibleErrorMessage && creationScope?.kind !== "all"}
                 name="prompt"
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
@@ -1429,25 +1448,7 @@ function CreateSessionDialogBody({
                     wrap
                   />
                 )}
-                {launchConflictsWithRetry ? (
-                  <div className="space-y-2">
-                    <p className="type-secondary text-warning" role="status">
-                      Another request is unconfirmed.
-                      {openOriginalDraft
-                        ? " Retry it from the original draft."
-                        : " Close this link and reopen New session to retry it."}
-                    </p>
-                    {openOriginalDraft ? (
-                      <button
-                        className="ui-button min-h-9"
-                        onClick={openOriginalDraft}
-                        type="button"
-                      >
-                        Open original draft
-                      </button>
-                    ) : null}
-                  </div>
-                ) : unconfirmed ? null : workflowLaunchActivationId === null ? (
+                {unconfirmed ? null : workflowLaunchActivationId === null ? (
                   <p className="type-secondary text-warning" role="status">
                     This workflow link is invalid. Close and start from Workflows again.
                   </p>

@@ -304,7 +304,10 @@ test("retry returns to the original launch when only the workflow return address
     const retry = dialog.getByRole("button", { name: "Retry creation", exact: true });
     await expect(retry).toBeDisabled();
     expect(requests).toHaveLength(1);
-    await dialog.getByRole("button", { name: "Open original draft", exact: true }).press("Enter");
+    const recovery = dialog.getByRole("button", { name: "Open original draft", exact: true });
+    await expect(recovery).toBeInViewport();
+    await expect(dialog.getByText(/Retry to check the original request/)).toHaveCount(0);
+    await recovery.press("Enter");
     await expect(page).toHaveURL(original);
     await expect(dialog.getByText(workflow.label, { exact: true })).toBeVisible();
     await expect(retry).toBeEnabled();
