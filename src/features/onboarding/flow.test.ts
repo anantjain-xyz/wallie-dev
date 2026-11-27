@@ -40,6 +40,12 @@ describe("onboarding flow helpers", () => {
     expect(ONBOARDING_GROUPS.flatMap((group) => group.steps)).toEqual(
       ONBOARDING_STEPS.map((step) => step.id),
     );
+    expect(ONBOARDING_GROUPS).toEqual([
+      { title: "Repository", steps: ["github", "repository"] },
+      { title: "Task setup", steps: ["pipeline", "linear"] },
+      { title: "Execution access", steps: ["sandbox", "runtime"] },
+      { title: "Verification", steps: ["verify"] },
+    ]);
   });
   it("uses Connect terminology for Linear and agent provider setup labels", () => {
     expect(

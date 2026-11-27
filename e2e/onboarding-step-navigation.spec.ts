@@ -40,18 +40,19 @@ for (const { width, height, colorScheme } of [
     await page.goto("/dev/copy-states?state=onboarding");
     const pipeline = page.getByRole("textbox", { name: "Pipeline name" });
     await pipeline.fill("Uncommitted pipeline draft");
+    await expect(page.getByText("Unsaved changes", { exact: true })).toBeVisible();
 
+    const disclosure = page.locator("summary").filter({ hasText: "All setup steps" });
+    if (width === 390) {
+      await expect(page.getByRole("navigation", { name: "Setup steps" })).toHaveCount(0);
+      await disclosure.press("Enter");
+    }
     const nav = page.getByRole("navigation", { name: "Setup steps" });
-    const sandboxEntry =
-      width === 390
-        ? nav.getByRole("combobox", { name: "Setup step" })
-        : nav.getByRole("button", { name: "Sandbox" });
+    await expect(nav).toHaveCount(1);
+    const sandboxEntry = nav.getByRole("button", { name: "Sandbox" });
     async function openSandbox() {
       await sandboxEntry.focus();
       await sandboxEntry.press("Enter");
-      if (width === 390) {
-        await page.getByRole("option", { name: "Sandbox", exact: true }).click();
-      }
     }
 
     await openSandbox();
@@ -68,7 +69,8 @@ for (const { width, height, colorScheme } of [
     await dialog.getByRole("button", { name: "Discard changes" }).click();
     const heading = page.getByRole("heading", { name: "Connect Sandbox" });
     await expect(heading).toBeFocused();
-    await expect(page.getByText("Setup step 5 of 7")).toBeVisible();
+    await expect(page.getByText("Execution access · Step 5 of 7")).toBeVisible();
+    if (width === 390) await expect(nav).toHaveCount(0);
     await expect(page.getByRole("link", { name: "Test capabilities" })).toHaveCount(0);
     await page.getByRole("button", { name: "Replace connection" }).click();
     await page.getByLabel("Token", { exact: true }).fill("synthetic-vercel-token");
@@ -96,5 +98,46 @@ for (const { width, height, colorScheme } of [
     await expect(page.getByLabel("Project ID")).toHaveValue("prj_123");
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Vercel Sandbox connected" })).toBeVisible();
+  });
+}
+
+for (const width of [390, 320]) {
+  test(`keeps current verification and its recovery ahead of diagnostics at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.route("**/api/**", (route) => route.abort());
+
+    await page.goto("/dev/onboarding?state=stale");
+    const status = page.locator("#onboarding-verification").getByRole("status");
+    await expect(status).toContainText("Setup has changed");
+    await expect(page.getByText(/Setup was completed previously/)).toBeVisible();
+    const verify = page.getByRole("button", { name: "Verify again" });
+    await expect(verify).toBeInViewport();
+    await expect(page.getByRole("button", { name: "Create your first task" })).toHaveCount(0);
+    const details = page.locator("summary").filter({ hasText: "All checks" });
+    const previous = page.getByRole("heading", { name: "Previous verification result" });
+    await expect(previous).toHaveCount(0);
+    await details.press("Enter");
+    await expect(previous).toBeVisible();
+    await expect(page.getByText("gpt-previous-model", { exact: false })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+
+    await page.goto("/dev/onboarding?state=ready");
+    await expect(status).toContainText("Setup is ready");
+    await expect(page.getByRole("link", { name: "Back to sessions" })).toHaveAttribute(
+      "href",
+      "/w/northwind/sessions",
+    );
+    await expect(page.getByRole("button", { name: "Verify again" })).toHaveCount(0);
+
+    await page.goto("/dev/onboarding?state=member");
+    await expect(status).toContainText("Codex credential");
+    await expect(status).toContainText("Ask a workspace owner or admin");
+    await expect(page.getByRole("link", { name: "Back to sessions" })).toBeInViewport();
+    await expect(page.getByRole("button", { name: /Fix agent access|Verify again/ })).toHaveCount(
+      0,
+    );
   });
 }

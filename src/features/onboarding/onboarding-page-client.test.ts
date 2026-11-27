@@ -71,7 +71,6 @@ import {
   isRepositorySelectionCurrent,
   OnboardingPageClient,
   scrollOnboardingSetupToTop,
-  setupHealthItems,
 } from "@/features/onboarding/onboarding-page-client";
 
 import {
@@ -80,13 +79,17 @@ import {
   profile,
   workspaceSecret,
   onboardingData,
+  verificationCheck,
+  verificationData,
 } from "@/features/onboarding/fixtures";
 
-function primaryFooterButton(html: string) {
-  const matches = [...html.matchAll(/<button[^>]*class="ui-button-primary"[^>]*>.*?<\/button>/g)];
+function primarySetupButton(html: string) {
+  const matches = [
+    ...html.matchAll(/<button[^>]*class="ui-button-primary(?: [^"]*)?"[^>]*>.*?<\/button>/g),
+  ];
   const footerButton = matches.at(-1)?.[0];
   if (!footerButton) {
-    throw new Error("Primary footer button was not rendered.");
+    throw new Error("Primary setup button was not rendered.");
   }
   return footerButton;
 }
@@ -95,6 +98,7 @@ function renderVerifyStep(data: WorkspaceOnboardingData) {
   return renderToStaticMarkup(
     createElement(VerifyStep, {
       data,
+      initialNow: "2026-09-06T19:05:00.000Z",
       isSaving: false,
       onCompleteStep: async () => undefined,
       onDataChange: () => undefined,
@@ -107,6 +111,14 @@ function renderVerifyStep(data: WorkspaceOnboardingData) {
       onSelectStep: () => undefined,
     }),
   );
+}
+
+function checkRow(html: string, label: string) {
+  const row = html
+    .match(/<dt[^>]*>.*?<\/dt><dd[^>]*>.*?<\/dd>/g)
+    ?.find((entry) => entry.includes(">" + label + "<"));
+  if (!row) throw new Error("Missing verification check: " + label);
+  return row;
 }
 
 function desktopRailButton(html: string, label: string) {
@@ -291,93 +303,51 @@ describe("reduceOnboardingMutationData", () => {
 
 describe("OnboardingPageClient", () => {
   it("uses red for health errors and grey for initial health states", () => {
-    const noCheckData = onboardingData();
-    const errorData = onboardingData({
-      setupHealth: {
-        latestSandboxCapabilityCheck: {
-          agentModel: "gpt-5.6-sol",
-          agentProvider: "codex",
-          capabilities: {},
-          checkedAt: "2026-05-16T18:00:00.000Z",
-          errorText: "sandbox failed",
-          githubRepositoryId: "repo-a",
-          id: "check-1",
-          sandboxProvider: "vercel",
-          sandboxVercelProjectId: "prj_123",
-          sandboxVercelTeamId: "team_123",
-          status: "error",
-        },
-        primaryRepositoryProfile: {
-          configured: true,
-          fullName: "acme/repo-a",
-          repositoryId: "repo-a",
-          status: "ready",
-        },
-      },
-    });
-    const noCheck = setupHealthItems(noCheckData.setupHealth).find(
-      (item) => item.label === "Sandbox",
-    );
-    const error = setupHealthItems(errorData.setupHealth).find((item) => item.label === "Sandbox");
+    const data = verificationData();
+    const initial = checkRow(renderVerifyStep(data), "Sandbox capability check");
+    expect(initial).toContain('data-tone="neutral"');
+    expect(initial).toContain("Not started");
 
-    expect(noCheck).toMatchObject({ tone: "neutral", value: "No check" });
-    expect(error).toMatchObject({ tone: "danger", value: "Error" });
+    data.setupHealth.latestSandboxCapabilityCheck = verificationCheck("error");
+    const failed = checkRow(renderVerifyStep(data), "Sandbox capability check");
+    expect(failed).toContain('data-tone="danger"');
+    expect(failed).toContain("Failed");
   });
 
-  it("renders sandbox health check times as relative copy", () => {
-    const data = onboardingData({
-      setupHealth: {
-        latestSandboxCapabilityCheck: {
-          agentModel: "gpt-5.6-sol",
-          agentProvider: "codex",
-          capabilities: {},
-          checkedAt: "2026-05-16T18:00:00.000Z",
-          errorText: null,
-          githubRepositoryId: "repo-a",
-          id: "check-1",
-          sandboxProvider: "vercel",
-          sandboxVercelProjectId: "prj_123",
-          sandboxVercelTeamId: "team_123",
-          status: "success",
-        },
-        primaryRepositoryProfile: {
-          configured: true,
-          fullName: "acme/repo-a",
-          repositoryId: "repo-a",
-          status: "ready",
-        },
-      },
-    });
-    const sandbox = setupHealthItems(data.setupHealth, "2026-05-16T18:05:00.000Z").find(
-      (item) => item.label === "Sandbox",
-    );
-    const html = renderToStaticMarkup(createElement("div", null, sandbox?.detail));
-
-    expect(html).toMatch(/Checked <time[^>]*>5m ago<\/time>/);
-    expect(html).toContain('dateTime="2026-05-16T18:00:00.000Z"');
+  it("retains the exact sandbox check timestamp under All checks", () => {
+    const data = verificationData();
+    data.setupHealth.latestSandboxCapabilityCheck = verificationCheck();
+    const html = renderVerifyStep(data);
+    const disclosure = html
+      .match(/<details[^>]*>[\s\S]*?<\/details>/g)
+      ?.find((details) => details.includes("All checks</summary>"));
+    expect(disclosure).toBeDefined();
+    expect(disclosure?.match(/^<details[^>]*>/)?.[0]).not.toMatch(/\sopen(?=[ =>])/);
+    expect(disclosure).toContain("Current verification result");
+    expect(disclosure).toContain('dateTime="2026-09-06T19:00:00.000Z"');
+    expect(disclosure).toContain('data-time-display="absolute"');
   });
 
-  it("renders one responsive setup navigation tree without a horizontal rail", () => {
+  it("renders a desktop rail and a collapsed mobile disclosure without a horizontal scroller", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, { initialData: onboardingData() }),
     );
-    const setupNavigation = html.match(/<nav aria-label="Setup steps"[\s\S]*?<\/nav>/u)?.[0];
-
-    expect(html.match(/aria-label="Setup steps"/gu)).toHaveLength(1);
-    expect(setupNavigation).toBeDefined();
-    expect(setupNavigation).not.toContain("data-status");
-    expect(setupNavigation).not.toContain("Running");
-    expect(setupNavigation).not.toContain("Queued");
-    expect(html).toContain("grid-cols-2");
+    const rails = [...html.matchAll(/<nav aria-label="Setup steps"[\s\S]*?<\/nav>/gu)];
+    expect(rails).toHaveLength(2);
+    expect(html).toMatch(/<aside[^>]*hidden[^>]*lg:block[^>]*><nav/);
+    expect(html).toMatch(/<details[^>]*lg:hidden[^>]*><summary[^>]*>.*?All setup steps<\/summary>/);
+    expect(html).not.toMatch(/<details[^>]*\sopen(?:[=> ])/);
     expect(html).not.toContain("overflow-x-auto");
     expect(html).toContain("env(safe-area-inset-bottom)");
-
-    const groupHeaderClass =
-      'class="mb-2 px-2 text-[13px] font-semibold tracking-tight text-foreground lg:px-3"';
-    expect(setupNavigation).toContain(`${groupHeaderClass}>1. Repository</p>`);
-    expect(setupNavigation).toContain(`${groupHeaderClass}>2. Execution access</p>`);
-    expect(setupNavigation).toContain(`${groupHeaderClass}>3. Verification</p>`);
-    expect(setupNavigation).toMatch(/<button[^>]*text-xs font-medium[^>]*>[\s\S]*GitHub<\/span>/u);
+    expect(html.match(/id="onboarding-step-position"/gu)).toHaveLength(1);
+    for (const [rail] of rails) {
+      expect(rail).not.toContain("data-status");
+      expect(rail).not.toContain("Running");
+      expect(rail).not.toContain("Queued");
+      expect(rail).toMatch(
+        /Repository<\/p>.*?GitHub.*?Repository.*?Task setup<\/p>.*?Pipeline.*?Linear.*?Execution access<\/p>.*?Sandbox.*?Agent.*?Verification<\/p>.*?Verify/,
+      );
+    }
   });
 
   it("merges a saved repository profile into the latest GitHub state", () => {
@@ -492,7 +462,7 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain('href="https://github.com/acme/repo-a"');
     expect(html).not.toContain("Install skills");
     expect(html).not.toContain("Mark skills as installed");
-    expect(primaryFooterButton(html)).not.toContain("disabled");
+    expect(primarySetupButton(html)).not.toContain("disabled");
   });
 
   it("blocks the GitHub step when only archived repositories are synced", () => {
@@ -533,7 +503,8 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    expect(primaryFooterButton(html)).toContain("disabled");
+    expect(html).toContain("No active repositories are available");
+    expect(html).not.toContain(">Continue</span>");
   });
 
   it("blocks the repository step until setup is open or ready", () => {
@@ -647,8 +618,8 @@ describe("OnboardingPageClient", () => {
 
     expect(blocked.match(/>Install skills<\/button>/g) ?? []).toHaveLength(1);
     expect(blocked).toContain("Mark skills as installed");
-    expect(primaryFooterButton(blocked)).toContain("disabled");
-    expect(primaryFooterButton(readyToAdvance)).not.toContain("disabled");
+    expect(primarySetupButton(blocked)).toContain("disabled");
+    expect(primarySetupButton(readyToAdvance)).not.toContain("disabled");
   });
 
   it("renders future and read-only sidebar steps as section navigation targets", () => {
@@ -677,10 +648,8 @@ describe("OnboardingPageClient", () => {
 
     const futureButton = desktopRailButton(managerHtml, "Verify");
     const readOnlyButton = desktopRailButton(readOnlyHtml, "Repository");
-    expect(futureButton).not.toContain("disabled");
-    expect(futureButton).not.toContain("cursor-not-allowed");
-    expect(readOnlyButton).not.toContain("disabled");
-    expect(readOnlyButton).not.toContain("cursor-not-allowed");
+    expect(futureButton).not.toContain(' disabled=""');
+    expect(readOnlyButton).not.toContain(' disabled=""');
   });
 
   it("renders Linear and agent provider setup with Connect labels", () => {
@@ -804,7 +773,7 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("Install skills");
     expect(html).toContain("Mark skills as installed");
     expect(html).not.toContain(">Analyze repository</button>");
-    expect(primaryFooterButton(html)).toContain("disabled");
+    expect(primarySetupButton(html)).toContain("disabled");
   });
 
   it("renders repository analysis in the setup action row after skills are ready", () => {
@@ -980,7 +949,7 @@ describe("OnboardingPageClient", () => {
 
     expect(html).toContain("Repository profile");
     expect(html).not.toContain(">Primary<");
-    expect(primaryFooterButton(html)).not.toContain("disabled");
+    expect(primarySetupButton(html)).not.toContain("disabled");
   });
 
   it("keeps repository analyze and save loading labels separate", () => {
@@ -1008,7 +977,7 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    const button = primaryFooterButton(html);
+    const button = primarySetupButton(html);
     expect(html).toContain("This workspace has no default pipeline.");
     expect(html).toContain("Ask your workspace owner to contact Wallie support to restore it.");
     expect(button).toContain(">Continue</span>");
@@ -1022,11 +991,9 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    const button = primaryFooterButton(html);
     expect(html).toContain("Save pipeline");
-    expect(html).not.toContain("Use current pipeline");
-    expect(button).toContain("disabled");
-    expect(button).toContain(">Save pipeline to continue</span>");
+    expect(html).not.toContain("Use Plan → Build");
+    expect(html).not.toContain(">Continue</span>");
   });
 
   it("allows fallback progression when Linear routing cannot load pipeline stages", () => {
@@ -1050,7 +1017,7 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    const button = primaryFooterButton(html);
+    const button = primarySetupButton(html);
     expect(button).toContain(">Continue</span>");
     expect(button).not.toContain("disabled");
   });
@@ -1075,7 +1042,7 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    const button = primaryFooterButton(html);
+    const button = primarySetupButton(html);
     expect(button).toContain(">Continue</span>");
     expect(button).not.toContain("disabled");
   });
@@ -1154,9 +1121,11 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain("Not configured");
     expect(html).toContain("Sessions run with the Codex credential saved by the session creator");
     expect(html).toContain("Checking connection");
-    expect(html.indexOf("Concurrency")).toBeLessThan(html.indexOf("Provider access"));
-    expect(html.indexOf("Stall timeout")).toBeLessThan(html.indexOf("Provider access"));
-    expect(html.indexOf("Max retries")).toBeLessThan(html.indexOf("Provider access"));
+    const access = html.indexOf(">Provider access</h3>");
+    expect(access).toBeGreaterThan(-1);
+    expect(html.indexOf("Concurrency")).toBeGreaterThan(access);
+    expect(html.indexOf("Stall timeout")).toBeGreaterThan(access);
+    expect(html.indexOf("Max retries")).toBeGreaterThan(access);
     expect(html).toContain('role="combobox"');
     expect(html).toContain('aria-haspopup="listbox"');
     expect(html).not.toContain("Runtime credentials");
@@ -1197,7 +1166,7 @@ describe("OnboardingPageClient", () => {
     );
 
     expect(html).toContain('id="sandbox"');
-    expect(html).toContain("Sandbox provider");
+    expect(html).toContain('name="sandbox-provider"');
     expect(html).toContain("Choose a provider");
     expect(html).toContain("Vercel Sandbox connected");
     expect(html).toContain("vca_...123");
@@ -1246,8 +1215,12 @@ describe("OnboardingPageClient", () => {
         }),
       }),
     );
-    expect(primaryFooterButton(blockedHtml)).toContain("disabled");
+    expect(primarySetupButton(blockedHtml)).toContain("disabled");
     expect(blockedHtml).toContain('data-sandbox-connection-href="#sandbox"');
+    expect(blockedHtml.indexOf(">Provider access</h3>")).toBeGreaterThan(-1);
+    expect(blockedHtml.indexOf(">Provider access</h3>")).toBeLessThan(
+      blockedHtml.indexOf(">Agent config</h3>"),
+    );
     expect(blockedHtml).not.toContain('href="/w/northwind/settings#vercel"');
 
     const readyHtml = renderToStaticMarkup(
@@ -1263,7 +1236,7 @@ describe("OnboardingPageClient", () => {
         }),
       }),
     );
-    expect(primaryFooterButton(readyHtml)).not.toContain("disabled");
+    expect(primarySetupButton(readyHtml)).not.toContain("disabled");
   });
 
   it("normalizes repository env keys before rendering saved state", () => {
@@ -1382,7 +1355,7 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("OpenCode");
     expect(html).toContain("OpenCode Zen API key");
     expect(html).toContain("Connect the current user&#x27;s OpenCode Zen API key");
-    expect(primaryFooterButton(html)).toContain("disabled");
+    expect(primarySetupButton(html)).toContain("disabled");
   });
 
   it("does not render a section-level runtime readiness badge", () => {
@@ -1407,6 +1380,13 @@ describe("OnboardingPageClient", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {
         initialData: onboardingData({
+          github: {
+            installation: connectedInstallation(),
+            missingAppKeys: [],
+            missingWebhookKeys: [],
+            primaryProfile: null,
+            repositories: [repository("repo-a")],
+          },
           onboarding: {
             completedAt: null,
             completedSteps: ["github", "repository", "pipeline"],
@@ -1423,54 +1403,28 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    const button = primaryFooterButton(html);
-    expect(html).toContain("Needs attention");
+    expect(html).toContain("Repository profile needed");
     expect(html).not.toContain("Setup status");
-    expect(html).toContain('data-step-link="linear"');
-    expect(html).toContain('data-step-link="runtime"');
+    expect(html.match(/data-step-link=/g)).toHaveLength(1);
+    expect(html).toContain('data-step-link="repository"');
     expect(html).toContain("Select a repository before saving a repository profile.");
-    expect(button).toContain("disabled");
-    expect(button).toContain(">Verify setup</span>");
+    expect(checkRow(html, "Linear (optional)")).toContain("Not finished");
+    expect(checkRow(html, "Runtime completed")).toContain("Not finished");
+    expect(html).not.toContain('form="onboarding-verification"');
+    expect(html).not.toContain("Create your first task");
   });
 
   it("routes the Vercel Sandbox blocker back into the Connect Sandbox step", () => {
-    const html = renderToStaticMarkup(
-      createElement(OnboardingPageClient, {
-        initialData: onboardingData({
-          onboarding: {
-            completedAt: null,
-            completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
-            createdAt: "2026-05-16T18:00:00.000Z",
-            currentStep: "verify",
-            dismissedAt: null,
-            id: "onboarding-1",
-            skippedSteps: [],
-            status: "in_progress",
-            updatedAt: "2026-05-16T18:00:00.000Z",
-            workspaceId: "workspace-1",
-          },
-          setupHealth: {
-            vercelSandboxConnection: {
-              connected: false,
-              lastValidationError: null,
-              projectId: null,
-              projectName: null,
-              status: "missing",
-              teamId: null,
-              updatedAt: null,
-            },
-          },
-        }),
-      }),
-    );
+    const data = verificationData();
+    data.setupHealth.vercelSandboxConnection.connected = false;
+    data.setupHealth.vercelSandboxConnection.status = "missing";
+    const html = renderToStaticMarkup(createElement(OnboardingPageClient, { initialData: data }));
 
-    const vercelRow = html.slice(html.indexOf("Sandbox connection"));
-    expect(html).toContain("Sandbox connection");
-    // The blocker stays inside the wizard (Connect Sandbox step), not Settings.
+    expect(html).toContain("Sandbox connection needed");
     expect(html).not.toContain('href="/w/northwind/settings#vercel"');
     expect(html).not.toContain("Open Vercel");
-    expect(vercelRow).toContain('data-step-link="sandbox"');
-    expect(vercelRow.slice(0, vercelRow.indexOf("</button>") + 9)).toContain("Open Sandbox");
+    expect(html).toContain('data-step-link="sandbox"');
+    expect(primarySetupButton(html)).toContain("Fix sandbox connection");
   });
 
   it("has no Verify blockers when every requirement passes", () => {
@@ -1560,118 +1514,28 @@ describe("OnboardingPageClient", () => {
   });
 
   it("renders sandbox polling and retry states", () => {
-    const running = renderVerifyStep(
-      onboardingData({
-        onboarding: {
-          completedAt: null,
-          completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
-          createdAt: "2026-05-16T18:00:00.000Z",
-          currentStep: "verify",
-          dismissedAt: null,
-          id: "onboarding-1",
-          skippedSteps: [],
-          status: "in_progress",
-          updatedAt: "2026-05-16T18:00:00.000Z",
-          workspaceId: "workspace-1",
-        },
-        setupHealth: {
-          primaryRepositoryProfile: {
-            configured: true,
-            fullName: "acme/repo-a",
-            repositoryId: "repo-a",
-            status: "ready",
-          },
-          latestSandboxCapabilityCheck: {
-            agentModel: "gpt-5.6-sol",
-            agentProvider: "codex",
-            capabilities: {},
-            checkedAt: "2026-05-16T18:00:00.000Z",
-            errorText: null,
-            githubRepositoryId: "repo-a",
-            id: "check-1",
-            sandboxProvider: null,
-            sandboxVercelProjectId: null,
-            sandboxVercelTeamId: null,
-            status: "running",
-          },
-        },
-      }),
-    );
-    const failed = renderVerifyStep(
-      onboardingData({
-        onboarding: {
-          completedAt: null,
-          completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
-          createdAt: "2026-05-16T18:00:00.000Z",
-          currentStep: "verify",
-          dismissedAt: null,
-          id: "onboarding-1",
-          skippedSteps: [],
-          status: "in_progress",
-          updatedAt: "2026-05-16T18:00:00.000Z",
-          workspaceId: "workspace-1",
-        },
-        setupHealth: {
-          primaryRepositoryProfile: {
-            configured: true,
-            fullName: "acme/repo-a",
-            repositoryId: "repo-a",
-            status: "ready",
-          },
-          latestSandboxCapabilityCheck: {
-            agentModel: "gpt-5.6-sol",
-            agentProvider: "codex",
-            capabilities: {},
-            checkedAt: "2026-05-16T18:00:00.000Z",
-            errorText: "sandbox failed",
-            githubRepositoryId: "repo-a",
-            id: "check-1",
-            sandboxProvider: "vercel",
-            sandboxVercelProjectId: "prj_123",
-            sandboxVercelTeamId: "team_123",
-            status: "error",
-          },
-        },
-      }),
-    );
-
+    const data = verificationData();
+    data.setupHealth.latestSandboxCapabilityCheck = verificationCheck("running");
+    const running = renderVerifyStep(data);
     expect(running).toContain("Checking your setup…");
     expect(running).toContain('role="status"');
-    expect(failed).toContain("A few things need attention");
+
+    data.setupHealth.latestSandboxCapabilityCheck = verificationCheck("error");
+    const failed = renderVerifyStep(data);
+    expect(failed).toContain("Verification failed");
+    expect(failed).toContain("Agent sign-in expired. Reconnect your agent and try again.");
   });
 
   it("disables sandbox capability checks for non-managers", () => {
-    const html = renderToStaticMarkup(
-      createElement(OnboardingPageClient, {
-        initialData: onboardingData({
-          canManage: false,
-          currentMember: { id: "member-2", role: "member" },
-          onboarding: {
-            completedAt: null,
-            completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
-            createdAt: "2026-05-16T18:00:00.000Z",
-            currentStep: "verify",
-            dismissedAt: null,
-            id: "onboarding-1",
-            skippedSteps: [],
-            status: "in_progress",
-            updatedAt: "2026-05-16T18:00:00.000Z",
-            workspaceId: "workspace-1",
-          },
-          setupHealth: {
-            primaryRepositoryProfile: {
-              configured: true,
-              fullName: "acme/repo-a",
-              repositoryId: "repo-a",
-              status: "ready",
-            },
-          },
-        }),
-      }),
+    const data = verificationData();
+    data.canManage = false;
+    data.currentMember.role = "member";
+    const html = renderToStaticMarkup(createElement(OnboardingPageClient, { initialData: data }));
+    expect(html).not.toContain('form="onboarding-verification"');
+    expect(html).not.toContain("Create your first task");
+    expect(html).toContain(
+      "Read only. Ask a workspace owner or admin to verify the current setup.",
     );
-
-    const match = primaryFooterButton(html);
-    expect(match).toContain("disabled");
   });
 
   it("normalizes agent config drafts before dirty comparison", () => {
@@ -1740,74 +1604,50 @@ describe("OnboardingPageClient", () => {
   });
 });
 
-describe("setupHealthItems Linear routing badge", () => {
-  const routingItem = (setupHealth: Partial<WorkspaceOnboardingData["setupHealth"]>) =>
-    setupHealthItems(onboardingData({ setupHealth }).setupHealth).find(
-      (item) => item.label === "Linear routing",
-    );
-
-  it("does not show a green 'Saved' badge for seeded default routes without a Linear key", () => {
-    // Fresh workspace: routing row is seeded (configured) but no Linear key yet.
-    expect(
-      routingItem({
-        linearKey: { configured: false, status: "missing", updatedAt: null },
-        linearRouting: {
-          configured: true,
-          status: "present",
-          updatedAt: "2026-05-16T18:00:00.000Z",
-        },
-      }),
-    ).toMatchObject({
-      value: "Defaults",
-      tone: "neutral",
-      detail: "Default routes — used when Linear is connected",
-    });
+describe("All checks Linear routing status", () => {
+  it("does not show a passing status for seeded default routes without a Linear key", () => {
+    const data = verificationData();
+    data.setupHealth.linearRouting.configured = true;
+    const row = checkRow(renderVerifyStep(data), "Linear (optional)");
+    expect(row).toContain("Not connected");
+    expect(row).toContain('data-tone="neutral"');
+    expect(row).not.toContain("are saved");
   });
 
-  it("shows green 'Saved' only once the Linear key is present", () => {
-    expect(
-      routingItem({
-        linearKey: { configured: true, status: "present", updatedAt: "2026-05-16T18:00:00.000Z" },
-        linearRouting: {
-          configured: true,
-          status: "present",
-          updatedAt: "2026-05-16T18:00:00.000Z",
-        },
-      }),
-    ).toMatchObject({ value: "Saved", tone: "success" });
+  it("shows saved configuration once both the Linear key and routing are present", () => {
+    const data = verificationData();
+    data.onboarding.skippedSteps = [];
+    data.onboarding.completedSteps.push("linear");
+    data.setupHealth.linearKey.configured = true;
+    data.setupHealth.linearRouting.configured = true;
+    const row = checkRow(renderVerifyStep(data), "Linear (optional)");
+    expect(row).toContain("Linear key and status routing are saved.");
+    expect(row).toContain('data-tone="success"');
   });
 
-  it("marks unconfigured optional Linear routing as optional", () => {
-    expect(
-      routingItem({
-        linearKey: { configured: false, status: "missing", updatedAt: null },
-        linearRouting: { configured: false, status: "missing", updatedAt: null },
-      }),
-    ).toMatchObject({ value: "Optional", tone: "neutral" });
+  it("keeps unset Linear routing optional", () => {
+    const row = checkRow(renderVerifyStep(verificationData()), "Linear (optional)");
+    expect(row).toContain("Not connected");
+    expect(row).toContain("You can start from a prompt.");
+    expect(row).toContain('data-tone="neutral"');
   });
 });
 
-describe("setupHealthItems Pipeline badge", () => {
-  const pipelineItem = (pipelineReviewed: boolean) => {
-    const data = onboardingData();
-    return setupHealthItems(data.setupHealth, undefined, { pipelineReviewed }).find(
-      (item) => item.label === "Pipeline",
-    );
-  };
-
+describe("All checks pipeline review status", () => {
   it("does not check off a seeded default pipeline before onboarding review", () => {
-    expect(pipelineItem(false)).toMatchObject({
-      detail: "1 stage from defaults — review and save",
-      tone: "neutral",
-      value: "Defaults",
-    });
+    const data = verificationData();
+    data.onboarding.completedSteps = data.onboarding.completedSteps.filter(
+      (step) => step !== "pipeline",
+    );
+    const row = checkRow(renderVerifyStep(data), "Pipeline completed");
+    expect(row).toContain("Not finished");
+    expect(row).toContain('data-tone="neutral"');
+    expect(row).not.toContain("saved stage");
   });
 
   it("checks off the pipeline after it has been reviewed and saved", () => {
-    expect(pipelineItem(true)).toMatchObject({
-      detail: "1 stage",
-      tone: "success",
-      value: "Ready",
-    });
+    const row = checkRow(renderVerifyStep(verificationData()), "Pipeline completed");
+    expect(row).toContain("1 saved stage");
+    expect(row).toContain('data-tone="success"');
   });
 });

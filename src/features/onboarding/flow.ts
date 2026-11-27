@@ -35,14 +35,14 @@ export const ONBOARDING_STEPS: OnboardingStepDefinition[] = [
     title: "Prepare repository",
   },
   {
-    description: "Start with Plan → Build, or customize the stages and reviewers for your team.",
+    description: "Choose the stages and approvers Wallie will use for each task.",
     id: "pipeline",
     shortTitle: "Pipeline",
     title: "Review pipeline",
   },
   {
     description:
-      "Optional: attach issue context and sync status updates. You can start with a prompt alone.",
+      "Attach Linear issues and sync their status, or start from a prompt without connecting Linear.",
     id: "linear",
     shortTitle: "Linear",
     title: "Connect Linear (optional)",
@@ -55,13 +55,13 @@ export const ONBOARDING_STEPS: OnboardingStepDefinition[] = [
   },
   {
     description:
-      "Connect agent access. You can keep your current settings or use Wallie’s defaults, but access is required to verify setup.",
+      "You can keep Wallie’s agent defaults. Provider access is still required to verify setup.",
     id: "runtime",
     shortTitle: "Agent",
     title: "Connect Agent",
   },
   {
-    description: "Check that everything is ready to run your first task.",
+    description: "",
     id: "verify",
     shortTitle: "Verify",
     title: "Verify setup",
@@ -69,8 +69,9 @@ export const ONBOARDING_STEPS: OnboardingStepDefinition[] = [
 ];
 
 export const ONBOARDING_GROUPS: { title: string; steps: WorkspaceOnboardingStep[] }[] = [
-  { title: "Repository", steps: ["github", "repository", "pipeline"] },
-  { title: "Execution access", steps: ["linear", "sandbox", "runtime"] },
+  { title: "Repository", steps: ["github", "repository"] },
+  { title: "Task setup", steps: ["pipeline", "linear"] },
+  { title: "Execution access", steps: ["sandbox", "runtime"] },
   { title: "Verification", steps: ["verify"] },
 ];
 

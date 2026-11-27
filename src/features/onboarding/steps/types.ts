@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import type { WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import type { RuntimeReadiness } from "@/features/onboarding/runtime-readiness";
@@ -21,8 +23,10 @@ export type OnboardingStepDraftState = { dirty: boolean; pending: boolean };
 
 export type OnboardingStepProps = {
   data: WorkspaceOnboardingData;
+  initialNow?: string;
   isSaving: boolean;
   onCompleteStep: (action: string) => Promise<void>;
+  onKeepPipeline?: () => void;
   onPipelineCompleted: (
     action: string,
     pipeline: NonNullable<WorkspaceOnboardingData["pipeline"]>,
@@ -39,4 +43,5 @@ export type OnboardingStepProps = {
   onVerificationPendingChange?: (pending: boolean) => void;
   onSelectStep: (step: WorkspaceOnboardingStep) => void;
   onSelectGithubRepository: (repository: WorkspaceGitHubRepository) => Promise<boolean>;
+  verificationActions?: ReactNode;
 };

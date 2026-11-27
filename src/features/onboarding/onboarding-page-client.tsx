@@ -1,14 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-
-import { TimeDisplay } from "@/components/shared/time-display";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { useOptionalRouteProgress } from "@/components/ui/route-progress";
-import { SelectField } from "@/components/ui/select";
-import { Status, configurationStatusFromTone } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
@@ -31,8 +28,6 @@ import { reduceOnboardingMutationData } from "@/features/onboarding/mutation-red
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import {
   buildRuntimeReadiness,
-  buildVerifyChecklist,
-  capabilityCheckMatchesCurrentSetup,
   verifyBlockersFromChecklist,
   type RuntimeReadiness,
 } from "@/features/onboarding/runtime-readiness";
@@ -40,11 +35,17 @@ import { ActiveOnboardingStep } from "@/features/onboarding/steps/active-step";
 import type { OnboardingStepDraftState } from "@/features/onboarding/steps/types";
 import { SetupCheck } from "@/features/onboarding/setup-check";
 import {
+  executionStepBlocker,
+  getSetupVerificationChecklist,
+  getVerificationRecovery,
+  hasActiveGithubRepositories,
+  repositoryStepBlocker,
+} from "@/features/onboarding/verification-presentation";
+import {
   mergeRepositoryOnboardingState,
   repositorySetupCanAdvance,
 } from "@/features/repositories/repository-setup-controls";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { codexCredentialTypeLabel } from "@/lib/codex/contracts";
 import type {
   OnboardingSetupHealth,
   WorkspaceOnboardingConflictResponse,
@@ -54,29 +55,15 @@ import type {
   WorkspaceOnboardingStep,
   WorkspaceOnboardingUpdatePayload,
 } from "@/lib/onboarding/contracts";
-import {
-  OPENCODE_ZEN_PROVIDER_ID,
-  normalizeAgentProviderName,
-  parseOpenCodeModelId,
-} from "@/lib/agent-config/contracts";
 import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
 import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
-import { workspaceBasePath } from "@/lib/routes";
+import { workspaceBasePath, workspaceSessionsPath, workspaceSettingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 type OnboardingPageClientProps = {
   initialData: WorkspaceOnboardingData;
   initialNow?: string;
-};
-
-type HealthTone = "accent" | "danger" | "neutral" | "success" | "warning";
-
-type HealthSummaryItem = {
-  detail: ReactNode;
-  label: keyof typeof healthSetupSteps;
-  tone: HealthTone;
-  value: string;
 };
 
 type EditableProfile = RepositoryProfileState;
@@ -96,10 +83,6 @@ type RuntimeCompletionState = {
   readiness: RuntimeReadiness;
 };
 
-type SetupHealthItemsOptions = {
-  pipelineReviewed?: boolean;
-};
-
 const railStateClasses: Record<OnboardingStepDisplayState, string> = {
   available: "text-muted hover:bg-control-hover hover:text-foreground",
   blocked: "text-muted opacity-55",
@@ -107,35 +90,60 @@ const railStateClasses: Record<OnboardingStepDisplayState, string> = {
   skipped: "text-muted hover:bg-control-hover hover:text-foreground",
 };
 
-function presenceBadge(configured: boolean) {
-  return configured
-    ? { tone: "success" as const, value: "Saved" }
-    : { tone: "warning" as const, value: "Missing" };
-}
-
-function openCodeAccessSummary(health: OnboardingSetupHealth) {
-  const model =
-    typeof health.agentConfig.values.agent_model === "string"
-      ? health.agentConfig.values.agent_model
-      : "";
-  const providerId = parseOpenCodeModelId(model)?.providerId ?? OPENCODE_ZEN_PROVIDER_ID;
-  if (providerId === OPENCODE_ZEN_PROVIDER_ID) {
-    return {
-      connected: health.openCodeConnection.connected,
-      credentialLabel: health.openCodeConnection.connected ? "OpenCode Zen API key" : null,
-      expired: false,
-      updatedAt: health.openCodeConnection.updatedAt,
-    };
-  }
-  const provider = health.openCodeConnection.providers.find(
-    (item) => item.providerId === providerId,
+function StepNavigation({
+  canSelect,
+  isCompleted,
+  items,
+  onSelect,
+}: {
+  canSelect: boolean;
+  isCompleted: boolean;
+  items: ReturnType<typeof getOnboardingStepRailItems>;
+  onSelect: (step: WorkspaceOnboardingStep, returnFocus: HTMLElement) => void;
+}) {
+  return (
+    <nav aria-label="Setup steps">
+      <ul className="space-y-4">
+        {ONBOARDING_GROUPS.map((group) => (
+          <li key={group.title}>
+            <p className="mb-1 px-3 text-[13px] font-semibold text-foreground">{group.title}</p>
+            <ul className="grid grid-cols-2 gap-1 lg:grid-cols-1">
+              {items
+                .filter((step) => group.steps.includes(step.id))
+                .map((step) => (
+                  <li className="min-w-0" key={step.id}>
+                    <button
+                      type="button"
+                      aria-current={step.isActive ? "step" : undefined}
+                      className={cn(
+                        "flex min-h-11 w-full min-w-0 items-center justify-between gap-2 rounded-[6px] px-3 py-2 text-left text-[13px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40 disabled:cursor-not-allowed",
+                        step.isActive
+                          ? "bg-accent-soft text-accent"
+                          : railStateClasses[step.displayState],
+                      )}
+                      disabled={!canSelect || !step.isNavigable}
+                      onClick={(event) => onSelect(step.id, event.currentTarget)}
+                    >
+                      <span className="min-w-0">
+                        {step.shortTitle}
+                        {step.id === "linear" ? (
+                          <span className="text-xs font-normal text-muted"> (optional)</span>
+                        ) : null}
+                      </span>
+                      {step.displayState === "completed" && !isCompleted ? (
+                        <SetupCheck />
+                      ) : step.displayState === "skipped" ? (
+                        <span className="type-annotation shrink-0">Skipped</span>
+                      ) : null}
+                    </button>
+                  </li>
+                ))}
+            </ul>
+          </li>
+        ))}
+      </ul>
+    </nav>
   );
-  return {
-    connected: Boolean(provider),
-    credentialLabel: provider ? `OpenCode ${providerId} API key` : null,
-    expired: false,
-    updatedAt: provider?.updatedAt ?? null,
-  };
 }
 
 function applyGithubHealth(
@@ -167,396 +175,6 @@ function runtimeReadinessFromData(data: WorkspaceOnboardingData) {
     primaryRepositoryId: data.setupHealth.primaryRepositoryProfile.repositoryId,
     repositorySetup: data.setupHealth.repositorySetup,
   });
-}
-
-export function setupHealthItems(
-  health: OnboardingSetupHealth,
-  initialNow = "1970-01-01T00:00:00.000Z",
-  options: SetupHealthItemsOptions = {},
-): HealthSummaryItem[] {
-  const pipelineStageLabel = `${health.defaultPipeline.stageCount} ${
-    health.defaultPipeline.stageCount === 1 ? "stage" : "stages"
-  }`;
-  const github = health.githubInstallation.connected
-    ? {
-        detail: health.githubInstallation.targetName ?? "Connected installation",
-        tone: "success" as const,
-        value: "Connected",
-      }
-    : {
-        detail: "No active installation",
-        tone: "warning" as const,
-        value: "Missing",
-      };
-  const pipeline = !health.defaultPipeline.configured
-    ? {
-        detail: "Default pipeline unavailable",
-        tone: "warning" as const,
-        value: "Missing",
-      }
-    : options.pipelineReviewed
-      ? {
-          detail: pipelineStageLabel,
-          tone: "success" as const,
-          value: "Ready",
-        }
-      : {
-          detail: `${pipelineStageLabel} from defaults — review and save`,
-          tone: "neutral" as const,
-          value: "Defaults",
-        };
-  const linearKey = health.linearKey.configured
-    ? presenceBadge(true)
-    : { tone: "neutral" as const, value: "Optional" };
-  // Routing rows are seeded with workspace defaults, so `configured` is true even
-  // before a Linear key exists. Only show the green "Saved" state once the key is
-  // present; otherwise surface the default routes as a neutral "Defaults" badge so a
-  // fresh workspace never reads as configured.
-  const linearRouting = !health.linearRouting.configured
-    ? { tone: "neutral" as const, value: "Optional" }
-    : health.linearKey.configured
-      ? { tone: "success" as const, value: "Saved" }
-      : { tone: "neutral" as const, value: "Defaults" };
-  const agentConfig = presenceBadge(health.agentConfig.configured);
-  const selectedProvider =
-    typeof health.agentConfig.values.agent_provider === "string"
-      ? (normalizeAgentProviderName(health.agentConfig.values.agent_provider) ?? "codex")
-      : "codex";
-  const providerCredential =
-    selectedProvider === "claude-code"
-      ? {
-          connected: health.claudeCodeConnection.connected,
-          credentialLabel: health.claudeCodeConnection.connected ? "Anthropic API key" : null,
-          expired: false,
-          updatedAt: health.claudeCodeConnection.updatedAt,
-        }
-      : selectedProvider === "cursor"
-        ? {
-            connected: health.cursorConnection?.connected === true,
-            credentialLabel: health.cursorConnection?.connected ? "Cursor account" : null,
-            expired: health.cursorConnection?.status === "expired",
-            updatedAt: health.cursorConnection?.updatedAt ?? null,
-          }
-        : selectedProvider === "opencode"
-          ? openCodeAccessSummary(health)
-          : {
-              connected: health.codexConnection.connected,
-              credentialLabel: health.codexConnection.credentialType
-                ? codexCredentialTypeLabel(health.codexConnection.credentialType)
-                : null,
-              expired: health.codexConnection.status === "expired",
-              updatedAt: health.codexConnection.updatedAt,
-            };
-  const providerCredentialBadge = providerCredential.connected
-    ? { tone: "success" as const, value: "Connected" }
-    : providerCredential.expired
-      ? { tone: "danger" as const, value: "Expired" }
-      : { tone: "warning" as const, value: "Missing" };
-  const sandboxConnection = health.sandboxConnection ?? {
-    connected: health.vercelSandboxConnection.connected,
-    displayName:
-      health.vercelSandboxConnection.projectName ?? "Connected project · name unavailable",
-    lastValidationError: health.vercelSandboxConnection.lastValidationError,
-    providerLabel: "Vercel Sandbox",
-    status: health.vercelSandboxConnection.status,
-  };
-  const sandboxProviderHealth = sandboxConnection.connected
-    ? {
-        detail: sandboxConnection.displayName ?? `${sandboxConnection.providerLabel} connected`,
-        tone: "success" as const,
-        value: "Connected",
-      }
-    : sandboxConnection.status === "error"
-      ? {
-          detail: sandboxConnection.lastValidationError ?? "Connection needs attention",
-          tone: "danger" as const,
-          value: "Error",
-        }
-      : {
-          detail: `${sandboxConnection.providerLabel} connection required`,
-          tone: "warning" as const,
-          value: "Missing",
-        };
-  const capabilityCheckMatches = capabilityCheckMatchesCurrentSetup(health);
-  const sandbox = health.latestSandboxCapabilityCheck
-    ? !sandboxConnection.connected
-      ? { tone: "warning" as const, value: "Blocked" }
-      : health.latestSandboxCapabilityCheck.status === "success" && capabilityCheckMatches
-        ? { tone: "success" as const, value: "Ready" }
-        : health.latestSandboxCapabilityCheck.status === "running" && capabilityCheckMatches
-          ? { tone: "accent" as const, value: "Running" }
-          : health.latestSandboxCapabilityCheck.status === "error" && capabilityCheckMatches
-            ? { tone: "danger" as const, value: "Error" }
-            : { tone: "warning" as const, value: "Stale" }
-    : { tone: "neutral" as const, value: "No check" };
-  const sandboxDetail = !sandboxConnection.connected ? (
-    `Connect ${sandboxConnection.providerLabel} first`
-  ) : health.latestSandboxCapabilityCheck && capabilityCheckMatches ? (
-    <>
-      Checked{" "}
-      <TimeDisplay
-        initialNow={initialNow}
-        value={health.latestSandboxCapabilityCheck.checkedAt}
-        variant="relative"
-      />
-    </>
-  ) : health.latestSandboxCapabilityCheck ? (
-    "Run a capability check for the current sandbox, repository, and agent"
-  ) : (
-    "Run a capability check"
-  );
-
-  return [
-    { detail: github.detail, label: "GitHub", tone: github.tone, value: github.value },
-    {
-      detail: health.selectedRepository.fullName ?? "No selected repository",
-      label: "Repository",
-      tone: health.selectedRepository.configured ? "success" : "warning",
-      value: health.selectedRepository.configured ? "Selected" : "Missing",
-    },
-    {
-      detail: health.primaryRepositoryProfile.fullName ?? "No saved profile",
-      label: "Profile",
-      tone: health.primaryRepositoryProfile.configured ? "success" : "warning",
-      value: health.primaryRepositoryProfile.configured ? "Saved" : "Missing",
-    },
-    { detail: pipeline.detail, label: "Pipeline", tone: pipeline.tone, value: pipeline.value },
-    {
-      detail: health.linearKey.configured
-        ? "Credential stored"
-        : "Only needed to attach Linear issues",
-      label: "Linear key",
-      tone: linearKey.tone,
-      value: linearKey.value,
-    },
-    {
-      detail: !health.linearRouting.configured
-        ? "Optional status sync is not configured"
-        : health.linearKey.configured
-          ? "Routes saved"
-          : "Default routes — used when Linear is connected",
-      label: "Linear routing",
-      tone: linearRouting.tone,
-      value: linearRouting.value,
-    },
-    {
-      detail: health.agentConfig.configuredKeys.length
-        ? "Provider and model saved"
-        : "Agent settings required",
-      label: "Agent config",
-      tone: agentConfig.tone,
-      value: agentConfig.value,
-    },
-    {
-      detail: providerCredential.expired
-        ? "Provider credential expired"
-        : providerCredential.connected && providerCredential.credentialLabel
-          ? providerCredential.credentialLabel
-          : "Provider credential required",
-      label: "Provider access",
-      tone: providerCredentialBadge.tone,
-      value: providerCredentialBadge.value,
-    },
-    {
-      detail: sandboxProviderHealth.detail,
-      label: "Sandbox provider",
-      tone: sandboxProviderHealth.tone,
-      value: sandboxProviderHealth.value,
-    },
-    {
-      detail: sandboxDetail,
-      label: "Sandbox",
-      tone: sandbox.tone,
-      value: sandbox.value,
-    },
-  ];
-}
-
-function StepNavigation({
-  canSelect,
-  items,
-  onSelect,
-}: {
-  canSelect: boolean;
-  items: ReturnType<typeof getOnboardingStepRailItems>;
-  onSelect: (step: WorkspaceOnboardingStep) => void;
-}) {
-  return (
-    <nav
-      aria-label="Setup steps"
-      className="h-fit min-w-0 rounded-[6px] border border-border bg-sheet p-2 lg:sticky lg:top-8 lg:border-0 lg:bg-transparent lg:p-0"
-    >
-      <div className="lg:hidden">
-        <SelectField
-          className="space-y-2"
-          disabled={!canSelect}
-          groups={ONBOARDING_GROUPS.map((group) => ({
-            label: group.title,
-            options: items
-              .filter((step) => group.steps.includes(step.id))
-              .map((step) => ({
-                disabled: !step.isNavigable,
-                label: `${step.shortTitle}${step.id === "linear" ? " (optional)" : ""}${
-                  step.displayState === "completed"
-                    ? " — Completed"
-                    : step.displayState === "skipped"
-                      ? " — Skipped"
-                      : ""
-                }`,
-                value: step.id,
-              })),
-          }))}
-          id="onboarding-step-picker"
-          label="Setup step"
-          labelClassName="type-label text-muted"
-          onValueChange={(value) => {
-            const step = items.find((item) => item.id === value);
-            if (step?.isNavigable) onSelect(step.id);
-          }}
-          triggerClassName="min-h-11 text-[14px]"
-          value={items.find((step) => step.isActive)?.id ?? ""}
-          wrap
-        />
-      </div>
-      <ol className="hidden space-y-5 lg:block">
-        {ONBOARDING_GROUPS.map((group, index) => (
-          <li key={group.title}>
-            <p className="mb-2 px-2 text-[13px] font-semibold tracking-tight text-foreground lg:px-3">
-              {index + 1}. {group.title}
-            </p>
-            <ol className="grid grid-cols-2 gap-1 lg:grid-cols-1">
-              {items
-                .filter((step) => group.steps.includes(step.id))
-                .map((step) => (
-                  <li className="min-w-0" key={step.id}>
-                    <button
-                      type="button"
-                      aria-current={step.isActive ? "step" : undefined}
-                      className={cn(
-                        "flex min-h-11 w-full min-w-0 items-center justify-between gap-2 rounded-[6px] px-2 py-2 text-left text-xs font-medium transition-colors lg:px-3 lg:text-[13px]",
-                        step.isActive
-                          ? "bg-accent-soft text-accent"
-                          : railStateClasses[step.displayState],
-                        (!canSelect || !step.isNavigable) && "cursor-not-allowed",
-                      )}
-                      disabled={!canSelect || !step.isNavigable}
-                      onClick={() => onSelect(step.id)}
-                    >
-                      <span className="min-w-0">
-                        {step.shortTitle}
-                        {step.id === "linear" ? (
-                          <span className="text-xs font-normal text-muted"> (optional)</span>
-                        ) : null}
-                      </span>
-                      {step.displayState === "completed" ? (
-                        <SetupCheck />
-                      ) : step.displayState === "skipped" ? (
-                        <span className="type-annotation shrink-0">Skipped</span>
-                      ) : null}
-                    </button>
-                  </li>
-                ))}
-            </ol>
-          </li>
-        ))}
-      </ol>
-    </nav>
-  );
-}
-
-const healthSetupSteps = {
-  GitHub: "github",
-  Repository: "repository",
-  Profile: "repository",
-  Pipeline: "pipeline",
-  "Linear key": "linear",
-  "Linear routing": "linear",
-  "Agent config": "runtime",
-  "Provider access": "runtime",
-  "Sandbox provider": "sandbox",
-  Sandbox: "verify",
-} satisfies Record<string, WorkspaceOnboardingStep>;
-
-function SetupHealthSummary({
-  canSelect,
-  onSelect,
-  health,
-  initialNow,
-  pipelineReviewed,
-}: {
-  canSelect: boolean;
-  onSelect: (step: WorkspaceOnboardingStep) => void;
-  health: OnboardingSetupHealth;
-  initialNow: string;
-  pipelineReviewed: boolean;
-}) {
-  const items = setupHealthItems(health, initialNow, { pipelineReviewed });
-  const required = items.filter((item) => healthSetupSteps[item.label] !== "linear");
-  const needsAttention = required.filter((item) => item.tone !== "success");
-  const configured = required.filter((item) => item.tone === "success");
-  const optional = items.filter((item) => healthSetupSteps[item.label] === "linear");
-
-  function renderItems(entries: HealthSummaryItem[]) {
-    return (
-      <ul className="mt-3 divide-y divide-border">
-        {entries.map((item) => (
-          <li key={item.label} className="py-1 first:pt-0">
-            <button
-              type="button"
-              aria-label={`Open ${item.label} setup: ${item.value}`}
-              className="min-h-11 w-full rounded-[6px] px-2 py-2 text-left transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
-              disabled={!canSelect}
-              onClick={() => onSelect(healthSetupSteps[item.label])}
-            >
-              <span className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-[13px] font-medium text-foreground">{item.label}</span>
-                <Status label={item.value} value={configurationStatusFromTone(item.tone)} />
-              </span>
-              <span className="mt-1 block break-words text-xs leading-5 text-muted">
-                {item.detail}
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
-    );
-  }
-
-  return (
-    <aside className="h-fit min-w-0 lg:sticky lg:top-8">
-      <h2 className="text-[13px] font-semibold tracking-tight text-foreground">Setup status</h2>
-      <p className="mt-1 text-xs leading-5 text-muted">
-        Saved connections still need a successful check before your first task.
-      </p>
-      {needsAttention.length > 0 ? (
-        renderItems(needsAttention)
-      ) : (
-        <p className="mt-3 text-xs text-muted">Your saved setup is listed below.</p>
-      )}
-      {configured.length > 0 ? (
-        <details className="mt-4 border-t border-border pt-2">
-          <summary className="min-h-11 cursor-pointer py-3 text-[13px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">
-            Configured ({configured.length})
-          </summary>
-          {renderItems(configured)}
-        </details>
-      ) : null}
-      <details className="border-t border-border pt-2">
-        <summary className="min-h-11 cursor-pointer py-3 text-[13px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">
-          Linear (optional)
-        </summary>
-        {renderItems(optional)}
-      </details>
-      <button
-        type="button"
-        className="ui-button mt-3 w-full"
-        disabled={!canSelect}
-        onClick={() => onSelect("verify")}
-      >
-        Review readiness
-      </button>
-    </aside>
-  );
 }
 
 export function isRepositorySelectionCurrent(
@@ -635,10 +253,7 @@ function selectedRepositoryFromData(data: WorkspaceOnboardingData) {
 }
 
 function canCompleteGitHubSetupStep(data: WorkspaceOnboardingData) {
-  return (
-    data.setupHealth.githubInstallation.connected &&
-    data.github.repositories.some((repository) => !repository.isArchived)
-  );
+  return data.setupHealth.githubInstallation.connected && hasActiveGithubRepositories(data.github);
 }
 
 function hasSelectedRepositoryProfile(data: WorkspaceOnboardingData) {
@@ -708,6 +323,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
   const [leaveAction, setLeaveAction] = useState<(() => void) | null>(null);
   const [isStartingVerification, setIsStartingVerification] = useState(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const mobileStepsRef = useRef<HTMLDetailsElement>(null);
   const leaveFocusRef = useRef<HTMLElement | null>(null);
   const saveInFlightRef = useRef(false);
   const latestDataRef = useRef(data);
@@ -725,6 +341,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
   const railItems = useMemo(() => getOnboardingStepRailItems(onboarding), [onboarding]);
   const canGoBack = onboardingStepIndex(onboarding.currentStep) > 0;
   const isCompleted = onboarding.status === "completed";
+  const hasCompletedBefore = isCompleted || onboarding.completedAt !== null;
   const isSaving = savingAction !== null || isStartingVerification;
   const dirtyStep = data.canManage && stepDraft?.step === activeStep.id && stepDraft.dirty;
   const savingStep = stepDraft?.step === activeStep.id && stepDraft.pending;
@@ -745,8 +362,6 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
     (activeStep.id === "pipeline" || activeStep.id === "linear") &&
     !inlineCompletionUnavailable &&
     !activeStepAlreadyResolved;
-  const inlineCompletionLabel =
-    activeStep.id === "linear" ? "Finish Linear setup to continue" : "Save pipeline to continue";
   const githubContinueBlocked = activeStep.id === "github" && !canCompleteGitHubSetupStep(data);
   const repositoryContinueBlocked =
     activeStep.id === "repository" && !canCompleteRepositoryStep(data);
@@ -767,27 +382,30 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
         data.setupHealth.sandboxConnection?.connected ??
         data.setupHealth.vercelSandboxConnection.connected
       ));
-  const verifyChecklist = buildVerifyChecklist({
-    agentConfig: data.agentConfig,
-    health: data.setupHealth,
-    onboarding: data.onboarding,
-  });
-  const verifyCompletionBlocked = verifyChecklist.some((item) => !item.passed);
-  const verificationPrerequisitesMissing = verifyChecklist.some(
-    (item) => item.step !== "verify" && !item.passed,
-  );
+  const verifyChecklist = getSetupVerificationChecklist(data);
+  const firstBlocker = verifyChecklist.find((item) => !item.passed);
+  const verifyCompletionBlocked = Boolean(firstBlocker);
   const verificationRunning = data.setupHealth.latestSandboxCapabilityCheck?.status === "running";
-  const needsVerification = (isCompleted || isVerifyingStep) && verifyCompletionBlocked;
-  const reviewVerification = needsVerification && !isVerifyingStep;
-  const submitVerification = needsVerification && isVerifyingStep;
-  const firstTaskDestination = `${workspaceBasePath(data.workspace.slug)}?create=1`;
+  const prerequisite = getVerificationRecovery(data, firstBlocker);
+  const sessionsDestination = workspaceSessionsPath(data.workspace.slug);
+  const afterCompletionDestination = hasCompletedBefore
+    ? sessionsDestination
+    : `${workspaceBasePath(data.workspace.slug)}?create=1`;
+  const stepGroup = ONBOARDING_GROUPS.find((group) => group.steps.includes(activeStep.id))!;
+  const stepBlocker =
+    activeStep.id === "repository"
+      ? repositoryStepBlocker(data)
+      : activeStep.id === "sandbox" || activeStep.id === "runtime"
+        ? executionStepBlocker(activeStep.id, runtimeCompletionState, verifyChecklist)
+        : null;
   const skipAllowed = canSkipOnboardingStep(onboarding.currentStep);
 
   useEffect(() => {
     if (previousStepRef.current === onboarding.currentStep) return;
     previousStepRef.current = onboarding.currentStep;
+    if (mobileStepsRef.current) mobileStepsRef.current.open = false;
     scrollOnboardingSetupToTop();
-    headingRef.current?.focus();
+    headingRef.current?.focus({ preventScroll: true });
   }, [onboarding.currentStep]);
 
   useEffect(() => {
@@ -800,16 +418,15 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, [dirtyStep, savingStep]);
 
-  function requestLeave(action: () => void) {
+  function requestLeave(action: () => void, returnFocus?: HTMLElement) {
     if (navigationDisabled || saveInFlightRef.current || leaveAction) return;
     if (dirtyStep) {
       const focused = document.activeElement;
       leaveFocusRef.current =
-        focused?.getAttribute("role") === "option"
-          ? document.getElementById("onboarding-step-picker")
-          : focused instanceof HTMLElement
-            ? focused
-            : headingRef.current;
+        returnFocus ??
+        (focused instanceof HTMLElement && focused !== document.body
+          ? focused
+          : headingRef.current);
       setLeaveAction(() => action);
     } else {
       action();
@@ -937,11 +554,6 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
   }
 
   async function continueSetup() {
-    if (activeStep.id === "verify") {
-      await completeOnboarding();
-      return;
-    }
-
     if (inlineCompletionUnavailable) {
       const patch = buildOnboardingAdvancePatch(onboarding);
       if (!patch) return;
@@ -1000,9 +612,8 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
       const nextData = reduceOnboardingMutationData(latestDataRef.current, body);
       latestDataRef.current = nextData;
       setData(nextData);
-      const destination = firstTaskDestination;
-      startNavigation(destination);
-      router.replace(destination);
+      startNavigation(afterCompletionDestination);
+      router.replace(afterCompletionDestination);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Failed to complete onboarding.";
       setError(message);
@@ -1056,8 +667,8 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
     });
   }
 
-  function requestStep(step: WorkspaceOnboardingStep) {
-    if (step !== onboarding.currentStep) requestLeave(() => void selectStep(step));
+  function requestStep(step: WorkspaceOnboardingStep, returnFocus?: HTMLElement) {
+    if (step !== onboarding.currentStep) requestLeave(() => void selectStep(step), returnFocus);
   }
 
   async function exitSetup() {
@@ -1070,7 +681,9 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
         })
       : data;
     if (nextData) {
-      const destination = workspaceBasePath(data.workspace.slug);
+      const destination = hasCompletedBefore
+        ? sessionsDestination
+        : workspaceBasePath(data.workspace.slug);
       startNavigation(destination);
       router.push(destination);
     }
@@ -1120,221 +733,295 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
     setError(message.kind === "error" ? message.text : null);
   }
 
-  return (
-    <div className="flex min-h-[100svh] flex-col bg-sheet text-foreground">
-      <header
-        className={cn(
-          "mx-auto flex w-full flex-wrap items-start justify-between gap-x-6 gap-y-3 px-4 pb-8 pt-8 sm:px-8 sm:pt-10",
-          isVerifyingStep ? "max-w-[1040px]" : "max-w-[1180px]",
-        )}
-      >
-        <div className="min-w-0 space-y-2">
-          <p className="type-label text-muted">Phase 2 of 2 · Set up workspace</p>
-          <h1 className="type-page-title">Set up {data.workspace.name}</h1>
-          <p className="max-w-2xl text-[14px] leading-6 text-muted">
-            Connect a repository and execution access, then verify your setup and start a task.
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {!data.canManage ? <Status label="Read only" value="not_started" /> : null}
-          <button
-            type="button"
-            className="ui-button"
-            aria-describedby={!isCompleted ? "onboarding-exit-hint" : undefined}
-            disabled={navigationDisabled}
-            onClick={() => requestLeave(() => void exitSetup())}
-          >
-            <ActionButtonLabel
-              idle="Exit setup"
-              pending={savingAction === "exit"}
-              pendingLabel="Exiting…"
-            />
-          </button>
-          {!isCompleted ? (
-            <p className="max-w-40 text-xs leading-4 text-muted" id="onboarding-exit-hint">
-              You can resume saved progress later.
-            </p>
-          ) : null}
-        </div>
-      </header>
+  function guardLink(event: { preventDefault: () => void }, destination: string) {
+    if (navigationDisabled || saveInFlightRef.current || leaveAction) {
+      event.preventDefault();
+    } else if (dirtyStep) {
+      event.preventDefault();
+      requestLeave(() => {
+        startNavigation(destination);
+        router.push(destination);
+      });
+    } else {
+      startNavigation(destination);
+    }
+  }
 
-      <main
-        id="main-content"
-        className={cn(
-          "mx-auto grid w-full flex-1 grid-cols-1 gap-8 px-4 pb-[calc(7rem+env(safe-area-inset-bottom))] sm:px-8 lg:gap-12",
-          isVerifyingStep
-            ? "max-w-[1040px] lg:grid-cols-[180px_minmax(0,1fr)]"
-            : "max-w-[1180px] lg:grid-cols-[180px_minmax(0,1fr)_260px]",
-        )}
-      >
-        <StepNavigation canSelect={!navigationDisabled} items={railItems} onSelect={requestStep} />
-
-        <section className="min-w-0">
-          <div className="settings-section-header mb-6">
-            <div className="min-w-0">
-              <p className="mb-1 type-label text-muted" id="onboarding-step-position">
-                Setup step {onboardingStepIndex(activeStep.id) + 1} of {ONBOARDING_STEPS.length}
-              </p>
-              <h2
-                aria-describedby="onboarding-step-position"
-                className="type-section-title scroll-mt-4"
-                ref={headingRef}
-                tabIndex={-1}
-              >
-                {activeStep.title}
-              </h2>
-              <p className="mt-1 max-w-2xl text-[13px] leading-5 text-muted">
-                {activeStep.description}
-              </p>
-            </div>
-          </div>
-
-          {error ? (
-            <div
-              className="mt-5 rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
-              role="alert"
-            >
-              {error}
-            </div>
-          ) : null}
-
-          <div className="mt-6">
-            <ActiveOnboardingStep
-              items={railItems}
-              data={data}
-              isSaving={isSaving}
-              onCompleteStep={completeCurrentStep}
-              onPipelineCompleted={completePipelineStep}
-              onDataChange={updateData}
-              onDraftStateChange={onStepDraftStateChange}
-              onRefresh={async (action) => {
-                const nextData = await refreshOnboarding(action);
-                if (!nextData) {
-                  throw new Error("Failed to refresh onboarding state.");
-                }
-              }}
-              onRepositoryOnboardingChange={updateRepositoryOnboarding}
-              onRepositorySetupMessage={handleRepositorySetupMessage}
-              onRuntimeStateChange={setRuntimeCompletionState}
-              onVerificationPendingChange={setIsStartingVerification}
-              onSelectStep={requestStep}
-              onSelectGithubRepository={selectGithubRepository}
-              step={activeStep.id}
-            />
-          </div>
-        </section>
-
-        {!isVerifyingStep ? (
-          <SetupHealthSummary
-            canSelect={!navigationDisabled}
-            onSelect={requestStep}
-            health={data.setupHealth}
-            initialNow={renderNow}
-            pipelineReviewed={isCompleted || onboarding.completedSteps.includes("pipeline")}
-          />
-        ) : null}
-      </main>
-
-      <footer className="sticky bottom-0 z-20 border-t border-border bg-sheet/95 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
-        <div
-          className={cn(
-            "mx-auto flex justify-end",
-            isVerifyingStep ? "max-w-[1040px] sm:px-8" : "max-w-[1180px]",
-          )}
-        >
-          <div className="flex flex-wrap items-center gap-2">
+  const sessionsLink = isCompleted ? (
+    <Link
+      aria-disabled={navigationDisabled || undefined}
+      className={cn(
+        "min-h-11 aria-disabled:cursor-wait aria-disabled:opacity-60",
+        isVerifyingStep && !firstBlocker ? "ui-button-primary" : "ui-button",
+      )}
+      href={sessionsDestination}
+      onNavigate={(event) => guardLink(event, sessionsDestination)}
+    >
+      Back to sessions
+    </Link>
+  ) : null;
+  const verificationActions =
+    isVerifyingStep && (data.canManage || isCompleted) ? (
+      <div className="flex flex-wrap items-center gap-2">
+        {data.canManage ? (
+          prerequisite ? (
             <button
+              className="ui-button-primary min-h-11"
+              data-step-link={prerequisite.step}
+              disabled={navigationDisabled}
+              onClick={() => requestStep(prerequisite.step)}
               type="button"
-              className="ui-button"
-              disabled={!data.canManage || !canGoBack || navigationDisabled || isCompleted}
-              onClick={() => requestLeave(() => void goBack())}
             >
-              <ActionButtonLabel
-                idle="Back"
-                pending={savingAction === "back"}
-                pendingLabel="Saving…"
-              />
+              {prerequisite.action}
             </button>
-            {skipAllowed && !isCompleted ? (
-              <button
-                type="button"
-                className="ui-button"
-                disabled={!data.canManage || navigationDisabled}
-                onClick={() => requestLeave(() => void skipStep())}
-              >
-                <ActionButtonLabel
-                  idle={activeStep.id === "linear" ? "Skip Linear" : "Skip agent settings"}
-                  pending={savingAction === "skip"}
-                  pendingLabel="Saving…"
-                />
-              </button>
-            ) : null}
+          ) : firstBlocker ? (
             <button
-              type={submitVerification ? "submit" : "button"}
-              className="ui-button-primary"
-              form={submitVerification ? "onboarding-verification" : undefined}
-              disabled={
-                navigationDisabled ||
-                (!reviewVerification &&
-                  ((!data.canManage && (!isCompleted || needsVerification)) ||
-                    (!isCompleted &&
-                      (githubContinueBlocked ||
-                        repositoryContinueBlocked ||
-                        sandboxContinueBlocked ||
-                        runtimeCompletionBlocked ||
-                        requiresInlineCompletion)) ||
-                    (submitVerification &&
-                      (verificationPrerequisitesMissing || verificationRunning))))
-              }
-              onClick={
-                submitVerification
-                  ? undefined
-                  : (event) => {
-                      if (reviewVerification) {
-                        event.preventDefault();
-                        requestStep("verify");
-                      } else if (isCompleted) {
-                        if (verifyCompletionBlocked) return;
-                        requestLeave(() => {
-                          startNavigation(firstTaskDestination);
-                          router.replace(firstTaskDestination);
-                        });
-                      } else {
-                        requestLeave(() => void continueSetup());
-                      }
-                    }
-              }
+              className="ui-button-primary min-h-11"
+              disabled={navigationDisabled || verificationRunning}
+              form="onboarding-verification"
+              type="submit"
             >
               <ActionButtonLabel
                 idle={
-                  reviewVerification
-                    ? "Review setup"
-                    : needsVerification
-                      ? verificationRunning
-                        ? "Checking…"
-                        : verificationPrerequisitesMissing
-                          ? "Verify setup"
-                          : verifyChecklist.find((item) => item.id === "sandbox")?.statusLabel ===
-                              "Failed"
-                            ? "Retry verification"
-                            : "Verify setup"
-                      : isCompleted || isVerifyingStep
-                        ? "Create your first task"
-                        : requiresInlineCompletion
-                          ? inlineCompletionLabel
-                          : "Continue"
+                  verificationRunning
+                    ? "Checking…"
+                    : firstBlocker.statusLabel === "Failed"
+                      ? "Retry verification"
+                      : data.setupHealth.latestSandboxCapabilityCheck
+                        ? "Verify again"
+                        : "Verify setup"
                 }
-                pending={
-                  savingAction === "continue" ||
-                  savingAction === "complete" ||
-                  isStartingVerification
-                }
-                pendingLabel={isStartingVerification ? "Starting…" : "Saving…"}
+                pending={isStartingVerification}
+                pendingLabel="Starting…"
               />
             </button>
+          ) : !isCompleted ? (
+            <button
+              className="ui-button-primary min-h-11"
+              disabled={navigationDisabled}
+              onClick={() => void completeOnboarding()}
+              type="button"
+            >
+              <ActionButtonLabel
+                idle={hasCompletedBefore ? "Finish setup" : "Create your first task"}
+                pending={savingAction === "complete"}
+                pendingLabel="Saving…"
+              />
+            </button>
+          ) : null
+        ) : null}
+        {sessionsLink}
+      </div>
+    ) : null;
+  const stepNavigation = (
+    <StepNavigation
+      canSelect={!navigationDisabled}
+      isCompleted={isCompleted}
+      items={railItems}
+      onSelect={requestStep}
+    />
+  );
+  const linearSettingsDestination = `${workspaceSettingsPath(data.workspace.slug, {
+    category: "integrations",
+  })}#linear`;
+
+  return (
+    <div className="min-h-[100svh] bg-sheet text-foreground">
+      <div className="mx-auto w-full max-w-[1080px] pb-[max(2rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-5 sm:px-8 sm:pt-9">
+        <header className="mb-5 sm:mb-8">
+          <h1 className="type-page-title [overflow-wrap:anywhere]">Set up {data.workspace.name}</h1>
+        </header>
+
+        <main
+          id="main-content"
+          className="grid min-w-0 grid-cols-1 gap-8 lg:grid-cols-[11rem_minmax(0,1fr)] lg:gap-12"
+        >
+          <aside className="sticky top-8 hidden h-fit min-w-0 lg:block">{stepNavigation}</aside>
+          <div className="min-w-0">
+            <section aria-labelledby="onboarding-step-title" className="space-y-4">
+              <div>
+                <p className="type-label mb-1 text-muted" id="onboarding-step-position">
+                  {stepGroup.title} · Step {onboardingStepIndex(activeStep.id) + 1} of{" "}
+                  {ONBOARDING_STEPS.length}
+                </p>
+                <h2
+                  aria-describedby="onboarding-step-position"
+                  className="type-section-title scroll-mt-4 [text-wrap:balance]"
+                  id="onboarding-step-title"
+                  ref={headingRef}
+                  tabIndex={-1}
+                >
+                  {activeStep.title}
+                </h2>
+                {activeStep.description ? (
+                  <p className="mt-1 max-w-2xl text-[13px] leading-5 text-muted">
+                    {activeStep.description}
+                  </p>
+                ) : null}
+              </div>
+
+              {error ? (
+                <div
+                  className="rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
+                  role="alert"
+                >
+                  {error}
+                </div>
+              ) : null}
+
+              {!isVerifyingStep && !data.canManage && activeStep.id !== "github" ? (
+                <p className="text-[13px] leading-5 text-muted">
+                  Workspace settings are read only. Ask a workspace owner or admin to make changes.
+                </p>
+              ) : null}
+              {stepBlocker ? (
+                <p className="border-l-2 border-warning pl-3 text-[13px] leading-5 text-foreground [overflow-wrap:anywhere]">
+                  {stepBlocker}
+                </p>
+              ) : null}
+              {skipAllowed && !isCompleted && data.canManage ? (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <button
+                    type="button"
+                    className="ui-button min-h-11"
+                    disabled={navigationDisabled}
+                    onClick={() => requestLeave(() => void skipStep())}
+                  >
+                    <ActionButtonLabel
+                      idle={activeStep.id === "linear" ? "Skip Linear" : "Skip agent settings"}
+                      pending={savingAction === "skip"}
+                      pendingLabel="Saving…"
+                    />
+                  </button>
+                  {activeStep.id === "linear" ? (
+                    <span className="text-[13px] text-muted">
+                      Connect later in{" "}
+                      <Link
+                        href={linearSettingsDestination}
+                        onNavigate={(event) => guardLink(event, linearSettingsDestination)}
+                        className="rounded-sm text-accent underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                      >
+                        Settings → Linear
+                      </Link>
+                      .
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <ActiveOnboardingStep
+                items={railItems}
+                data={data}
+                initialNow={renderNow}
+                isSaving={isSaving}
+                onCompleteStep={completeCurrentStep}
+                onKeepPipeline={() => requestLeave(() => void continueSetup())}
+                onPipelineCompleted={completePipelineStep}
+                onDataChange={updateData}
+                onDraftStateChange={onStepDraftStateChange}
+                onRefresh={async (action) => {
+                  await refreshOnboarding(action);
+                }}
+                onRepositoryOnboardingChange={updateRepositoryOnboarding}
+                onRepositorySetupMessage={handleRepositorySetupMessage}
+                onRuntimeStateChange={setRuntimeCompletionState}
+                onVerificationPendingChange={setIsStartingVerification}
+                onSelectStep={requestStep}
+                onSelectGithubRepository={selectGithubRepository}
+                step={activeStep.id}
+                verificationActions={verificationActions}
+              />
+
+              {!isVerifyingStep &&
+              !isCompleted &&
+              data.canManage &&
+              !requiresInlineCompletion &&
+              !githubContinueBlocked ? (
+                <button
+                  className="ui-button-primary min-h-11"
+                  disabled={
+                    navigationDisabled ||
+                    repositoryContinueBlocked ||
+                    sandboxContinueBlocked ||
+                    runtimeCompletionBlocked
+                  }
+                  onClick={() => requestLeave(() => void continueSetup())}
+                  type="button"
+                >
+                  <ActionButtonLabel
+                    idle="Continue"
+                    pending={savingAction === "continue"}
+                    pendingLabel="Saving…"
+                  />
+                </button>
+              ) : null}
+            </section>
+
+            <details className="group mt-6 border-t border-border lg:hidden" ref={mobileStepsRef}>
+              <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-sm text-[13px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 [&::-webkit-details-marker]:hidden">
+                <span className="text-muted group-open:rotate-90" aria-hidden="true">
+                  ›
+                </span>
+                All setup steps
+              </summary>
+              <div className="pb-4">{stepNavigation}</div>
+            </details>
+
+            {!isCompleted || !isVerifyingStep ? (
+              <footer className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-3 lg:mt-8">
+                {data.canManage && canGoBack && !isCompleted ? (
+                  <button
+                    type="button"
+                    className="ui-button min-h-11"
+                    disabled={navigationDisabled}
+                    onClick={() => requestLeave(() => void goBack())}
+                  >
+                    <ActionButtonLabel
+                      idle="Back"
+                      pending={savingAction === "back"}
+                      pendingLabel="Saving…"
+                    />
+                  </button>
+                ) : null}
+                {isCompleted ? (
+                  <>
+                    <button
+                      className="ui-button min-h-11"
+                      disabled={navigationDisabled}
+                      onClick={() => requestStep("verify")}
+                      type="button"
+                    >
+                      Review readiness
+                    </button>
+                    {sessionsLink}
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="ui-button min-h-11"
+                      aria-describedby={data.canManage ? "onboarding-exit-hint" : undefined}
+                      disabled={navigationDisabled}
+                      onClick={() => requestLeave(() => void exitSetup())}
+                    >
+                      <ActionButtonLabel
+                        idle={hasCompletedBefore ? "Back to sessions" : "Exit setup"}
+                        pending={savingAction === "exit"}
+                        pendingLabel="Exiting…"
+                      />
+                    </button>
+                    {data.canManage ? (
+                      <p className="text-xs leading-4 text-muted" id="onboarding-exit-hint">
+                        You can resume saved progress later.
+                      </p>
+                    ) : null}
+                  </>
+                )}
+              </footer>
+            ) : null}
           </div>
-        </div>
-      </footer>
+        </main>
+      </div>
       <DestructiveConfirmationDialog
         actionLabel="Discard changes"
         cancelLabel="Keep editing"
