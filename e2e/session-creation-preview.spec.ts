@@ -307,6 +307,8 @@ test("retry returns to the original launch when only the workflow return address
     const recovery = dialog.getByRole("button", { name: "Open original draft", exact: true });
     await expect(recovery).toBeInViewport();
     await expect(dialog.getByText(/Retry to check the original request/)).toHaveCount(0);
+    await expect(dialog.getByRole("textbox", { name: "Linear issue URL" })).toBeVisible();
+    await expect(dialog.locator('[aria-describedby~="create-session-error"]')).toHaveCount(0);
     await recovery.press("Enter");
     await expect(page).toHaveURL(original);
     await expect(dialog.getByText(workflow.label, { exact: true })).toBeVisible();

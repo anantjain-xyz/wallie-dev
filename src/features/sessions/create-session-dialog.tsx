@@ -1302,7 +1302,7 @@ function CreateSessionDialogBody({
                   aria-describedby={
                     [
                       linearError ? "session-linear-error" : null,
-                      errorMessage ? "create-session-error" : null,
+                      visibleErrorMessage ? "create-session-error" : null,
                     ]
                       .filter(Boolean)
                       .join(" ") || undefined
