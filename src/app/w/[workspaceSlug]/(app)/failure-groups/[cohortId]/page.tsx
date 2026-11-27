@@ -273,6 +273,21 @@ export default async function FailureGroupPage({
   return (
     <PageContainer>
       <PageHeader
+        actions={
+          <Link
+            className="ui-button"
+            href={workspaceImprovementsPath(workspaceSlug, {
+              factory: scope.factoryId,
+              cohort: cohort.parent_cohort_id ?? cohort.id,
+            })}
+            prefetch={false}
+          >
+            {cohort.parent_cohort_id
+              ? "View original group’s proposals"
+              : "View proposals for this group"}
+          </Link>
+        }
+        actionsRightOnDesktop
         title={failureGroupTitle(cohort)}
         eyebrow={back}
         eyebrowAsPlain
@@ -295,43 +310,33 @@ export default async function FailureGroupPage({
           {!cohort.review.can_review ? (
             <p className="type-secondary text-muted">{readOnly}</p>
           ) : null}
-          <div className="flex flex-wrap gap-2">
-            <Link
-              className="ui-button"
-              href={workspaceImprovementsPath(workspaceSlug, {
-                factory: scope.factoryId,
-                cohort: cohort.parent_cohort_id ?? cohort.id,
-              })}
-              prefetch={false}
-            >
-              {cohort.parent_cohort_id
-                ? "View original group’s proposals"
-                : "View proposals for this group"}
-            </Link>
-            {revision ? (
-              <Link
-                className="ui-button"
-                href={workspaceFailureGroupPath(workspaceSlug, id.data, {
-                  ...pageQuery,
-                  revision: undefined,
-                })}
-              >
-                View all revisions
-              </Link>
-            ) : null}
-            {cohort.parent_cohort_id ? (
-              <Link
-                className="ui-button"
-                href={workspaceFailureGroupPath(
-                  workspaceSlug,
-                  cohort.parent_cohort_id,
-                  lineageQuery,
-                )}
-              >
-                Original group
-              </Link>
-            ) : null}
-          </div>
+          {revision || cohort.parent_cohort_id ? (
+            <div className="flex flex-wrap gap-2">
+              {revision ? (
+                <Link
+                  className="ui-button"
+                  href={workspaceFailureGroupPath(workspaceSlug, id.data, {
+                    ...pageQuery,
+                    revision: undefined,
+                  })}
+                >
+                  View all revisions
+                </Link>
+              ) : null}
+              {cohort.parent_cohort_id ? (
+                <Link
+                  className="ui-button"
+                  href={workspaceFailureGroupPath(
+                    workspaceSlug,
+                    cohort.parent_cohort_id,
+                    lineageQuery,
+                  )}
+                >
+                  Original group
+                </Link>
+              ) : null}
+            </div>
+          ) : null}
           {data.split_groups.length ? (
             <nav aria-label="Split groups" className="flex flex-wrap gap-2">
               {data.split_groups.map(({ id: childId, side }) => (

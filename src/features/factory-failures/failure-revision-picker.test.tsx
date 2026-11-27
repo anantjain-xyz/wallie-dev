@@ -35,6 +35,7 @@ it("pages named revisions within the selected factory and retains a deep-linked 
     <FailureRevisionPicker
       endpoint="/failure-groups/revisions?factory=factory-a"
       initialPage={{ options: [current], next: current.id }}
+      onValueChange={vi.fn()}
       pinned={[pinned]}
       selected={pinned.id}
     />,

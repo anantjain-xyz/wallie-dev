@@ -35,7 +35,6 @@ export function BenchmarkCatalogEditor({
     <>
       <PageHeader
         title="Benchmarks"
-        description="Build suites of captured tasks to compare factory configurations against the same work."
         actionsRightOnDesktop
         actions={
           <SelectField

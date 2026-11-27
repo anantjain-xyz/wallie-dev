@@ -1,17 +1,15 @@
 import Link from "next/link";
 
-import { FILTER_CONTROL_CLASS } from "@/components/ui/filter-controls";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
-import { SelectField } from "@/components/ui/select";
 import { failureGroupTitle } from "@/features/factory-failures/failure-group-summary";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
+import { ImprovementFilters } from "@/features/factory-proposals/improvement-filters";
 import { loadImprovementScope } from "@/features/factory-proposals/improvement-scope";
 import {
   ImprovementStatus,
   ImprovementTime,
-  improvementReviewStates,
 } from "@/features/factory-proposals/improvement-status";
 import { getFailureCohort } from "@/lib/factory-failures/cohorts";
 import { factoryProposalUuidSchema } from "@/lib/factory-proposals/contracts";
@@ -91,61 +89,47 @@ export default async function ImprovementsPage({
   const groupHref =
     cohort.data && workspaceFailureGroupPath(workspaceSlug, cohort.data, factoryQuery);
   const nextCursor = page.nextRevisionId ?? page.nextProposalId;
+  const empty = !after.data && !reviewState.data && !page.proposals.length;
+  const path = workspaceImprovementsPath(workspaceSlug);
 
   return (
     <PageContainer>
       <PageHeader actions={factorySelector} actionsRightOnDesktop title="Improvements" />
       <div className="space-y-4">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <form
-            action={workspaceImprovementsPath(workspaceSlug)}
-            className="flex flex-wrap items-end gap-2"
+        {groupHref ? (
+          <nav
+            aria-label="Failure group filter"
+            className="type-secondary flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1"
           >
-            <input name="factory" type="hidden" value={scope.factoryId} />
-            {cohort.data ? <input name="cohort" type="hidden" value={cohort.data} /> : null}
-            <SelectField
-              className="w-52 max-w-full"
-              defaultValue={reviewState.data ?? "all"}
-              key={reviewState.data ?? "all"}
-              label="Review state"
-              labelClassName="type-label"
-              name="reviewState"
-              options={[
-                { label: "All", value: "all" },
-                ...proposalReviewDispositionSchema.options.map((value) => ({
-                  label: improvementReviewStates[value].label,
-                  value,
-                })),
-              ]}
-              triggerClassName={FILTER_CONTROL_CLASS}
-              wrap
-            />
-            <button className="ui-button" type="submit">
-              Apply filter
-            </button>
-          </form>
-          {groupHref ? (
-            <nav
-              aria-label="Failure group filter"
-              className="flex min-w-0 flex-wrap items-center gap-2"
+            <Link
+              className="max-w-full rounded-sm font-medium underline underline-offset-4 [overflow-wrap:anywhere] hover:text-accent focus-visible:outline-2 focus-visible:outline-accent"
+              href={groupHref}
+              prefetch={false}
             >
-              <Link
-                className="ui-button max-w-full whitespace-normal [overflow-wrap:anywhere]"
-                href={groupHref}
-                prefetch={false}
-              >
-                {group ? `Failure group: ${failureGroupTitle(group.cohort)}` : "View failure group"}
-              </Link>
-              <Link
-                className="ui-button"
-                href={workspaceImprovementsPath(workspaceSlug, factoryQuery)}
-              >
-                All proposals
-              </Link>
-            </nav>
-          ) : null}
-        </div>
+              {group ? `Failure group: ${failureGroupTitle(group.cohort)}` : "View failure group"}
+            </Link>
+            <Link
+              className="rounded-sm text-muted underline underline-offset-4 hover:text-accent focus-visible:outline-2 focus-visible:outline-accent"
+              href={workspaceImprovementsPath(workspaceSlug, factoryQuery)}
+            >
+              All proposals
+            </Link>
+          </nav>
+        ) : null}
         <section aria-label="Improvement proposals" className="ui-sheet">
+          {!empty ? (
+            <ImprovementFilters
+              clearHref={workspaceImprovementsPath(workspaceSlug, {
+                ...factoryQuery,
+                cohort: cohort.data,
+              })}
+              cohort={cohort.data}
+              factoryId={scope.factoryId}
+              key={`${scope.factoryId}:${cohort.data ?? ""}`}
+              path={path}
+              reviewState={reviewState.data ?? ""}
+            />
+          ) : null}
           {page.proposals.length ? (
             <ul className="divide-y divide-border">
               {page.proposals.map((proposal) => (
@@ -182,36 +166,29 @@ export default async function ImprovementsPage({
             </ul>
           ) : (
             <div className="space-y-2 p-5">
-              <p className="type-secondary text-muted">
+              <h2 className="type-section-title">
                 {after.data
-                  ? "There are no more proposals."
+                  ? "No more proposals"
                   : reviewState.data
-                    ? "No improvement proposals match this review state."
+                    ? "No proposals match this review state"
                     : groupHref
-                      ? "This failure group has no improvement proposals."
-                      : "This factory has no improvement proposals. Proposals are based on completed diagnoses."}
-              </p>
-              {!after.data && reviewState.data ? (
-                <Link
-                  className="ui-button"
-                  href={workspaceImprovementsPath(workspaceSlug, {
-                    ...query,
-                    reviewState: undefined,
-                  })}
-                >
-                  Clear review state
-                </Link>
-              ) : !after.data && groupHref ? (
-                <Link className="ui-button" href={groupHref}>
-                  Back to failure group
-                </Link>
-              ) : !after.data ? (
-                <Link
-                  className="ui-button"
-                  href={workspaceFailureGroupsPath(workspaceSlug, factoryQuery)}
-                >
-                  View failure groups
-                </Link>
+                      ? "No proposals for this group yet"
+                      : "No improvement proposals yet"}
+              </h2>
+              {empty ? (
+                <>
+                  <p className="type-secondary text-muted">
+                    Improvement proposals come from completed failure diagnoses.
+                  </p>
+                  {!groupHref ? (
+                    <Link
+                      className="ui-button"
+                      href={workspaceFailureGroupsPath(workspaceSlug, factoryQuery)}
+                    >
+                      View failure groups
+                    </Link>
+                  ) : null}
+                </>
               ) : null}
             </div>
           )}

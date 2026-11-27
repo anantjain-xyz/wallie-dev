@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useTransition } from "react";
+import { useOptimistic, useTransition } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { SelectField } from "@/components/ui/select";
@@ -44,24 +44,27 @@ export function AnalyticsReportingFilters({
   const showEnvironment = mode === "environment" || mode === "recovery";
   const anchor =
     mode === "dimension" ? "#throughput" : mode === "environment" ? "#time-to-delivery" : "";
-  const submit =
-    mode === "dimension"
-      ? "Apply breakdown"
-      : mode === "environment"
-        ? "Apply environment"
-        : "Apply filters";
   const environment = query.environment ?? "";
+  const [instantValue, setInstantValue] = useOptimistic(
+    mode === "dimension" ? query.dimension : environment,
+  );
+  const fieldsHref = (changes: Parameters<typeof applyAnalyticsFields>[0]) =>
+    analyticsFieldsHref(action, applyAnalyticsFields(changes, core, evidence, scorerFields)) +
+    anchor;
+  function applySelection(name: "dimension" | "environment", value: string) {
+    if (value === instantValue) return;
+    startTransition(() => {
+      setInstantValue(value);
+      router.push(fieldsHref({ [name]: value || undefined }), { scroll: false });
+    });
+  }
   const missingEnvironment = Boolean(
     environment && environments && !environments.includes(environment),
   );
   const clearEnvironment =
     analyticsFieldsHref(action, {
-      ...core,
+      ...applyAnalyticsFields({ environment: undefined }, core, evidence, scorerFields),
       ...dates,
-      ...evidence,
-      cursor: undefined,
-      ...scorerFields,
-      environment: undefined,
     }) + anchor;
   return (
     <section
@@ -91,13 +94,15 @@ export function AnalyticsReportingFilters({
         method="get"
         onSubmit={(event) => {
           event.preventDefault();
-          const fields = applyAnalyticsFields(
-            new FormData(event.currentTarget),
-            core,
-            evidence,
-            scorerFields,
+          const form = new FormData(event.currentTarget);
+          const changes = Object.fromEntries(
+            ["from", "to", "compare", "dimension", "environment"].map((name) => [
+              name,
+              form.get(name)?.toString() || undefined,
+            ]),
           );
-          startTransition(() => router.push(analyticsFieldsHref(action, fields) + anchor));
+          const href = fieldsHref(changes);
+          startTransition(() => router.push(href, { scroll: false }));
         }}
       >
         <div className="flex flex-wrap items-end gap-4">
@@ -150,12 +155,16 @@ export function AnalyticsReportingFilters({
               aria-describedby={errors?.dimension ? "analytics-dimension-error" : undefined}
               aria-invalid={errors?.dimension ? true : undefined}
               className="min-w-44 max-w-full"
-              defaultValue={query.dimension}
-              key={query.dimension}
+              defaultValue={mode === "recovery" ? query.dimension : undefined}
+              key={mode === "recovery" ? query.dimension : undefined}
               label="Break down throughput by"
               labelClassName="type-label"
               name="dimension"
+              onValueChange={
+                mode === "dimension" ? (value) => applySelection("dimension", value) : undefined
+              }
               options={Object.entries(dimensionLabels).map(([value, label]) => ({ label, value }))}
+              value={mode === "dimension" ? instantValue : undefined}
             />
           )}
           {showEnvironment && (
@@ -169,12 +178,15 @@ export function AnalyticsReportingFilters({
               }
               aria-invalid={errors?.environment ? true : undefined}
               className="min-w-44 max-w-full"
-              defaultValue={environment}
+              defaultValue={mode === "recovery" ? environment : undefined}
               emptyOption={{ label: "All environments", value: "" }}
-              key={environment}
+              key={mode === "recovery" ? environment : undefined}
               label="Deployment environment"
               labelClassName="type-label"
               name="environment"
+              onValueChange={
+                mode === "environment" ? (value) => applySelection("environment", value) : undefined
+              }
               options={[
                 ...(environment && (missingEnvironment || !environments)
                   ? [
@@ -186,6 +198,7 @@ export function AnalyticsReportingFilters({
                   : []),
                 ...(environments ?? []).map((value) => ({ label: value, value })),
               ]}
+              value={mode === "environment" ? instantValue : undefined}
               wrap
             />
           )}
@@ -203,13 +216,35 @@ export function AnalyticsReportingFilters({
               Compare with previous period
             </label>
           )}
-          <button
-            className={showPeriod ? "ui-button-primary" : "ui-button"}
-            disabled={pending}
-            type="submit"
-          >
-            <ActionButtonLabel idle={submit} pending={pending} pendingLabel="Applying filters…" />
-          </button>
+          {showPeriod && (
+            <button className="ui-button" disabled={pending} type="submit">
+              <ActionButtonLabel
+                idle="Apply filters"
+                pending={pending}
+                pendingLabel="Applying filters…"
+              />
+            </button>
+          )}
+          {mode === "period" && (
+            <Link
+              className="ui-button"
+              href={fieldsHref({ from: undefined, to: undefined, compare: undefined })}
+              prefetch={false}
+              scroll={false}
+            >
+              Reset dates
+            </Link>
+          )}
+          {mode === "dimension" && query.dimension !== "source" && (
+            <Link
+              className="ui-button"
+              href={fieldsHref({ dimension: "source" })}
+              prefetch={false}
+              scroll={false}
+            >
+              Reset breakdown
+            </Link>
+          )}
         </div>
         {showEnvironment && (
           <p className="type-label text-muted" id="analytics-environment-help">
@@ -235,7 +270,15 @@ export function AnalyticsReportingFilters({
         )}
         {showEnvironment && !environments && (
           <p className="type-secondary text-muted">
-            Could not load deployment environments. Apply filters to try again.
+            Could not load deployment environments.{" "}
+            <button
+              className="cursor-pointer rounded-sm text-accent underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-accent"
+              disabled={pending}
+              onClick={() => startTransition(() => router.refresh())}
+              type="button"
+            >
+              Try again
+            </button>
           </p>
         )}
         {errors && (

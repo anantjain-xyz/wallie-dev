@@ -76,8 +76,9 @@ test("legacy Overview bookmarks join the same scoped Analytics destination", asy
     await expect(page).toHaveURL(analytics + "#throughput");
     await expect(page.getByRole("region", { name: "Pull request throughput" })).toBeFocused();
 
-    await health.locator("summary").press("Enter");
+    await health.locator("details").first().locator(":scope > summary").press("Enter");
     await expect(health.getByText("Lifecycle capture began", { exact: true })).toBeVisible();
+    await expect(health.getByText("Advanced", { exact: true })).toHaveCount(0);
     await expect(health.getByRole("button", { name: "Pause projection" })).toHaveCount(0);
     const control = `/api/workspaces/${fixture.workspaceId}/factories/${fixture.factoryId}/projection-control`;
     expect((await page.request.post(control, { data: { action: "pause" } })).status()).toBe(404);
@@ -170,8 +171,14 @@ test("Reporting health keeps projection actions scoped through stale, paused, an
     await expect(outcomes).toContainText("Sessions and outcome capture continue.");
     await expect(health.getByText("Updating", { exact: true })).toBeVisible();
     await expect(flow).toContainText("Updating · snapshot may be stale");
-    await health.locator("summary").press("Enter");
+    await health.locator("details").first().locator(":scope > summary").press("Enter");
     const pause = health.getByRole("button", { name: "Pause projection" });
+    await expect(pause).toHaveCount(0);
+    await health
+      .locator("summary")
+      .filter({ hasText: /^Advanced$/ })
+      .press("Enter");
+    await expect(pause).toBeVisible();
     await pause.press("Enter");
     const dialog = page.getByRole("alertdialog", { name: "Pause projection?" });
     await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
@@ -192,7 +199,7 @@ test("Reporting health keeps projection actions scoped through stale, paused, an
     await expect(health.getByText("Paused", { exact: true })).toHaveCount(0);
     await fixture.drainProjections();
     await page.reload();
-    await health.locator("summary").press("Enter");
+    await health.locator("details").first().locator(":scope > summary").press("Enter");
     await expect(health.getByText("Completed", { exact: true })).toBeVisible();
     await expect(outcomes.getByText("Flow and delivery current", { exact: true })).toBeVisible();
     await expect(page.getByRole("region", { name: "Time to delivery" })).toContainText("4 h");
@@ -209,7 +216,11 @@ test("Reporting health keeps projection actions scoped through stale, paused, an
       email: fixture.viewerEmail,
     });
     const managerHealth = manager.getByRole("region", { name: "Reporting health" });
-    await managerHealth.locator("summary").press("Enter");
+    await managerHealth.locator("details").first().locator(":scope > summary").press("Enter");
+    await managerHealth
+      .locator("summary")
+      .filter({ hasText: /^Advanced$/ })
+      .press("Enter");
     await expect(managerHealth.getByRole("button", { name: "Pause projection" })).toBeVisible();
     await confirmProjection(manager, "Pause projection");
     await expect(managerHealth.getByText("Paused", { exact: true })).toBeVisible();
@@ -222,7 +233,11 @@ test("Reporting health keeps projection actions scoped through stale, paused, an
       "(archived)",
     );
     await expect(outcomes).toBeVisible();
-    await health.locator("summary").press("Enter");
+    await health.locator("details").first().locator(":scope > summary").press("Enter");
+    await health
+      .locator("summary")
+      .filter({ hasText: /^Advanced$/ })
+      .press("Enter");
     await expect(health.getByRole("button", { name: "Pause projection" })).toBeVisible();
   } finally {
     await delegated.close();

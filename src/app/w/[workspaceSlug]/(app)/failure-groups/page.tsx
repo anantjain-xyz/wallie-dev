@@ -1,12 +1,11 @@
 import Link from "next/link";
 
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
-import { SelectField } from "@/components/ui/select";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import type { FactorySelectionOption } from "@/features/factories/factory-selection";
-import { FailureRevisionPicker } from "@/features/factory-failures/failure-revision-picker";
+import { FailureGroupFilters } from "@/features/factory-failures/failure-group-filters";
 import { loadFailureGroupScope } from "@/features/factory-failures/failure-group-scope";
 import {
   FailureGroupCounts,
@@ -29,6 +28,8 @@ import {
 import {
   workspaceFailureGroupPath,
   workspaceFailureGroupsPath,
+  workspaceImprovementsPath,
+  workspaceRunsPath,
   workspaceSessionsPath,
 } from "@/lib/routes";
 
@@ -140,91 +141,48 @@ export default async function FailureGroupsPage({
       detail: "",
     });
   }
-  const clearRevision = workspaceFailureGroupsPath(workspaceSlug, {
-    ...preserved,
-    revision: undefined,
-  });
+  const revisionProblem = missingRevision ? "missing" : malformedRevision ? "malformed" : undefined;
+  const empty = !after && !filtered && !revisionProblem && !page.cohorts.length;
 
   return (
     <PageContainer>
       <PageHeader
-        actions={factorySelector}
+        actions={
+          <>
+            {factorySelector}
+            <Link
+              className="ui-button"
+              href={workspaceImprovementsPath(workspaceSlug, { factory: scope.factoryId })}
+            >
+              Improvements
+            </Link>
+          </>
+        }
         actionsRightOnDesktop
         title="Failure groups"
         description={
           scope.factory.status === "archived"
             ? "This factory is archived. You can browse evidence, but reviews are closed."
-            : !scope.factory.canManage
-              ? "You can browse evidence. Only factory managers can review groups."
-              : undefined
+            : undefined
         }
       />
-      <form
-        action={base}
-        key={JSON.stringify(preserved)}
-        className="ui-sheet grid gap-4 p-4 sm:grid-cols-[1fr_minmax(0,1.6fr)_1fr] sm:items-start sm:p-5"
-      >
-        <input type="hidden" name="factory" value={scope.factoryId} />
-        <input type="hidden" name="order" value="failures" />
-        <SelectField
-          defaultValue={filters.symptom ?? ""}
-          label="Symptom"
-          labelClassName="type-label"
-          name="symptom"
-          options={[
-            { label: "All symptoms", value: "" },
-            { label: "Scorer failures", value: "scorer" },
-            { label: "Validation failures", value: "validation" },
-          ]}
-        />
-        <FailureRevisionPicker
-          endpoint={`${base}/revisions?factory=${scope.factoryId}`}
-          initialPage={revisions ?? { options: [], next: null }}
-          pinned={[...pinned.values()]}
-          selected={filters.revision ?? ""}
-        />
-        <SelectField
-          defaultValue={filters.disposition ?? ""}
-          label="Review state"
-          labelClassName="type-label"
-          name="disposition"
-          options={[
-            { label: "All states", value: "" },
-            { label: "Open", value: "open" },
-            { label: "Dismissed", value: "dismissed" },
-            { label: "Split", value: "split" },
-          ]}
-        />
-        {missingRevision || malformedRevision ? (
-          <div className="type-secondary space-y-2 text-muted sm:col-span-3">
-            <p>
-              {missingRevision
-                ? "This revision isn’t available in this factory. Clear it or choose a different revision."
-                : "The revision in this link is invalid. Showing all revisions."}
-            </p>
-            <Link className="font-semibold underline underline-offset-4" href={clearRevision}>
-              Clear revision filter
-            </Link>
-          </div>
+      <section aria-label="Failure groups" className="ui-sheet">
+        {!empty ? (
+          <FailureGroupFilters
+            applied={{
+              symptom: filters.symptom ?? "",
+              revision: filters.revision ?? "",
+              disposition: filters.disposition ?? "",
+            }}
+            clearHref={reset}
+            factoryId={scope.factoryId}
+            key={scope.factoryId}
+            path={base}
+            pinned={[...pinned.values()]}
+            revisionProblem={revisionProblem}
+            revisions={revisions ?? { options: [], next: null }}
+          />
         ) : null}
-        <div className="flex flex-wrap gap-2 sm:col-span-3">
-          <button className="ui-button ui-button-primary" type="submit">
-            Apply filters
-          </button>
-          {filtered ? (
-            <Link className="ui-button" href={reset}>
-              Clear filters
-            </Link>
-          ) : null}
-        </div>
-      </form>
-      <section aria-label="Failure groups" className="ui-sheet mt-5">
-        <div className="space-y-1 border-b border-border px-4 py-3 sm:px-5">
-          <p className="type-label">Most failed runs first</p>
-          <p className="type-annotation text-muted">
-            Evidence support counts distinct sessions with available evidence.
-          </p>
-        </div>
         {page.cohorts.length ? (
           <ul className="divide-y divide-border">
             {page.cohorts.map((cohort) => (
@@ -251,7 +209,7 @@ export default async function FailureGroupsPage({
                     {failureGroupTask(cohort)} ·{" "}
                     {cohort.symptom_kind === "scorer" ? "Scorer failure" : "Validation failure"}
                   </p>
-                  <FailureGroupStatus cohort={cohort} />
+                  <FailureGroupStatus cohort={cohort} compact />
                   <FailureGroupLimits cohort={cohort} />
                 </div>
                 <FailureGroupCounts cohort={cohort} />
@@ -259,18 +217,28 @@ export default async function FailureGroupsPage({
             ))}
           </ul>
         ) : (
-          <div className="type-secondary space-y-2 px-4 py-8 text-muted sm:px-5">
-            <p>
+          <div className="space-y-2 px-4 py-6 sm:px-5">
+            <h2 className="type-section-title">
               {page.cursor_unavailable
-                ? "This results page is no longer available. Return to the first page."
+                ? "This results page is no longer available"
                 : after
-                  ? "There are no more failure groups."
+                  ? "No more failure groups"
                   : filtered
-                    ? "No failure groups match these filters."
-                    : "No failure groups to show for this factory."}
-            </p>
-            {!filtered && !after && factories.length > 1 ? (
-              <p>Choose another factory to browse its groups.</p>
+                    ? "No failure groups match these filters"
+                    : "No failure groups yet"}
+            </h2>
+            {!filtered && !after ? (
+              <>
+                <p className="type-secondary text-muted">
+                  Related scorer and validation failures appear here as evidence is recorded.
+                </p>
+                <Link
+                  className="ui-button"
+                  href={workspaceRunsPath(workspaceSlug, { factory: scope.factoryId })}
+                >
+                  Browse runs
+                </Link>
+              </>
             ) : null}
           </div>
         )}

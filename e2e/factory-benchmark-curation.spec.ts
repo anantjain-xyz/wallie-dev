@@ -73,7 +73,7 @@ test("a factory manager curates distinct suites and preserves the earlier task c
       "page",
     );
     await expect(
-      page.getByText("No benchmark suites in this factory yet.", { exact: true }),
+      page.getByRole("heading", { name: "No benchmark suites yet", exact: true }),
     ).toBeVisible();
     await screenshot(page, info, "01-benchmarks-empty-desktop-light");
 
@@ -113,6 +113,29 @@ test("a factory manager curates distinct suites and preserves the earlier task c
     await expect(page.getByText(imageReason, { exact: true })).toBeVisible();
     await screenshot(page, info, "03-benchmark-ineligible-holdout-mobile-dark");
 
+    await page.goto(listPath);
+    const nameFilter = page.getByRole("searchbox", { name: "Suite name" });
+    const purposeFilter = page.getByRole("combobox", { name: "Purpose" });
+    await nameFilter.fill("Invoice UI");
+    await expect(page).toHaveURL(/[?&]q=Invoice\+UI(?:&|$)/);
+    await expect(page.getByRole("link", { name: regression, exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: holdout, exact: true })).toHaveCount(0);
+    await selectDropdownOption(purposeFilter, "holdout");
+    await expect(page).toHaveURL(/[?&]purpose=holdout(?:&|$)/);
+    await expect(
+      page.getByRole("heading", { name: "No suites match these filters" }),
+    ).toBeVisible();
+    await page.reload();
+    await expect(nameFilter).toHaveValue("Invoice UI");
+    await expect(purposeFilter).toHaveText("Holdout");
+    await page.getByRole("link", { name: "Clear filters", exact: true }).click();
+    await expect(page).toHaveURL(new URL(listPath, fixture.app).href);
+    await expect(page.getByRole("link", { name: holdout, exact: true })).toBeVisible();
+    await screenshot(page, info, "04-benchmark-catalog-mobile-dark");
+    await page.goBack();
+    await expect(nameFilter).toHaveValue("Invoice UI");
+    await expect(purposeFilter).toHaveText("Holdout");
+
     await page.setViewportSize({ width: 1440, height: 1024 });
     await page.goto(listPath);
     await page.getByRole("link", { name: regression, exact: true }).click();
@@ -148,9 +171,10 @@ test("a factory manager curates distinct suites and preserves the earlier task c
     await expect(page.getByText(revisedCriteria, { exact: true })).toBeVisible();
 
     await page.goto(suitePath);
-    await page.getByText("Task details", { exact: true }).click();
-    await expect(page.getByText(originalCriteria, { exact: true })).toBeVisible();
-    await expect(page.getByText(revisedCriteria, { exact: true })).toHaveCount(0);
+    const suite = page.locator("#main-content:visible");
+    await suite.getByText("Task details", { exact: true }).click();
+    await expect(suite.getByText(originalCriteria, { exact: true })).toBeVisible();
+    await expect(suite.getByText(revisedCriteria, { exact: true })).toHaveCount(0);
 
     const pinned = await admin
       .from("factory_benchmark_suite_members")
