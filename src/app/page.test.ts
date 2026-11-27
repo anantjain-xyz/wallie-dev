@@ -33,7 +33,7 @@ vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServerClient: mocked.createSupabaseServerClient,
 }));
 
-import HomePage from "@/app/page";
+import HomePage, { metadata } from "@/app/page";
 
 describe("/ page", () => {
   beforeEach(() => {
@@ -55,8 +55,8 @@ describe("/ page", () => {
   it("renders the public landing page for logged-out visitors", async () => {
     const html = renderToStaticMarkup(await HomePage());
 
-    expect(html).toContain("Turn a task into a pull request");
-    expect(html).toContain("Start with email");
+    expect(html).toContain('<h1 id="hero-title">Self-improving software factory</h1>');
+    expect(html).toContain("Try hosted Wallie");
     expect(mocked.createSupabaseServerClient).not.toHaveBeenCalled();
     expect(mocked.redirect).not.toHaveBeenCalled();
   });
@@ -70,9 +70,36 @@ describe("/ page", () => {
 
     const html = renderToStaticMarkup(await HomePage());
 
-    expect(html).toContain("Turn a task into a pull request");
+    expect(html).toContain("Self-improving software factory");
     expect(mocked.createSupabaseServerClient).not.toHaveBeenCalled();
     expect(mocked.redirect).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the public tour when an auth cookie has no verified user", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "publishable-key");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://example.supabase.co");
+    mocked.cookies.mockResolvedValue({
+      getAll: vi.fn(() => [{ name: "sb-example-auth-token" }]),
+    });
+    mocked.getSupabaseUserOrNull.mockResolvedValue(null);
+
+    const html = renderToStaticMarkup(await HomePage());
+
+    expect(html).toContain("Self-improving software factory");
+    expect(mocked.getSupabaseUserOrNull).toHaveBeenCalledWith({});
+    expect(mocked.ensureProfileForUser).not.toHaveBeenCalled();
+    expect(mocked.redirect).not.toHaveBeenCalled();
+  });
+
+  it("uses the factory positioning for homepage metadata and shares", () => {
+    const title = "Wallie — Self-improving software factory";
+
+    expect(metadata).toMatchObject({
+      title: { absolute: title },
+      description: expect.stringContaining("human review"),
+      openGraph: { title },
+      twitter: { title },
+    });
   });
 
   it("keeps the authenticated workspace redirect", async () => {

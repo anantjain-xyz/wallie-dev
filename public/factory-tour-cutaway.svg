@@ -1,0 +1,322 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 440">
+  <defs>
+    <g id="factory-cutaway" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="538.40,131.33 684.56,236.66 684.56,224.66 538.40,119.33" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.6"/>
+      <polygon points="183.16,414.33 684.56,236.66 684.56,224.66 183.16,402.33" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.6"/>
+      <polygon points="37.00,297.00 538.40,119.33 684.56,224.66 183.16,402.33" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.6"/>
+      <circle cx="50.32" cy="297.70" r="1.6" fill="var(--art-ink)"/>
+      <circle cx="532.40" cy="126.87" r="1.6" fill="var(--art-ink)"/>
+      <circle cx="667.22" cy="224.03" r="1.6" fill="var(--art-ink)"/>
+      <circle cx="185.14" cy="394.85" r="1.6" fill="var(--art-ink)"/>
+      <polyline points="221.21,377.33 231.92,385.05" fill="none" stroke="var(--art-guide)" stroke-width="0.9"/>
+      <polyline points="85.76,279.72 95.21,286.53" fill="none" stroke="var(--art-guide)" stroke-width="0.8"/>
+      <polyline points="328.85,339.19 339.56,346.91" fill="none" stroke="var(--art-guide)" stroke-width="0.9"/>
+      <polyline points="193.40,241.58 202.85,248.39" fill="none" stroke="var(--art-guide)" stroke-width="0.8"/>
+      <polyline points="442.93,298.77 453.64,306.48" fill="none" stroke="var(--art-guide)" stroke-width="0.9"/>
+      <polyline points="307.48,201.16 316.93,207.97" fill="none" stroke="var(--art-guide)" stroke-width="0.8"/>
+      <polyline points="557.93,258.02 568.64,265.73" fill="none" stroke="var(--art-guide)" stroke-width="0.9"/>
+      <polyline points="422.48,160.41 431.93,167.22" fill="none" stroke="var(--art-guide)" stroke-width="0.8"/>
+      <polyline points="635.21,230.63 645.92,238.35" fill="none" stroke="var(--art-guide)" stroke-width="0.9"/>
+      <polyline points="499.76,133.02 509.21,139.83" fill="none" stroke="var(--art-guide)" stroke-width="0.8"/>
+      <polyline points="179.47,390.77 662.47,219.62" fill="none" stroke="var(--art-guide)" stroke-width="0.7"/>
+      <polyline points="98.82,319.79 183.87,381.08" fill="none" stroke="var(--art-guide)" stroke-width="0.7" stroke-dasharray="3 4"/>
+      <polyline points="561.29,156.59 645.71,217.43" fill="none" stroke="var(--art-guide)" stroke-width="0.7" stroke-dasharray="3 4"/>
+      <polyline points="120.42,317.56 197.91,373.40 628.47,220.83 599.49,199.95" fill="none" stroke="var(--art-label)" stroke-width="1.2" stroke-dasharray="3 4"/>
+      <polyline points="225.90,366.87 205.27,370.79 218.97,361.87" fill="none" stroke="var(--art-label)" stroke-width="1.1"/>
+      <polyline points="471.83,279.04 451.83,283.42 466.16,274.96" fill="none" stroke="var(--art-label)" stroke-width="1.1"/>
+      <text transform="matrix(.92 -.326 .63 .454 374.75 318.86)" fill="var(--art-label)" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="10" font-weight="700" letter-spacing=".6">RETURN TO STUDIO</text>
+      <polyline points="191.67,383.74 197.58,385.03" fill="none" stroke="var(--art-guide)" stroke-width="0.65"/>
+      <polyline points="197.19,381.78 203.10,383.07" fill="none" stroke="var(--art-guide)" stroke-width="0.65"/>
+      <polyline points="202.71,379.82 208.62,381.12" fill="none" stroke="var(--art-guide)" stroke-width="0.65"/>
+      <polyline points="624.99,230.19 630.90,231.48" fill="none" stroke="var(--art-guide)" stroke-width="0.65"/>
+      <polyline points="630.51,228.23 636.42,229.53" fill="none" stroke="var(--art-guide)" stroke-width="0.65"/>
+      <polyline points="636.03,226.28 641.94,227.57" fill="none" stroke="var(--art-guide)" stroke-width="0.65"/>
+      <polygon points="79.52,290.06 79.52,212.06 79.52,199.06 144.84,144.91 144.84,182.91 226.72,115.90 226.72,153.90 308.60,86.89 308.60,124.89 390.48,57.87 390.48,95.87 472.36,28.86 472.36,66.86 513.76,40.19 513.76,136.19" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.6"/>
+      <polyline points="79.52,281.06 513.76,127.19" fill="none" stroke="var(--art-guide)" stroke-width="0.85"/>
+      <polyline points="79.52,217.06 513.76,63.19" fill="none" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polyline points="79.52,221.06 513.76,67.19" fill="none" stroke="var(--art-guide)" stroke-width="0.75"/>
+      <polyline points="144.84,256.91 144.84,197.91" fill="none" stroke="var(--art-guide)" stroke-width="1"/>
+      <polyline points="226.72,227.90 226.72,168.90" fill="none" stroke="var(--art-guide)" stroke-width="1"/>
+      <polyline points="308.60,198.89 308.60,139.89" fill="none" stroke="var(--art-guide)" stroke-width="1"/>
+      <polyline points="390.48,169.87 390.48,110.87" fill="none" stroke="var(--art-guide)" stroke-width="1"/>
+      <polyline points="472.36,140.86 472.36,81.86" fill="none" stroke="var(--art-guide)" stroke-width="1"/>
+      <polygon points="150.36,184.96 219.36,160.51 219.36,129.51" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="0.95"/>
+      <polyline points="172.44,177.13 172.44,163.38" fill="none" stroke="var(--art-guide)" stroke-width="0.8"/>
+      <polyline points="191.76,170.29 191.76,147.63" fill="none" stroke="var(--art-guide)" stroke-width="0.8"/>
+      <polyline points="210.16,163.77 210.16,132.63" fill="none" stroke="var(--art-guide)" stroke-width="0.8"/>
+      <polygon points="232.24,155.94 301.24,131.49 301.24,100.49" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="0.95"/>
+      <polyline points="254.32,148.12 254.32,134.37" fill="none" stroke="var(--art-guide)" stroke-width="0.8"/>
+      <polyline points="273.64,141.27 273.64,118.62" fill="none" stroke="var(--art-guide)" stroke-width="0.8"/>
+      <polyline points="292.04,134.75 292.04,103.62" fill="none" stroke="var(--art-guide)" stroke-width="0.8"/>
+      <polygon points="314.12,126.93 383.12,102.48 383.12,71.48" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="0.95"/>
+      <polyline points="336.20,119.11 336.20,105.35" fill="none" stroke="var(--art-guide)" stroke-width="0.8"/>
+      <polyline points="355.52,112.26 355.52,89.60" fill="none" stroke="var(--art-guide)" stroke-width="0.8"/>
+      <polyline points="373.92,105.74 373.92,74.60" fill="none" stroke="var(--art-guide)" stroke-width="0.8"/>
+      <polygon points="396.00,97.92 465.00,73.47 465.00,42.47" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="0.95"/>
+      <polyline points="418.08,90.09 418.08,76.34" fill="none" stroke="var(--art-guide)" stroke-width="0.8"/>
+      <polyline points="437.40,83.25 437.40,60.59" fill="none" stroke="var(--art-guide)" stroke-width="0.8"/>
+      <polyline points="455.80,76.73 455.80,45.59" fill="none" stroke="var(--art-guide)" stroke-width="0.8"/>
+      <polygon points="89.64,237.47 103.44,232.58 103.44,218.58 89.64,223.47" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="0.9"/>
+      <polyline points="93.32,230.17 98.84,228.21" fill="none" stroke="var(--art-ink)" stroke-width="0.82"/>
+      <polyline points="93.32,226.17 98.84,224.21" fill="none" stroke="var(--art-ink)" stroke-width="0.82"/>
+      <polygon points="176.12,206.83 189.92,201.94 189.92,187.94 176.12,192.83" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="0.9"/>
+      <polyline points="179.80,199.53 185.32,197.57" fill="none" stroke="var(--art-ink)" stroke-width="0.82"/>
+      <polyline points="179.80,195.53 185.32,193.57" fill="none" stroke="var(--art-ink)" stroke-width="0.82"/>
+      <polygon points="261.68,176.51 275.48,171.62 275.48,157.62 261.68,162.51" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="0.9"/>
+      <polyline points="265.36,169.21 270.88,167.25" fill="none" stroke="var(--art-ink)" stroke-width="0.82"/>
+      <polyline points="265.36,165.21 270.88,163.25" fill="none" stroke="var(--art-ink)" stroke-width="0.82"/>
+      <polygon points="343.56,147.50 357.36,142.61 357.36,128.61 343.56,133.50" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="0.9"/>
+      <polyline points="347.24,140.19 352.76,138.24" fill="none" stroke="var(--art-ink)" stroke-width="0.82"/>
+      <polyline points="347.24,136.19 352.76,134.24" fill="none" stroke="var(--art-ink)" stroke-width="0.82"/>
+      <polygon points="422.68,119.46 436.48,114.57 436.48,100.57 422.68,105.46" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="0.9"/>
+      <polyline points="426.36,112.16 431.88,110.20" fill="none" stroke="var(--art-ink)" stroke-width="0.82"/>
+      <polyline points="426.36,108.16 431.88,106.20" fill="none" stroke="var(--art-ink)" stroke-width="0.82"/>
+      <polygon points="489.84,95.66 503.64,90.77 503.64,76.77 489.84,81.66" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="0.9"/>
+      <polyline points="493.52,88.36 499.04,86.40" fill="none" stroke="var(--art-ink)" stroke-width="0.82"/>
+      <polyline points="493.52,84.36 499.04,82.40" fill="none" stroke="var(--art-ink)" stroke-width="0.82"/>
+      <polygon points="125.25,300.27 129.03,302.99 129.03,274.99 125.25,272.27" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="123.51,304.95 129.03,302.99 129.03,274.99 123.51,276.95" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="119.73,274.22 125.25,272.27 129.03,274.99 123.51,276.95" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="208.05,270.93 211.83,273.65 211.83,245.65 208.05,242.93" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="206.31,275.61 211.83,273.65 211.83,245.65 206.31,247.61" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="202.53,244.88 208.05,242.93 211.83,245.65 206.31,247.61" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="156.12,322.51 159.90,325.24 159.90,297.24 156.12,294.51" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="154.38,327.19 159.90,325.24 159.90,297.24 154.38,299.19" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="150.60,296.47 156.12,294.51 159.90,297.24 154.38,299.19" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="238.92,293.17 242.70,295.90 242.70,267.90 238.92,265.17" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="237.18,297.85 242.70,295.90 242.70,267.90 237.18,269.85" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="233.40,267.13 238.92,265.17 242.70,267.90 237.18,269.85" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="210.71,237.92 252.92,268.34 252.92,261.34 210.71,230.92" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.4"/>
+      <polygon points="153.56,303.55 252.92,268.34 252.92,261.34 153.56,296.55" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.4"/>
+      <polygon points="111.35,266.13 210.71,230.92 252.92,261.34 153.56,296.55" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.4"/>
+      <polygon points="184.29,284.31 198.15,294.30 198.15,281.30 184.29,271.31" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="154.91,309.62 198.15,294.30 198.15,281.30 154.91,296.62" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="141.05,286.63 184.29,271.31 198.15,281.30 154.91,296.62" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polyline points="165.03,300.03 184.35,293.19" fill="none" stroke="var(--art-ink)" stroke-width="1"/>
+      <polygon points="173.24,254.36 186.47,263.89 186.47,259.89 173.24,250.36" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1"/>
+      <polygon points="151.51,276.28 186.47,263.89 186.47,259.89 151.51,272.28" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1"/>
+      <polygon points="138.28,262.75 173.24,250.36 186.47,259.89 151.51,272.28" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1"/>
+      <polygon points="163.85,258.43 169.52,262.51 169.52,255.51 163.85,251.43" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1"/>
+      <polygon points="158.48,266.42 169.52,262.51 169.52,255.51 158.48,259.42" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1"/>
+      <polygon points="152.81,255.34 163.85,251.43 169.52,255.51 158.48,259.42" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1"/>
+      <polygon points="181.28,242.22 186.32,245.85 186.32,203.85 181.28,200.22" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.35"/>
+      <polygon points="136.64,263.45 186.32,245.85 186.32,203.85 136.64,221.45" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.35"/>
+      <polygon points="131.60,217.82 181.28,200.22 186.32,203.85 136.64,221.45" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.35"/>
+      <polygon points="141.24,255.82 181.72,241.48 181.72,211.48 141.24,225.82" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="0.95"/>
+      <polyline points="147.68,232.54 155.04,235.93 147.68,244.54" fill="none" stroke="var(--art-ink)" stroke-width="1.75"/>
+      <polyline points="160.56,239.98 171.60,236.07" fill="none" stroke="var(--art-ink)" stroke-width="1.75"/>
+      <polygon points="149.09,277.49 191.41,262.50 202.12,270.21 159.80,285.21" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="0.8"/>
+      <polyline points="157.13,277.35 161.54,280.53" fill="none" stroke="var(--art-guide)" stroke-width="0.75"/>
+      <polyline points="165.41,274.42 169.82,277.60" fill="none" stroke="var(--art-guide)" stroke-width="0.75"/>
+      <polyline points="173.69,271.48 178.10,274.66" fill="none" stroke="var(--art-guide)" stroke-width="0.75"/>
+      <polyline points="181.97,268.55 186.38,271.73" fill="none" stroke="var(--art-guide)" stroke-width="0.75"/>
+      <polyline points="188.41,266.27 192.82,269.45" fill="none" stroke="var(--art-guide)" stroke-width="0.75"/>
+      <polygon points="208.83,242.42 226.47,255.14 226.47,251.14 208.83,238.42" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="0.95"/>
+      <polygon points="204.39,262.96 226.47,255.14 226.47,251.14 204.39,258.96" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="0.95"/>
+      <polygon points="186.75,246.25 208.83,238.42 226.47,251.14 204.39,258.96" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="0.95"/>
+      <polygon points="208.20,237.97 225.21,250.23 225.21,247.23 208.20,234.97" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="0.95"/>
+      <polygon points="204.05,257.73 225.21,250.23 225.21,247.23 204.05,254.73" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="0.95"/>
+      <polygon points="187.04,242.47 208.20,234.97 225.21,247.23 204.05,254.73" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="0.95"/>
+      <polyline points="195.42,243.56 207.38,239.32" fill="none" stroke="var(--art-label)" stroke-width="0.85"/>
+      <polyline points="198.57,245.83 208.69,242.25" fill="none" stroke="var(--art-label)" stroke-width="0.85"/>
+      <polyline points="201.72,248.10 214.60,243.54" fill="none" stroke="var(--art-label)" stroke-width="0.85"/>
+      <polyline points="219.69,247.18 225.98,238.86" fill="none" stroke="var(--art-ink)" stroke-width="1.2"/>
+      <polygon points="356.87,246.64 365.06,252.54 365.06,152.54 356.87,146.64" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.4"/>
+      <polygon points="351.26,257.43 365.06,252.54 365.06,152.54 351.26,157.43" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.4"/>
+      <polygon points="343.07,151.53 356.87,146.64 365.06,152.54 351.26,157.43" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.4"/>
+      <polygon points="357.40,243.06 371.89,253.51 371.89,249.51 357.40,239.06" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.1"/>
+      <polygon points="349.81,261.33 371.89,253.51 371.89,249.51 349.81,257.33" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.1"/>
+      <polygon points="335.32,246.89 357.40,239.06 371.89,249.51 349.81,257.33" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.1"/>
+      <polygon points="160.05,331.28 164.46,334.46 164.46,313.46 160.05,310.28" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="157.10,337.07 164.46,334.46 164.46,313.46 157.10,316.07" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="152.69,312.89 160.05,310.28 164.46,313.46 157.10,316.07" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="189.03,352.16 193.44,355.34 193.44,334.34 189.03,331.16" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="186.08,357.95 193.44,355.34 193.44,334.34 186.08,336.95" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="181.67,333.77 189.03,331.16 193.44,334.34 186.08,336.95" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polyline points="159.52,332.85 186.61,352.38" fill="none" stroke="var(--art-label)" stroke-width="0.95"/>
+      <polygon points="241.93,302.27 246.34,305.44 246.34,284.44 241.93,281.27" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="238.98,308.05 246.34,305.44 246.34,284.44 238.98,287.05" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="234.57,283.87 241.93,281.27 246.34,284.44 238.98,287.05" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="270.91,323.15 275.32,326.33 275.32,305.33 270.91,302.15" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="267.96,328.94 275.32,326.33 275.32,305.33 267.96,307.94" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="263.55,304.76 270.91,302.15 275.32,305.33 267.96,307.94" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polyline points="241.40,303.84 268.49,323.36" fill="none" stroke="var(--art-label)" stroke-width="0.95"/>
+      <polygon points="318.29,275.21 322.70,278.39 322.70,257.39 318.29,254.21" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="315.34,280.99 322.70,278.39 322.70,257.39 315.34,259.99" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="310.93,256.82 318.29,254.21 322.70,257.39 315.34,259.99" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="347.27,296.09 351.68,299.27 351.68,278.27 347.27,275.09" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="344.32,301.88 351.68,299.27 351.68,278.27 344.32,280.88" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="339.91,277.70 347.27,275.09 351.68,278.27 344.32,280.88" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polyline points="317.76,276.78 344.85,296.30" fill="none" stroke="var(--art-label)" stroke-width="0.95"/>
+      <polygon points="410.29,242.61 414.70,245.79 414.70,224.79 410.29,221.61" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="407.34,248.39 414.70,245.79 414.70,224.79 407.34,227.39" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="402.93,224.22 410.29,221.61 414.70,224.79 407.34,227.39" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="439.27,263.49 443.68,266.67 443.68,245.67 439.27,242.49" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="436.32,269.28 443.68,266.67 443.68,245.67 436.32,248.28" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="431.91,245.10 439.27,242.49 443.68,245.67 436.32,248.28" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polyline points="409.76,244.18 436.85,263.70" fill="none" stroke="var(--art-label)" stroke-width="0.95"/>
+      <polygon points="488.49,214.90 492.90,218.08 492.90,197.08 488.49,193.90" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="485.54,220.68 492.90,218.08 492.90,197.08 485.54,199.68" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="481.13,196.51 488.49,193.90 492.90,197.08 485.54,199.68" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="517.47,235.78 521.88,238.96 521.88,217.96 517.47,214.78" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="514.52,241.57 521.88,238.96 521.88,217.96 514.52,220.57" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="510.11,217.39 517.47,214.78 521.88,217.96 514.52,220.57" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polyline points="487.96,216.47 515.05,235.99" fill="none" stroke="var(--art-label)" stroke-width="0.95"/>
+      <polygon points="570.37,185.88 574.78,189.06 574.78,168.06 570.37,164.88" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="567.42,191.67 574.78,189.06 574.78,168.06 567.42,170.67" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="563.01,167.49 570.37,164.88 574.78,168.06 567.42,170.67" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="599.35,206.77 603.76,209.95 603.76,188.95 599.35,185.77" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="596.40,212.55 603.76,209.95 603.76,188.95 596.40,191.55" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="591.99,188.38 599.35,185.77 603.76,188.95 596.40,191.55" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polyline points="569.84,187.46 596.93,206.98" fill="none" stroke="var(--art-label)" stroke-width="0.95"/>
+      <polygon points="577.34,160.03 618.29,189.54 618.29,178.54 577.34,149.03" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.45"/>
+      <polygon points="170.25,348.30 618.29,189.54 618.29,178.54 170.25,337.30" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.45"/>
+      <polygon points="129.30,307.79 577.34,149.03 618.29,178.54 170.25,337.30" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.45"/>
+      <polyline points="137.34,307.65 173.25,333.53" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="148.38,303.74 184.29,329.62" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="159.42,299.83 195.33,325.70" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="170.46,295.91 206.37,321.79" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="181.50,292.00 217.41,317.88" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="192.54,288.09 228.45,313.97" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="203.58,284.18 239.49,310.06" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="214.62,280.27 250.53,306.14" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="225.66,276.35 261.57,302.23" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="236.70,272.44 272.61,298.32" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="247.74,268.53 283.65,294.41" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="258.78,264.62 294.69,290.50" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="269.82,260.71 305.73,286.58" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="280.86,256.79 316.77,282.67" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="291.90,252.88 327.81,278.76" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="302.94,248.97 338.85,274.85" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="313.98,245.06 349.89,270.94" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="325.02,241.15 360.93,267.02" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="336.06,237.23 371.97,263.11" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="347.10,233.32 383.01,259.20" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="358.14,229.41 394.05,255.29" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="369.18,225.50 405.09,251.38" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="380.22,221.59 416.13,247.46" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="391.26,217.67 427.17,243.55" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="402.30,213.76 438.21,239.64" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="413.34,209.85 449.25,235.73" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="424.38,205.94 460.29,231.82" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="435.42,202.03 471.33,227.90" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="446.46,198.11 482.37,223.99" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="457.50,194.20 493.41,220.08" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="468.54,190.29 504.45,216.17" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="479.58,186.38 515.49,212.26" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="490.62,182.47 526.53,208.34" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="501.66,178.55 537.57,204.43" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="512.70,174.64 548.61,200.52" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="523.74,170.73 559.65,196.61" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="534.78,166.82 570.69,192.70" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="545.82,162.91 581.73,188.78" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="556.86,158.99 592.77,184.87" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="567.90,155.08 603.81,180.96" fill="none" stroke="var(--art-label)" stroke-width="1.05"/>
+      <polyline points="132.74,309.28 578.94,151.17" fill="none" stroke="var(--art-ink)" stroke-width="1.2"/>
+      <polyline points="168.65,335.16 614.85,177.05" fill="none" stroke="var(--art-ink)" stroke-width="1.2"/>
+      <polyline points="171.17,343.97 617.37,185.86" fill="none" stroke="var(--art-guide)" stroke-width="1"/>
+      <circle cx="183.13" cy="337.74" r="1.3" fill="var(--art-label)"/>
+      <circle cx="206.13" cy="329.59" r="1.3" fill="var(--art-label)"/>
+      <circle cx="229.13" cy="321.44" r="1.3" fill="var(--art-label)"/>
+      <circle cx="252.13" cy="313.29" r="1.3" fill="var(--art-label)"/>
+      <circle cx="275.13" cy="305.14" r="1.3" fill="var(--art-label)"/>
+      <circle cx="298.13" cy="296.99" r="1.3" fill="var(--art-label)"/>
+      <circle cx="321.13" cy="288.84" r="1.3" fill="var(--art-label)"/>
+      <circle cx="344.13" cy="280.69" r="1.3" fill="var(--art-label)"/>
+      <circle cx="367.13" cy="272.54" r="1.3" fill="var(--art-label)"/>
+      <circle cx="390.13" cy="264.39" r="1.3" fill="var(--art-label)"/>
+      <circle cx="413.13" cy="256.24" r="1.3" fill="var(--art-label)"/>
+      <circle cx="436.13" cy="248.09" r="1.3" fill="var(--art-label)"/>
+      <circle cx="459.13" cy="239.94" r="1.3" fill="var(--art-label)"/>
+      <circle cx="482.13" cy="231.79" r="1.3" fill="var(--art-label)"/>
+      <circle cx="505.13" cy="223.64" r="1.3" fill="var(--art-label)"/>
+      <circle cx="528.13" cy="215.49" r="1.3" fill="var(--art-label)"/>
+      <circle cx="551.13" cy="207.34" r="1.3" fill="var(--art-label)"/>
+      <circle cx="574.13" cy="199.19" r="1.3" fill="var(--art-label)"/>
+      <circle cx="597.13" cy="191.04" r="1.3" fill="var(--art-label)"/>
+      <polygon points="156.91,310.87 172.55,305.33 167.51,301.70 192.07,306.54 191.45,318.95 186.41,315.32 170.77,320.86" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1"/>
+      <polygon points="339.79,237.94 371.92,261.10 371.92,255.10 339.79,231.94" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.35"/>
+      <polygon points="281.76,293.05 371.92,261.10 371.92,255.10 281.76,287.05" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.35"/>
+      <polygon points="249.63,263.89 339.79,231.94 371.92,255.10 281.76,287.05" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.35"/>
+      <polygon points="257.67,263.75 336.79,235.72 361.99,253.88 282.87,281.91" fill="var(--tour-accent)" stroke="var(--tour-accent)" stroke-width="0"/>
+      <text transform="matrix(.92 -.326 .63 .454 278.60 271.91)" fill="var(--on-accent)" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="19" font-weight="700" letter-spacing=".6">WO–024</text>
+      <polyline points="283.59,273.53 313.03,263.10" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
+      <polyline points="286.11,275.35 315.55,264.91" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
+      <polyline points="327.99,255.09 334.29,259.63" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
+      <polyline points="331.67,253.78 337.97,258.32" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
+      <polyline points="336.27,252.15 342.57,256.69" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
+      <polyline points="339.03,251.18 345.33,255.72" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
+      <polyline points="342.71,249.87 349.01,254.41" fill="none" stroke="var(--on-accent)" stroke-width="0.9"/>
+      <polygon points="410.95,281.65 425.44,292.10 425.44,288.10 410.95,277.65" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.1"/>
+      <polygon points="403.36,299.92 425.44,292.10 425.44,288.10 403.36,295.92" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.1"/>
+      <polygon points="388.87,285.48 410.95,277.65 425.44,288.10 403.36,295.92" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.1"/>
+      <polygon points="410.42,281.23 418.61,287.13 418.61,191.13 410.42,185.23" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.4"/>
+      <polygon points="404.81,292.02 418.61,287.13 418.61,191.13 404.81,196.02" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.4"/>
+      <polygon points="396.62,190.12 410.42,185.23 418.61,191.13 404.81,196.02" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.4"/>
+      <polygon points="360.79,146.54 428.20,195.12 428.20,185.12 360.79,136.54" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.45"/>
+      <polygon points="401.52,204.57 428.20,195.12 428.20,185.12 401.52,194.57" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.45"/>
+      <polygon points="334.11,145.99 360.79,136.54 428.20,185.12 401.52,194.57" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.45"/>
+      <polyline points="365.20,144.72 423.79,186.94" fill="none" stroke="var(--art-label)" stroke-width="1"/>
+      <polyline points="412.31,280.59 412.31,195.59" fill="none" stroke="var(--art-label)" stroke-width="0.95"/>
+      <polygon points="401.26,181.64 413.86,190.72 413.86,209.72" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.15"/>
+      <polygon points="363.46,154.40 374.17,162.12 363.46,173.40" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.15"/>
+      <polygon points="394.72,190.89 402.28,196.34 402.28,185.34 394.72,179.89" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="389.40,200.90 402.28,196.34 402.28,185.34 389.40,189.90" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="381.84,184.46 394.72,179.89 402.28,185.34 389.40,189.90" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <circle cx="394.63" cy="195.73" r="2" fill="var(--art-ink)"/>
+      <polygon points="349.85,144.48 356.78,149.47 356.78,145.47 349.85,140.48" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1"/>
+      <polygon points="343.90,154.04 356.78,149.47 356.78,145.47 343.90,150.04" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1"/>
+      <polygon points="336.97,145.04 349.85,140.48 356.78,145.47 343.90,150.04" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1"/>
+      <polygon points="348.06,143.15 351.84,145.87 351.84,136.87 348.06,134.15" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1"/>
+      <polygon points="346.32,147.83 351.84,145.87 351.84,136.87 346.32,138.83" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1"/>
+      <polygon points="342.54,136.10 348.06,134.15 351.84,136.87 346.32,138.83" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1"/>
+      <polyline points="375.35,198.72 367.99,215.33 342.23,234.46" fill="none" stroke="var(--art-label)" stroke-width="1.05" stroke-dasharray="2 4"/>
+      <polyline points="386.30,203.65 382.62,215.95 368.82,226.84" fill="none" stroke="var(--art-label)" stroke-width="1.05" stroke-dasharray="2 4"/>
+      <polygon points="554.44,161.21 585.31,183.45 585.31,141.45 554.44,119.21" fill="var(--art-face)" stroke="var(--art-ink)" stroke-width="1.5"/>
+      <polygon points="525.51,204.64 585.31,183.45 585.31,141.45 525.51,162.64" fill="var(--mist)" stroke="var(--art-ink)" stroke-width="1.5"/>
+      <polygon points="494.64,140.40 554.44,119.21 585.31,141.45 525.51,162.64" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.5"/>
+      <polyline points="507.52,135.83 538.39,158.08" fill="none" stroke="var(--art-guide)" stroke-width="0.88"/>
+      <polyline points="538.80,124.75 569.67,146.99" fill="none" stroke="var(--art-guide)" stroke-width="0.88"/>
+      <polyline points="532.87,199.03 532.87,164.03" fill="none" stroke="var(--art-guide)" stroke-width="0.88"/>
+      <polyline points="577.95,183.06 577.95,148.06" fill="none" stroke="var(--art-guide)" stroke-width="0.88"/>
+      <polyline points="546.67,182.14 546.67,166.14" fill="none" stroke="var(--art-ink)" stroke-width="1.25"/>
+      <polyline points="546.67,177.14 562.31,167.60 562.31,160.60" fill="none" stroke="var(--art-ink)" stroke-width="1.25"/>
+      <circle cx="546.67" cy="183.14" r="2.4" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <circle cx="546.67" cy="165.14" r="2.4" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <circle cx="562.31" cy="159.60" r="2.4" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="1.05"/>
+      <polygon points="519.63,137.64 540.79,130.14 555.28,140.58 534.12,148.08" fill="var(--paper)" stroke="var(--art-ink)" stroke-width="0.85"/>
+      <polyline points="526.80,139.84 541.52,134.62" fill="none" stroke="var(--art-label)" stroke-width="0.8"/>
+      <polyline points="529.95,142.11 540.07,138.52" fill="none" stroke="var(--art-label)" stroke-width="0.8"/>
+      <polyline points="563.27,138.43 568.94,142.51" fill="none" stroke="var(--art-label)" stroke-width="0.85"/>
+      <polyline points="566.03,137.45 571.70,141.53" fill="none" stroke="var(--art-label)" stroke-width="0.85"/>
+      <polyline points="568.79,136.47 574.46,140.56" fill="none" stroke="var(--art-label)" stroke-width="0.85"/>
+      <polyline points="571.55,135.49 577.22,139.58" fill="none" stroke="var(--art-label)" stroke-width="0.85"/>
+      <polyline points="158.33,209.38 90.00,211.00 90.00,161.00 58.00,161.00" fill="none" stroke="var(--art-label)" stroke-width="0.95"/>
+      <circle cx="158.33" cy="209.38" r="1.9" fill="var(--art-label)"/>
+      <text x="58.00" y="154.00" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-weight="650" font-size="11" fill="var(--art-label)" letter-spacing=".45" text-anchor="start">STUDIO</text>
+      <polyline points="346.56,135.03 304.00,105.00 304.00,46.00 326.00,46.00" fill="none" stroke="var(--art-label)" stroke-width="0.95"/>
+      <circle cx="346.56" cy="135.03" r="1.9" fill="var(--art-label)"/>
+      <text x="332.00" y="50.00" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-weight="650" font-size="11" fill="var(--art-label)" letter-spacing=".45" text-anchor="start">INSPECTION</text>
+      <polyline points="561.04,134.83 618.00,134.00 618.00,112.00 681.00,112.00" fill="none" stroke="var(--art-label)" stroke-width="0.95"/>
+      <circle cx="561.04" cy="134.83" r="1.9" fill="var(--art-label)"/>
+      <text x="682.00" y="104.00" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-weight="650" font-size="11" fill="var(--art-label)" letter-spacing=".45" text-anchor="end">DISPATCH</text>
+      <polyline points="318.27,277.79 331.00,364.00 374.00,364.00" fill="none" stroke="var(--tour-accent)" stroke-width="0.95"/>
+      <circle cx="318.27" cy="277.79" r="1.9" fill="var(--tour-accent)"/>
+      <text x="380.00" y="368.00" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-weight="650" font-size="11" fill="var(--tour-accent)" letter-spacing=".45" text-anchor="start">WORK ORDER 024</text>
+      <polyline points="37.00,424.00 683.00,424.00" fill="none" stroke="var(--art-guide)" stroke-width="0.8"/>
+      <polyline points="37.00,420.00 37.00,428.00" fill="none" stroke="var(--art-guide)" stroke-width="0.75"/>
+      <polyline points="92.00,422.00 92.00,426.00" fill="none" stroke="var(--art-guide)" stroke-width="0.75"/>
+      <polyline points="145.00,422.00 145.00,426.00" fill="none" stroke="var(--art-guide)" stroke-width="0.75"/>
+      <polyline points="199.00,422.00 199.00,426.00" fill="none" stroke="var(--art-guide)" stroke-width="0.75"/>
+      <polyline points="253.00,422.00 253.00,426.00" fill="none" stroke="var(--art-guide)" stroke-width="0.75"/>
+      <polyline points="307.00,422.00 307.00,426.00" fill="none" stroke="var(--art-guide)" stroke-width="0.75"/>
+      <polyline points="360.00,420.00 360.00,428.00" fill="none" stroke="var(--art-guide)" stroke-width="0.75"/>
+      <polyline points="414.00,422.00 414.00,426.00" fill="none" stroke="var(--art-guide)" stroke-width="0.75"/>
+      <polyline points="468.00,422.00 468.00,426.00" fill="none" stroke="var(--art-guide)" stroke-width="0.75"/>
+      <polyline points="521.00,422.00 521.00,426.00" fill="none" stroke="var(--art-guide)" stroke-width="0.75"/>
+      <polyline points="575.00,422.00 575.00,426.00" fill="none" stroke="var(--art-guide)" stroke-width="0.75"/>
+      <polyline points="629.00,422.00 629.00,426.00" fill="none" stroke="var(--art-guide)" stroke-width="0.75"/>
+      <polyline points="683.00,420.00 683.00,428.00" fill="none" stroke="var(--art-guide)" stroke-width="0.75"/>
+    </g>
+  </defs>
+</svg>
