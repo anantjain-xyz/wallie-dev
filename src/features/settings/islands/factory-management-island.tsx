@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { lazy, Suspense, type ComponentProps } from "react";
 
 const ManagementPanel = lazy(() =>
@@ -7,6 +8,27 @@ const ManagementPanel = lazy(() =>
     default: module.WorkspaceFactoryManagementPanel,
   })),
 );
+
+export function FactoryManagementCloseLink({ href }: { href: string }) {
+  return (
+    <Link
+      aria-label="Close factory management"
+      className="ui-button min-h-11 sm:min-h-9"
+      href={href}
+      onNavigate={() => {
+        const directory = document.getElementById("factories");
+        directory
+          ?.querySelector<HTMLElement>("[data-settings-heading]")
+          ?.focus({ preventScroll: true });
+        directory?.scrollIntoView({ block: "start" });
+      }}
+      prefetch={false}
+      scroll={false}
+    >
+      Close
+    </Link>
+  );
+}
 
 export function WorkspaceFactoryManagementIsland(props: ComponentProps<typeof ManagementPanel>) {
   return (

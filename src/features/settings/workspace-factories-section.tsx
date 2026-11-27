@@ -118,6 +118,7 @@ async function FactoryList({
                     className="ui-button min-h-11 sm:min-h-9"
                     href={`${workspaceSettingsPath(workspaceSlug, { category: "workspace", manageFactory: factory.id })}#factory-management`}
                     prefetch={false}
+                    scroll={false}
                   >
                     Manage
                   </Link>

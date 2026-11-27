@@ -1,9 +1,10 @@
 import "server-only";
 
-import Link from "next/link";
-
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
-import { WorkspaceFactoryManagementIsland } from "@/features/settings/islands/factory-management-island";
+import {
+  FactoryManagementCloseLink,
+  WorkspaceFactoryManagementIsland,
+} from "@/features/settings/islands/factory-management-island";
 import { Section } from "@/features/settings/settings-ui";
 import { WorkspaceSettingsLoadError } from "@/features/settings/workspace-settings-load-error";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
@@ -28,10 +29,20 @@ export async function WorkspaceFactoryManagement({
     loadAuthenticatedWorkspaceContext(workspaceSlug),
     loadWorkspaceFactoryOptions(workspaceSlug),
   ]);
+  const close = (
+    <FactoryManagementCloseLink
+      href={`${workspaceSettingsPath(workspaceSlug, { category: "workspace" })}#factories`}
+    />
+  );
   const factory = options.find(({ canManage, id }) => canManage && id === factoryId);
   if (!factory) {
     return (
-      <Section anchorId="factory-management" heading="h3" title="Factory management unavailable">
+      <Section
+        actions={close}
+        anchorId="factory-management"
+        heading="h3"
+        title="Factory management unavailable"
+      >
         <p className="type-secondary text-muted">You need manager access to this factory.</p>
       </Section>
     );
@@ -55,7 +66,7 @@ export async function WorkspaceFactoryManagement({
   ]);
   if (grants.error || workspaceMembers.error) {
     return (
-      <Section anchorId="factory-management" heading="h3" title={factory.name}>
+      <Section actions={close} anchorId="factory-management" heading="h3" title={factory.name}>
         <WorkspaceSettingsLoadError label="factory management" />
       </Section>
     );
@@ -76,16 +87,7 @@ export async function WorkspaceFactoryManagement({
   );
   return (
     <Section
-      actions={
-        <Link
-          aria-label="Close factory management"
-          className="ui-button min-h-11 sm:min-h-9"
-          href={`${workspaceSettingsPath(workspaceSlug, { category: "workspace" })}#factories`}
-          prefetch={false}
-        >
-          Close
-        </Link>
-      }
+      actions={close}
       anchorId="factory-management"
       className="ui-sheet p-4 sm:p-5"
       heading="h3"

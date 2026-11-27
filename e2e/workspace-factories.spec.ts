@@ -528,6 +528,7 @@ test("factory management changes only the selected factory and leaves workspace 
       ).status(),
     ).toBe(422);
     await panel.getByRole("link", { name: "Close factory management" }).press("Enter");
+    await expect(panel).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Factories", exact: true })).toBeFocused();
 
     await page.context().clearCookies();
@@ -639,9 +640,23 @@ test("factory management changes only the selected factory and leaves workspace 
     await expect(rename).toHaveValue("Payments Operations");
     await expect(archive).toBeFocused();
     await expect(panel.getByRole("listitem").filter({ hasText: "Mika Lane" })).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await capture(page, info, "04-restored-mobile");
 
+    await admin
+      .rpc("grant_factory_membership", {
+        ...operatorArgs,
+        p_factory_id: payments.id,
+        p_member_id: member.memberId,
+        p_role: "member",
+      })
+      .throwOnError();
     await page.context().clearCookies();
     await signInViaMagicLink(page, managePath(payments.id), { baseURL: base, email: member.email });
+    await expect(directory.getByText("Payments Operations", { exact: true })).toBeVisible();
+    await expect(directory.getByRole("link", { name: "Manage Payments Operations" })).toHaveCount(
+      0,
+    );
     await expect(
       panel.getByRole("heading", { name: "Factory management unavailable" }),
     ).toBeVisible();
