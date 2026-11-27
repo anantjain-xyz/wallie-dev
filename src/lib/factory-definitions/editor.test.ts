@@ -49,12 +49,14 @@ const directProposal = { ...proposal, candidateKey: "d".repeat(64) };
 
 function fixture({
   pipeline = true,
+  missingConfiguredPipeline = false,
   hasStages = true,
   repository = true,
   factoryArchived = false,
   routingEvidence,
 }: {
   pipeline?: boolean;
+  missingConfiguredPipeline?: boolean;
   hasStages?: boolean;
   repository?: boolean;
   factoryArchived?: boolean;
@@ -166,6 +168,8 @@ function fixture({
             ]);
           case "pipelines":
             expect(searchParams.get("factory_id")).toBe(`eq.${selectedFactory}`);
+            if (missingConfiguredPipeline && searchParams.get("id") === `eq.${selectedPipeline}`)
+              return Response.json([]);
             if (searchParams.has("pipeline_stages")) {
               expect(searchParams.get("pipeline_stages.archived_at")).toBe("is.null");
               expect(searchParams.get("pipeline_stages")).toBe("not.is.null");
@@ -175,7 +179,7 @@ function fixture({
               pipeline
                 ? [
                     {
-                      id: selectedPipeline,
+                      id: missingConfiguredPipeline ? fixtureId(19) : selectedPipeline,
                       name: "Factory Pipeline",
                       is_default: false,
                       operating_rules_md: "",
@@ -281,7 +285,11 @@ describe("selected factory definition editor", () => {
     await expect(
       loadFactoryEditorSnapshot(client, workspace, selectedFactory),
     ).resolves.toMatchObject({
-      setup: { pipelineAvailable: true, repositories: [{ id: selectedRepository }] },
+      setup: {
+        hasPipeline: true,
+        pipelineAvailable: true,
+        repositories: [{ id: selectedRepository }],
+      },
       baseline: {
         source: {
           pipeline: selectedPipeline,
@@ -296,6 +304,23 @@ describe("selected factory definition editor", () => {
     expect(calls.some(({ pathname }) => pathname.endsWith("/workspace_agent_config"))).toBe(false);
     expect(calls.some(({ pathname }) => pathname.endsWith("/execution_policies"))).toBe(false);
   });
+
+  it.each([true, false])(
+    "reports whether any other pipeline remains (%s) when the draft pipeline is missing",
+    async (pipeline) => {
+      const { client } = fixture({
+        pipeline,
+        missingConfiguredPipeline: true,
+        routingEvidence: "none",
+      });
+      await expect(
+        loadFactoryEditorSnapshot(client, workspace, selectedFactory),
+      ).resolves.toMatchObject({
+        draft: { id: requestedDraft, bundle: { pipelineId: selectedPipeline } },
+        setup: { hasPipeline: pipeline, pipelineAvailable: false },
+      });
+    },
+  );
 
   it.each([
     { id: fixtureId(11), factoryArchived: false },

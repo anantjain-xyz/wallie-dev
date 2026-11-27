@@ -250,6 +250,7 @@ export function FactoryDefinitionEditor({
   const initialPromptRevisionId = initialAgent?.promptRevisionId;
   const editorApi = `${api}/editor`;
   const [snapshot, setSnapshot] = useState<FactoryEditorSnapshot | null>(null);
+  const [setupNeedsReload, setSetupNeedsReload] = useState(false);
   const setupRepositories = snapshot?.setup?.repositories;
   const repositories = useMemo(
     () => setupRepositories?.map((repo) => ({ ...repo, isArchived: false })) ?? initialRepositories,
@@ -309,7 +310,11 @@ export function FactoryDefinitionEditor({
     history?.activations.find(({ revisionId }) => revisionId === selectedRevision)
       ?.activationNumber;
   const draft = snapshot?.draft ?? null;
-  const emptyPipeline = edit?.input.kind === "structured" && !edit.input.value.stages.length;
+  const emptyPipeline = edit
+    ? edit.input.kind === "structured"
+      ? !edit.input.value.stages.length
+      : !dirty && !edit.original.stages.length
+    : false;
   const namedReferences = useNamedReferences(
     factoryId && snapshot ? `${editorApi}/references` : null,
     JSON.stringify(
@@ -505,6 +510,7 @@ export function FactoryDefinitionEditor({
         const current = await loadWorkspace(signal);
         if (signal.aborted) return;
         setSnapshot(current.snapshot);
+        setSetupNeedsReload(false);
         setHistory(current.history);
         const recovered = recoveryKey ? recoverableEdits.get(recoveryKey) : undefined;
         setEdit(
@@ -592,6 +598,7 @@ export function FactoryDefinitionEditor({
       const selectionAtStart = selectionRequest.current;
       const current = await loadWorkspace();
       setSnapshot(current.snapshot);
+      setSetupNeedsReload(false);
       setHistory(current.history);
       setPreview(null);
       setConflict(false);
@@ -626,6 +633,10 @@ export function FactoryDefinitionEditor({
     if (!edit || edit.input.kind === mode) return;
     if (edit.input.kind === "structured") {
       replaceInput({ kind: "json", text: sourceText(edit.input.value) });
+      return;
+    }
+    if (!dirty && !edit.original.stages.length) {
+      replaceInput({ kind: "structured", value: edit.original });
       return;
     }
     await run("preview", async () => {
@@ -665,23 +676,53 @@ export function FactoryDefinitionEditor({
   }
 
   async function provision(action: FactorySetupAction) {
-    if (!snapshot?.setup || dirty || locked) return;
+    if (!snapshot?.setup || dirty || locked || setupNeedsReload) return;
     await run("setup", async () => {
-      await fetchFactoryEditor(
-        `${api}/setup`,
-        factorySetupMutationResponseSchema,
-        factoryEditorPost({
-          ...action,
-          expectedActivationNumber: snapshot.activationNumber,
-          expectedDraftId: snapshot.draft?.id ?? null,
-        }),
-      );
+      let acknowledged = false;
+      try {
+        await fetchFactoryEditor(
+          `${api}/setup`,
+          factorySetupMutationResponseSchema,
+          factoryEditorPost({
+            ...action,
+            expectedActivationNumber: snapshot.activationNumber,
+            expectedDraftId: snapshot.draft?.id ?? null,
+          }),
+        );
+        acknowledged = true;
+      } catch (error) {
+        if (
+          error instanceof FactoryEditorRequestError &&
+          [400, 401, 403, 404, 409, 422].includes(error.status)
+        ) {
+          throw error;
+        }
+      }
       notifySessionRepositoriesChanged(workspaceId);
-      const current = await loadWorkspace();
+      const current = await loadWorkspace().catch(() => null);
+      if (!current) {
+        setSetupNeedsReload(true);
+        setFeedback({
+          kind: "error",
+          text: acknowledged
+            ? "Setup was saved, but its current state couldn't be loaded. Reload definition before continuing."
+            : "Couldn't confirm the setup request. Reload definition before trying again.",
+        });
+        return;
+      }
       setSnapshot(current.snapshot);
       setHistory(current.history);
       setEdit(editFrom(current.snapshot, edit?.input.kind));
       setPreview(null);
+      refreshProfile();
+      if (!acknowledged) {
+        nextSetupFocus.current = "factory-setup";
+        setFeedback({
+          kind: "info",
+          text: "Couldn't confirm the setup request. Check the refreshed setup before trying again.",
+        });
+        return;
+      }
       nextSetupFocus.current =
         action.action === "create-pipeline" ? "definition-field-stages" : "factory-setup";
       setFeedback({
@@ -957,7 +998,7 @@ export function FactoryDefinitionEditor({
       {snapshot?.setup ? (
         <FactorySetupPanel
           api={api}
-          busy={locked}
+          busy={locked || setupNeedsReload}
           dirty={dirty}
           onProvision={provision}
           pending={pending === "setup"}

@@ -291,6 +291,18 @@ export async function loadFactoryEditorSnapshot(
       : null,
   ]);
   if (workingPipeline?.error) throw workingPipeline.error;
+  const pipelineAvailable = baselineSetup?.pipelineAvailable ?? Boolean(workingPipeline?.data);
+  const remainingPipeline =
+    repositories && workingPipelineId && !pipelineAvailable
+      ? await client
+          .from("pipelines")
+          .select("id")
+          .eq("workspace_id", workspaceId)
+          .eq("factory_id", factory.id)
+          .limit(1)
+          .maybeSingle()
+      : null;
+  if (remainingPipeline?.error) throw remainingPipeline.error;
   let routingMode: FactoryEditorSnapshot["routingMode"];
   let routingCanary: FactoryEditorSnapshot["routingCanary"];
   let routingCanaryAlertId: FactoryEditorSnapshot["routingCanaryAlertId"];
@@ -333,7 +345,8 @@ export async function loadFactoryEditorSnapshot(
             repositories: repositories
               .map(({ id, full_name }) => ({ id, fullName: full_name }))
               .sort((left, right) => left.fullName.localeCompare(right.fullName)),
-            pipelineAvailable: baselineSetup?.pipelineAvailable ?? Boolean(workingPipeline?.data),
+            hasPipeline: pipelineAvailable || Boolean(remainingPipeline?.data),
+            pipelineAvailable,
             enabledSandboxProviders: sandbox.enabledProviders,
           },
         }

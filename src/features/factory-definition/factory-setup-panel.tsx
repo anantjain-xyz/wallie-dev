@@ -42,7 +42,7 @@ export function FactorySetupPanel({
   onProvision: (action: FactorySetupAction) => Promise<void>;
   workspaceSlug: string;
 }) {
-  const { repositories, pipelineAvailable, enabledSandboxProviders } = setup;
+  const { repositories, hasPipeline, pipelineAvailable, enabledSandboxProviders } = setup;
   const { published, draft, baseline, readySandboxProviders } = snapshot;
   const scopedRepo = (id: string | undefined) => repositories.find((repo) => repo.id === id);
   const configuredRepositoryId =
@@ -61,7 +61,7 @@ export function FactorySetupPanel({
     connectedSandboxProviders: readySandboxProviders,
   });
   const needsRepository = repositories.length === 0;
-  const needsPipeline = !pipelineAvailable && !needsRepository;
+  const needsPipeline = !hasPipeline && !needsRepository;
   const [assignmentOpen, setAssignmentOpen] = useState(false);
   const settings = workspaceSettingsPath(workspaceSlug, { category: "integrations" });
   const sandboxUnready = runtimeProvider && !readySandboxProviders.includes(runtimeProvider);
@@ -108,7 +108,10 @@ export function FactorySetupPanel({
         </p>
       ) : null}
       {!pipelineAvailable && (published || draft) ? (
-        <p className="type-secondary text-warning">The configured pipeline is unavailable.</p>
+        <p className="type-secondary text-warning">
+          The configured pipeline is unavailable.
+          {hasPipeline ? " Choose an existing pipeline under References in advanced settings." : ""}
+        </p>
       ) : null}
       {sandboxUnready ? (
         <p className="type-secondary text-warning">
@@ -156,7 +159,7 @@ export function FactorySetupPanel({
         </div>
       ) : (
         <>
-          {!published && edition?.stages.length ? (
+          {!published && pipelineAvailable && edition?.stages.length ? (
             <p className="type-secondary text-muted">
               Publish a tested draft before starting sessions in this factory.
             </p>

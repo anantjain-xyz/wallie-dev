@@ -23,6 +23,7 @@ export const factorySetupRepositoryOptionsSchema = z.object({ repositories: repo
 export const factorySetupMutationResponseSchema = z.object({ id: z.string().uuid() });
 export const factorySetupSnapshotSchema = z.object({
   repositories: repository.array(),
+  hasPipeline: z.boolean(),
   pipelineAvailable: z.boolean(),
   enabledSandboxProviders: sandboxProviderSchema.array(),
 });
