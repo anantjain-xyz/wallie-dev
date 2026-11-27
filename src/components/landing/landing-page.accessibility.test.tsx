@@ -31,6 +31,11 @@ describe("LandingPage accessibility", () => {
       "aria-controls",
       "station-intake",
     );
+    const receipt = within(screen.getByRole("group", { name: "Admission receipt" }));
+    expect(receipt.getByRole("button", { name: "After adoption", pressed: true })).toHaveAttribute(
+      "aria-controls",
+      "admission-receipt-body",
+    );
     expect(screen.queryAllByRole("textbox")).toHaveLength(0);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
       /^Self-improving software factory$/,
@@ -78,15 +83,23 @@ describe("LandingPage accessibility", () => {
     render(<LandingPage />);
 
     for (const [name, target] of [
-      ["Start the tour", "studio"],
-      ["Studio", "studio"],
-      ["The line", "line"],
-      ["Improvements", "improve"],
+      ["Start the tour", "configure"],
+      ["Configure", "configure"],
+      ["Run", "run"],
+      ["Improve", "improve"],
+      ["Follow the evidence", "improve"],
       ["Try Wallie", "start"],
       ["Back to the gate", "top"],
     ]) {
       expect(screen.getByRole("link", { name })).toHaveAttribute("href", `#${target}`);
       expect(document.getElementById(target)).toHaveAttribute("tabindex", "-1");
+    }
+    for (const [legacy, chapter] of [
+      ["studio", "configure"],
+      ["line", "run"],
+    ]) {
+      expect(document.getElementById(chapter)).toContainElement(document.getElementById(legacy));
+      expect(document.getElementById(legacy)).toHaveAttribute("tabindex", "-1");
     }
   });
 });

@@ -63,11 +63,11 @@ describe("the fictional factory tour", () => {
     expect(line.getByText(/This session still uses factory revision R07/)).toBeVisible();
     expect(line.getByText(/the observed count was 0/)).not.toBeVisible();
 
-    await user.click(line.getByRole("button", { name: "v1" }));
+    await user.click(line.getByRole("button", { name: "Build v1" }));
     expect(line.getByText("Session review / Changes requested")).toBeVisible();
     expect(line.queryByRole("button", { name: "Approve Build v2" })).not.toBeInTheDocument();
 
-    await user.click(line.getByRole("button", { name: "v2" }));
+    await user.click(line.getByRole("button", { name: "Build v2" }));
     await user.click(line.getByText("Read the check evidence"));
     expect(line.getByText(/the observed count was 0/)).toBeVisible();
     await user.click(line.getByRole("button", { name: "Approve Build v2" }));
@@ -75,7 +75,7 @@ describe("the fictional factory tour", () => {
     expect(line.getByText(/the observed count was 0/)).toBeVisible();
     const delivery = line.getByRole("button", { name: "See delivery" });
     expect(delivery).toHaveFocus();
-    expect(screen.getByText("R08 draft / Test needed")).toBeVisible();
+    expect(screen.getByRole("button", { name: "After adoption", pressed: true })).toBeVisible();
 
     await user.click(delivery);
     expect(line.getByRole("heading", { name: "Code can leave in a GitHub PR." })).toHaveFocus();
@@ -83,39 +83,45 @@ describe("the fictional factory tour", () => {
     await user.click(line.getByRole("button", { name: "Replay the work order" }));
     expect(line.getByRole("heading", { name: "A task becomes a session." })).toHaveFocus();
     await user.click(line.getByRole("button", { name: "Build" }));
+    expect(line.getByRole("heading", { name: "Build takes an approved plan." })).toBeVisible();
+    expect(line.queryByRole("button", { name: "Request changes" })).not.toBeInTheDocument();
+    await user.click(line.getByRole("button", { name: "Go to Plan" }));
+    expect(line.getByRole("heading", { name: "A plan for the flag." })).toHaveFocus();
+    await user.click(line.getByRole("button", { name: "Approve plan & continue" }));
     expect(line.getByRole("button", { name: "Request changes" })).toBeVisible();
     expect(line.queryByRole("group", { name: "Build artifact versions" })).not.toBeInTheDocument();
   });
 
-  it("publishes a tested revision only for the next work order and can replay it", async () => {
+  it("lets the reader compare fictional admissions without changing the current run", async () => {
     const user = userEvent.setup();
     render(<LandingPage />);
 
-    const bench = within(
-      screen.getByRole("region", { name: "Manual factory revision demonstration" }),
-    );
-    const status = bench.getByRole("status");
-    const receipt = status.parentElement;
-    expect(
-      bench.queryByRole("button", { name: "Publish R08 in the tour" }),
-    ).not.toBeInTheDocument();
-    expect(receipt).toHaveTextContent(/Next work order 025\s*R07/);
+    const receipt = within(screen.getByRole("group", { name: "Admission receipt" }));
+    const before = receipt.getByRole("button", { name: "Before adoption" });
+    const after = receipt.getByRole("button", { name: "After adoption" });
+    const status = receipt.getByRole("status");
+    const current = receipt.getByText("Already started", { exact: false }).parentElement;
+    const next = receipt.getByText("Next start", { exact: false }).parentElement;
+    expect(after).toHaveAttribute("aria-pressed", "true");
+    expect(current).toHaveTextContent(/WO–024\s*R07/);
+    expect(next).toHaveTextContent(/WO–025\s*R08/);
 
-    const test = bench.getByRole("button", { name: "Run configuration test" });
-    test.focus();
+    before.focus();
     await user.keyboard(" ");
-    expect(status).toHaveTextContent("R08 draft / Configuration test passed");
-    expect(receipt).toHaveTextContent(/Next work order 025\s*R07/);
-    expect(bench.getByRole("button", { name: "Publish R08 in the tour" })).toHaveFocus();
+    expect(before).toHaveAttribute("aria-pressed", "true");
+    expect(status).toHaveTextContent("Before adoption / R07 still active");
+    expect(current).toHaveTextContent(/WO–024\s*R07/);
+    expect(next).toHaveTextContent(/WO–025\s*R07/);
 
-    await user.keyboard("{Enter}");
-    expect(status).toHaveTextContent("Published / New sessions use R08");
-    expect(receipt).toHaveTextContent(/Old work order 024\s*R07/);
-    expect(receipt).toHaveTextContent(/Next work order 025\s*R08/);
+    await user.keyboard("{ArrowRight}");
+    expect(after).toHaveFocus();
+    expect(after).toHaveAttribute("aria-pressed", "true");
+    expect(status).toHaveTextContent(/After a workspace owner or admin adopts.*025 uses R08/);
+    expect(current).toHaveTextContent(/WO–024\s*R07/);
+    expect(next).toHaveTextContent(/WO–025\s*R08/);
     expect(screen.getByText("Intake ticket / Factory R07")).toBeVisible();
-
-    await user.click(bench.getByRole("button", { name: "Replay the revision" }));
-    expect(status).toHaveTextContent("R08 draft / Test needed");
-    expect(receipt).toHaveTextContent(/Next work order 025\s*R07/);
+    const recipe = within(screen.getByRole("figure", { name: "Release CLI" }));
+    expect(recipe.getByText("R07", { exact: true })).toBeVisible();
+    expect(recipe.getByText("Published", { exact: true })).toBeVisible();
   });
 });

@@ -200,7 +200,7 @@ export function WorkOrder() {
           <p className={styles.taskCopy}>
             Print what the CLI would deploy when someone passes <code>--dry-run</code>.
           </p>
-          <p>Wallie records the task and active factory revision for this session.</p>
+          <p>This session starts on R07. Wallie records the task and its starting revision.</p>
         </div>
         <div className={styles.panelSide}>
           <p className={styles.technical}>Next station / Plan</p>
@@ -253,11 +253,11 @@ export function WorkOrder() {
               setPlanApproved(true);
               selectStation("Build", {
                 focusHeading: true,
-                message: "Plan v1 approved. The work order is at Build.",
+                message: planApproved ? undefined : "Plan v1 approved. The work order is at Build.",
               });
             }}
           >
-            Approve plan &amp; continue{" "}
+            {planApproved ? "Return to Build" : "Approve plan & continue"}{" "}
             <span className={styles.arrow} aria-hidden="true">
               →
             </span>
@@ -266,124 +266,150 @@ export function WorkOrder() {
       </div>
 
       <div className={styles.stationPanel} id="station-build" hidden={station !== "Build"}>
-        <div className={styles.panelMain}>
-          <p className={`${styles.technical} ${styles.artifactId}`}>
-            <code>build-report.md</code> / v{version}
-          </p>
-          <h4
-            tabIndex={-1}
-            ref={(heading) => {
-              headings.current.Build = heading;
-            }}
-          >
-            {artifact.title}
-          </h4>
-          <p>{artifact.description}</p>
-          <div className={styles.codeDocket}>
-            <div className={styles.technical}>
-              <span>Simplified code</span>
-              <span>Build v{version}</span>
+        {!planApproved ? (
+          <>
+            <div className={styles.panelMain}>
+              <p className={`${styles.technical} ${styles.artifactId}`}>Build / Waiting for Plan</p>
+              <h4 tabIndex={-1}>Build takes an approved plan.</h4>
+              <p>Head to Plan and approve its artifact before reviewing Build for this order.</p>
             </div>
-            <pre>
-              <code>
-                <span className={version === 2 ? styles.newLine : undefined}>
-                  {artifact.code[0]}
-                </span>
-                {"\n"}
-                <span>{artifact.code[1]}</span>
-              </code>
-            </pre>
-          </div>
-          <details className={styles.evidence} ref={evidence}>
-            <summary>Read the check evidence</summary>
-            <p>{artifact.proof}</p>
-          </details>
-        </div>
-        <div className={styles.panelSide}>
-          <p className={styles.technical}>Session review / {reviewText.status}</p>
-          <blockquote className={styles.reviewQuote}>
-            Dry runs must never call the deploy API.
-          </blockquote>
-          <p>{reviewText.note}</p>
-          <div className={styles.reviewActions}>
-            {review === "initial" && (
-              <button
-                type="button"
-                className={`${styles.button} ${styles.primary}`}
-                onClick={() => {
-                  pendingFocus.current = "Build";
-                  setReview("revised");
-                  showBuildVersion(2);
-                  setAnnouncement(
-                    "The tour reran Build with feedback. Build artifact v2 is ready to review.",
-                  );
-                }}
-              >
-                Request changes{" "}
-                <span className={styles.arrow} aria-hidden="true">
-                  ↻
-                </span>
-              </button>
-            )}
-            {version === 2 && review === "revised" && (
-              <button
-                type="button"
-                className={`${styles.button} ${styles.primary}`}
-                onClick={() => {
-                  pendingFocus.current = "delivery";
-                  setReview("approved");
-                  setAnnouncement(
-                    "Build v2 approved for this session. Delivery is a separate process.",
-                  );
-                }}
-              >
-                Approve Build v2{" "}
-                <span className={styles.arrow} aria-hidden="true">
-                  ✓
-                </span>
-              </button>
-            )}
-            {version === 2 && review === "approved" && (
+            <div className={styles.panelSide}>
+              <p className={styles.technical}>Review gate / Plan</p>
               <button
                 type="button"
                 className={`${styles.button} ${styles.ghost}`}
-                ref={delivery}
-                onClick={() => selectStation("Dispatch", { focusHeading: true })}
+                onClick={() => selectStation("Plan", { focusHeading: true })}
               >
-                See delivery{" "}
+                Go to Plan{" "}
                 <span className={styles.arrow} aria-hidden="true">
-                  →
+                  ←
                 </span>
               </button>
-            )}
-          </div>
-          {review !== "initial" && (
-            <div
-              className={styles.versionControls}
-              role="group"
-              aria-label="Build artifact versions"
-            >
-              <span className={styles.technical} aria-hidden="true">
-                Compare
-              </span>
-              {([1, 2] as const).map((candidate) => (
-                <button
-                  type="button"
-                  key={candidate}
-                  className={styles.versionButton}
-                  aria-pressed={version === candidate}
-                  onClick={() => {
-                    if (version === candidate) return;
-                    showBuildVersion(candidate);
-                    setAnnouncement(`Showing Build artifact v${candidate}.`);
-                  }}
-                >
-                  v{candidate}
-                </button>
-              ))}
             </div>
-          )}
-        </div>
+          </>
+        ) : (
+          <>
+            <div className={styles.panelMain}>
+              <p className={`${styles.technical} ${styles.artifactId}`}>
+                <code>build-report.md</code> / v{version}
+              </p>
+              <h4
+                tabIndex={-1}
+                ref={(heading) => {
+                  headings.current.Build = heading;
+                }}
+              >
+                {artifact.title}
+              </h4>
+              <p>{artifact.description}</p>
+              <div className={styles.codeDocket}>
+                <div className={styles.technical}>
+                  <span>Simplified code</span>
+                  <span>Build v{version}</span>
+                </div>
+                <pre>
+                  <code>
+                    <span className={version === 2 ? styles.newLine : undefined}>
+                      {artifact.code[0]}
+                    </span>
+                    {"\n"}
+                    <span>{artifact.code[1]}</span>
+                  </code>
+                </pre>
+              </div>
+              <details className={styles.evidence} ref={evidence}>
+                <summary>Read the check evidence</summary>
+                <p>{artifact.proof}</p>
+              </details>
+            </div>
+            <div className={styles.panelSide}>
+              <p className={styles.technical}>Session review / {reviewText.status}</p>
+              <blockquote className={styles.reviewQuote}>
+                Dry runs must never call the deploy API.
+              </blockquote>
+              <p>{reviewText.note}</p>
+              <div className={styles.reviewActions}>
+                {review === "initial" && (
+                  <button
+                    type="button"
+                    className={`${styles.button} ${styles.primary}`}
+                    onClick={() => {
+                      pendingFocus.current = "Build";
+                      setReview("revised");
+                      showBuildVersion(2);
+                      setAnnouncement(
+                        "The tour reran Build with feedback. Build artifact v2 is ready to review.",
+                      );
+                    }}
+                  >
+                    Request changes{" "}
+                    <span className={styles.arrow} aria-hidden="true">
+                      ↻
+                    </span>
+                  </button>
+                )}
+                {version === 2 && review === "revised" && (
+                  <button
+                    type="button"
+                    className={`${styles.button} ${styles.primary}`}
+                    onClick={() => {
+                      pendingFocus.current = "delivery";
+                      setReview("approved");
+                      setAnnouncement(
+                        "Build v2 approved for this session. Delivery is a separate process.",
+                      );
+                    }}
+                  >
+                    Approve Build v2{" "}
+                    <span className={styles.arrow} aria-hidden="true">
+                      ✓
+                    </span>
+                  </button>
+                )}
+                {version === 2 && review === "approved" && (
+                  <button
+                    type="button"
+                    className={`${styles.button} ${styles.ghost}`}
+                    ref={delivery}
+                    onClick={() => selectStation("Dispatch", { focusHeading: true })}
+                  >
+                    See delivery{" "}
+                    <span className={styles.arrow} aria-hidden="true">
+                      →
+                    </span>
+                  </button>
+                )}
+              </div>
+              {review !== "initial" && (
+                <div
+                  className={styles.versionControls}
+                  role="group"
+                  aria-label="Build artifact versions"
+                >
+                  <span className={styles.technical} aria-hidden="true">
+                    Compare
+                  </span>
+                  {([1, 2] as const).map((candidate) => (
+                    <button
+                      type="button"
+                      key={candidate}
+                      className={styles.versionButton}
+                      aria-label={`Build v${candidate}`}
+                      aria-pressed={version === candidate}
+                      onClick={() => {
+                        if (version === candidate) return;
+                        showBuildVersion(candidate);
+                        setAnnouncement(`Showing Build artifact v${candidate}.`);
+                      }}
+                    >
+                      v{candidate}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       <div className={styles.stationPanel} id="station-dispatch" hidden={station !== "Dispatch"}>
