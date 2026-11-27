@@ -13,6 +13,7 @@ export function SessionDetailHeader({
   creatorDisplayName,
   initialNow,
   repository,
+  reviewHandoff,
   session,
   title,
   workspaceSlug,
@@ -23,6 +24,7 @@ export function SessionDetailHeader({
   creatorDisplayName: string | null;
   initialNow: string;
   repository: SessionReviewRepository | null;
+  reviewHandoff?: ReactNode;
   session: SessionReviewSession;
   title: ReactNode;
   workspaceSlug: string;
@@ -46,6 +48,7 @@ export function SessionDetailHeader({
         {actions}
       </div>
       {title}
+      {reviewHandoff}
       <SessionInspector
         creatorDisplayName={creatorDisplayName}
         initialNow={initialNow}

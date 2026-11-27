@@ -139,6 +139,7 @@ for (const profile of ["desktop", "mobile"] as const) {
     );
     if (profile === "mobile") await page.emulateMedia({ colorScheme: "dark" });
     await page.goto(previewPath);
+    await page.getByText("Evidence", { exact: true }).press("Enter");
     const disclosure = page.getByRole("button", { name: "Browser recordings" });
     await expect(disclosure).toBeVisible();
     expect(requested).toEqual({ metadata: 0, video: [] });

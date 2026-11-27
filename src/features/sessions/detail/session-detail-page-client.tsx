@@ -11,7 +11,6 @@ import {
   useTransition,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { PAGE_HEADER_TITLE_CLASS, PageContainer } from "@/components/ui/page-shell";
@@ -60,6 +59,7 @@ import { ArchivedRetentionActions } from "./archived-retention-actions";
 import { useApprovalReview } from "./use-approval-review";
 import { useReviewEvidence } from "./use-review-evidence";
 import { SessionStageWorkspace } from "./session-stage-workspace";
+import { SESSION_REVIEW_DECISION_ID, SessionReviewHandoff } from "./session-review-handoff";
 import { SessionSpecificationControl, useSessionSpecification } from "./session-specification";
 import { SessionActivityPresentationProvider } from "./session-activity-presentation";
 import { SessionCompletionSummary } from "@/features/sessions/detail/session-completion-summary";
@@ -67,6 +67,7 @@ import { SessionReviewEvidenceView } from "@/features/sessions/detail/session-re
 import { isWallieRunActiveStatus } from "@/features/wallie/utils";
 import {
   SessionReviewBar,
+  reviewDeliveryState,
   type SessionFeedbackSubmission,
   type SessionReviewArtifact,
 } from "@/features/sessions/detail/session-review-bar";
@@ -297,6 +298,12 @@ function SessionDetailContent({
     briefArtifact: SessionReviewArtifact | null;
   } | null>(null);
   const phaseActionPending = pendingPhaseAction?.action ?? null;
+  const [approvalHandoff, setApprovalHandoff] = useState<{
+    artifactId: string;
+    stageName: string;
+    nextStageId: string | null;
+    updatedAt: string;
+  } | null>(null);
   const [phaseActionError, setPhaseActionError] = useState<string | null>(null);
   const [stopPending, setStopPending] = useState(false);
   const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
@@ -361,9 +368,38 @@ function SessionDetailContent({
     refreshSession();
   }, [actionPending, postMutationRefreshRequested, refreshPending, refreshSession]);
 
+  const confirmedAdvance =
+    approvalHandoff?.nextStageId === session.currentStageId &&
+    session.phaseStatus === "in_progress" &&
+    !session.archivedAt
+      ? approvalHandoff
+      : null;
+  const advancedRun =
+    confirmedAdvance &&
+    currentRun?.stageId === session.currentStageId &&
+    compareSessionTimestamps(currentRun.updatedAt, confirmedAdvance.updatedAt) >= 0
+      ? currentRun
+      : null;
+  const queuedStageId =
+    confirmedAdvance && (!advancedRun || advancedRun.status === "queued")
+      ? session.currentStageId
+      : undefined;
+  const pendingBriefArtifact = pendingPhaseAction?.briefArtifact;
   const stageTimeline = useMemo(
-    () => buildStageTimeline(session, { failedStageSlug, currentRun }),
-    [failedStageSlug, currentRun, session],
+    () =>
+      buildStageTimeline(
+        pendingBriefArtifact?.artifactId === session.currentArtifactId &&
+          pendingBriefArtifact?.stageId === session.currentStageId &&
+          !session.archivedAt
+          ? { ...session, phaseStatus: "awaiting_review" }
+          : session,
+        {
+          failedStageSlug,
+          currentRun: queuedStageId && !advancedRun ? null : currentRun,
+          queuedStageId,
+        },
+      ),
+    [advancedRun, failedStageSlug, currentRun, pendingBriefArtifact, queuedStageId, session],
   );
   const stageNames = useMemo(
     () => Object.fromEntries(session.pipeline.stages.map(({ slug, name }) => [slug, name])),
@@ -371,6 +407,10 @@ function SessionDetailContent({
   );
 
   const selectedStage = session.pipeline.stages.find((s) => s.slug === selectedStageSlug) ?? null;
+  const selectedStageName = selectedStage?.name ?? selectedStageSlug;
+  const currentStageName = stageNames[session.currentStageSlug] ?? session.currentStageSlug;
+  const nextStage =
+    session.pipeline.stages[stageIndex(session.pipeline, session.currentStageSlug) + 1];
 
   const artifactsByStage = useMemo(() => {
     const map = new Map<string, SessionArtifactSummary[]>();
@@ -390,10 +430,14 @@ function SessionDetailContent({
     selectedStageSlug === session.currentStageSlug
       ? (activeArtifacts.find((artifact) => artifact.id === session.currentArtifactId) ?? null)
       : (activeArtifacts[0] ?? null);
+  const selectedStageIsCurrent = selectedStageSlug === session.currentStageSlug;
   const reviewArtifact: SessionReviewArtifact | null =
+    selectedStageIsCurrent &&
     displayedArtifact?.id &&
     displayedArtifact.id === session.currentArtifactId &&
+    displayedArtifact.version === session.currentArtifactVersion &&
     selectedStage &&
+    selectedStage.id === session.currentStageId &&
     displayedArtifact.stageSlug === selectedStage.slug
       ? {
           artifactId: displayedArtifact.id,
@@ -401,7 +445,6 @@ function SessionDetailContent({
           version: displayedArtifact.version,
         }
       : null;
-  const selectedStageIsCurrent = selectedStageSlug === session.currentStageSlug;
   const selectedStageIsSpecification = Boolean(
     selectedStage && selectedStage.id === session.specificationStageId,
   );
@@ -503,7 +546,7 @@ function SessionDetailContent({
     phaseStatus: session.phaseStatus,
     selectedStageIsCurrent,
   });
-  // Optimistic approve/reject flips phaseStatus before the network settles.
+  // Optimistic rejection flips phaseStatus before the network settles.
   // Keep the reviewable pending surface so Stop/dialog cannot race the action.
   // Historical version selections disable approve/reject — those actions always
   // target session.currentArtifactVersion, not the on-screen older body.
@@ -538,6 +581,151 @@ function SessionDetailContent({
       : artifactAvailable
         ? "artifact"
         : "empty";
+  const showsSpecificationControl =
+    exactReviewState === "clarification" ||
+    exactReviewState === "checking_clarification" ||
+    (!exactTarget &&
+      ((selectedStageIsSpecification && specificationExhausted) ||
+        (stageFocus === "artifact" &&
+          selectedStageIsSpecification &&
+          specificationArtifact &&
+          stickyReviewMode.kind === "reviewable" &&
+          !phaseActionPending &&
+          !specification.canReview)));
+  const decisionMode =
+    stageFocus === "artifact" &&
+    (!exactTarget ||
+      (exactReviewState === "review" && Boolean(reviewArtifact)) ||
+      phaseActionPending)
+      ? stickyReviewMode
+      : ({ kind: "running" } as const);
+  const approvalEffect = nextStage
+    ? `Approval queues the next selected stage (currently ${nextStage.name}).`
+    : "Final-stage approval completes the session and may archive it. It doesn’t merge or deploy.";
+  const reviewVersion =
+    exactTarget?.artifactVersion ??
+    (displayedArtifact?.stageSlug === selectedStageSlug ? displayedArtifact.version : undefined);
+  const artifactTitle =
+    reviewVersion === undefined ? selectedStageName : `${selectedStageName} v${reviewVersion}`;
+  const artifactNamedAbove =
+    stageFocus === "artifact" &&
+    Boolean(
+      exactTarget ||
+      showsSpecificationControl ||
+      (selectedStageIsCurrent && (session.phaseStatus === "awaiting_review" || phaseActionPending)),
+    );
+  const confirmedHandoff =
+    !phaseActionPending &&
+    (selectedStageIsCurrent || exactTarget) &&
+    approvalHandoff &&
+    (confirmedAdvance ||
+      (approvalHandoff.nextStageId === null && session.phaseStatus === "approved"))
+      ? approvalHandoff
+      : null;
+  const reviewTitle =
+    reviewVersion === undefined ? `${selectedStageName} review` : `Review ${artifactTitle}`;
+  let handoff: Parameters<typeof SessionReviewHandoff>[0] = {};
+  if (confirmedHandoff) {
+    const approved = `${confirmedHandoff.stageName} approved`;
+    const next = queuedStageId
+      ? `${currentStageName} queued.`
+      : session.phaseStatus === "approved"
+        ? session.archivedAt
+          ? "Session complete and archived."
+          : "Session complete."
+        : undefined;
+    handoff = {
+      title: exactTarget ? artifactTitle : approved,
+      status: exactTarget ? [`${approved}.`, next].filter(Boolean).join(" ") : next,
+      confirmation: `${confirmedHandoff.artifactId}:${confirmedHandoff.updatedAt}`,
+    };
+  } else if (phaseActionPending && artifactNamedAbove) {
+    handoff = {
+      title: reviewTitle,
+      status: phaseActionPending === "approve" ? "Approving…" : "Sending feedback…",
+      jumpLabel: decisionMode.kind === "reviewable" ? "Jump to decision" : undefined,
+    };
+  } else if (exactReadOnly) {
+    handoff = {
+      title: artifactTitle,
+      status:
+        exactReviewState === "stale"
+          ? "This review link is no longer current."
+          : exactReviewState === "error"
+            ? "Could not verify this review link."
+            : "Checking this review link…",
+    };
+  } else if (showsSpecificationControl) {
+    const pendingClarification = specification.view.clarification?.status === "pending";
+    handoff = {
+      title: pendingClarification ? `Clarification for ${artifactTitle}` : artifactTitle,
+      status: pendingClarification ? "Answer the clarification before approval." : undefined,
+      jumpLabel: pendingClarification ? "Jump to clarification" : undefined,
+    };
+  } else if (artifactNamedAbove && viewingHistoricalArtifact) {
+    handoff = {
+      title: artifactTitle,
+      status: "Read-only version.",
+      detail: "To act, choose Latest in History → Versions.",
+    };
+  } else if (artifactNamedAbove && session.archivedAt) {
+    handoff = { title: artifactTitle, status: "Archived. Review is read-only." };
+  } else if (artifactNamedAbove && decisionMode.kind === "failed") {
+    handoff = { title: artifactTitle, status: "The latest run failed. Review is paused." };
+  } else if (artifactNamedAbove || (selectedStageIsCurrent && reviewIdentityUnavailable)) {
+    const deliveryState = reviewDeliveryState(approvalReview.value?.delivery, verificationState);
+    const blockingCount = approvalReview.value?.blockingCount ?? 0;
+    const canAct =
+      decisionMode.kind === "reviewable" &&
+      Boolean(reviewArtifact && (!exactTarget || approvalReview.value));
+    const canApproveNow =
+      canApprove &&
+      approvalReview.value &&
+      blockingCount === 0 &&
+      (deliveryState === null || deliveryState === "ready");
+    handoff = { title: reviewTitle };
+    if (decisionMode.kind === "reviewable" && reviewArtifact)
+      handoff.jumpLabel = "Jump to decision";
+    if (!canAct) {
+      handoff.status = reviewIdentityUnavailable
+        ? "The current artifact can’t be verified."
+        : displayedArtifact && !reviewArtifact
+          ? "This output doesn’t match the current review. Reload the session before acting."
+          : "Checking this artifact before you can act…";
+    } else {
+      handoff.status = canApproveNow
+        ? "You can approve or request changes."
+        : canApprove
+          ? "You can request changes."
+          : "You can request changes. Only stage approvers can approve.";
+      handoff.detail = nextStage ? `Next: ${nextStage.name}.` : "Final-stage review.";
+      if (canApprove) {
+        if (blockingCount) {
+          handoff.detail = `${blockingCount} open blocking request${blockingCount === 1 ? "" : "s"} must be resolved before approval.`;
+        } else if (approvalReview.error) {
+          handoff.detail = "Reload review comments before approving.";
+        } else if (!approvalReview.value) {
+          handoff.detail = "Checking approval blockers…";
+        } else if (deliveryState === "checking") {
+          handoff.detail = "Checking GitHub verification…";
+        } else if (deliveryState && deliveryState !== "ready") {
+          handoff.detail = "GitHub verification is blocking approval.";
+        }
+      }
+    }
+  }
+  if (
+    exactTarget &&
+    exactReadOnly &&
+    !phaseActionPending &&
+    exactReviewState !== "checking_clarification"
+  ) {
+    handoff.recoveryHref = workspaceSessionDetailPath(initialData.workspaceSlug, session.number, {
+      returnTo: browseReturn?.href,
+    });
+    if (session.phaseStatus !== "awaiting_review") handoff.recoveryLabel = "Open current session";
+    if (confirmedHandoff) handoff.detail = "This review link is no longer current.";
+  }
 
   function handleSelectStage(stageSlug: string) {
     if (stageSlug === selectedStageSlug || exactTarget) return;
@@ -953,12 +1141,11 @@ function SessionDetailContent({
     feedbackSubmission?: SessionFeedbackSubmission,
     expectedReviewRevision?: number,
   ): Promise<boolean> {
-    if (phaseActionPending !== null) return false;
+    if (actionPending) return false;
     if (viewingHistoricalArtifact) return false;
     if (
       exactTarget &&
       (exactReviewState !== "review" ||
-        actionPending ||
         reviewArtifact?.artifactId !== exactTarget.artifactId ||
         artifact?.artifactId !== exactTarget.artifactId ||
         artifact.stageId !== exactTarget.stageId ||
@@ -991,10 +1178,12 @@ function SessionDetailContent({
     }
 
     const reviewStillCurrent =
-      artifact.artifactId === session.currentArtifactId &&
-      artifact.stageId === session.currentStageId &&
-      artifact.version === session.currentArtifactVersion &&
+      artifact.artifactId === reviewArtifact?.artifactId &&
+      artifact.stageId === reviewArtifact.stageId &&
+      artifact.version === reviewArtifact.version &&
       (!latestArtifact?.id || latestArtifact.id === artifact.artifactId);
+    if (!reviewStillCurrent || session.phaseStatus !== "awaiting_review" || session.archivedAt)
+      return false;
     setPendingPhaseAction({
       action,
       briefArtifact:
@@ -1008,6 +1197,7 @@ function SessionDetailContent({
           : null,
     });
     setPhaseActionError(null);
+    setApprovalHandoff(null);
     startInteraction(action, "/w/[workspaceSlug]/sessions/[sessionNumber]");
 
     const previousStageSlug = session.currentStageSlug;
@@ -1020,46 +1210,15 @@ function SessionDetailContent({
       rejectionCount: session.rejectionCount ?? 0,
       updatedAt: session.updatedAt,
     };
-    const nextStage =
-      action === "approve"
-        ? session.pipeline.stages[stageIndex(session.pipeline, session.currentStageSlug) + 1]
-        : null;
-    const optimisticCompletion = {
-      completedAt: new Date().toISOString(),
-      stageId: session.currentStageId,
-      stageSlug: session.currentStageSlug,
+    const optimisticPatch: SessionMutationPatch = {
+      phaseStatus: "rejected",
+      rejectionCount: (session.rejectionCount ?? 0) + 1,
     };
-    const optimisticPhaseCompletions = [
-      ...session.phaseCompletions.filter(
-        (completion) => !sameCompletionStage(completion, optimisticCompletion),
-      ),
-      optimisticCompletion,
-    ];
-    if (action === "approve") {
-      previousPatch.phaseCompletions = session.phaseCompletions;
-    }
-    const optimisticPatch: SessionMutationPatch =
-      action === "reject"
-        ? { phaseStatus: "rejected", rejectionCount: (session.rejectionCount ?? 0) + 1 }
-        : nextStage
-          ? {
-              currentArtifactId: null,
-              currentArtifactVersion: 0,
-              currentStageId: nextStage.id,
-              phaseCompletions: optimisticPhaseCompletions,
-              phaseStatus: "in_progress",
-              rejectionCount: 0,
-            }
-          : {
-              archivedAt: new Date().toISOString(),
-              phaseCompletions: optimisticPhaseCompletions,
-              phaseStatus: "approved",
-            };
 
     try {
       await runOptimisticMutation({
         optimistic: () => {
-          if (reviewStillCurrent)
+          if (action === "reject")
             setSession((current) => applySessionMutationPatch(current, optimisticPatch));
           // Keep the reviewed artifact and pending controls visible until the action settles.
           // A successful commit selects the next stage below.
@@ -1091,7 +1250,7 @@ function SessionDetailContent({
             isAcceptedFeedbackReceipt(body)
           )
             return body;
-          if (!isSessionPhaseMutationResult(body)) {
+          if (!isSessionPhaseMutationResult(body) || body.id !== session.id) {
             throw new Error("Action response was invalid.");
           }
           return body;
@@ -1109,21 +1268,44 @@ function SessionDetailContent({
             setPostMutationRefreshRequested(true);
             return;
           }
-          setSession((current) => reconcilePhaseMutationResult(current, result));
+          const confirmedApproval =
+            action === "approve" &&
+            (result.phaseStatus === "approved" || result.currentStageId !== artifact.stageId);
+          if (confirmedApproval) {
+            setApprovalHandoff({
+              artifactId: artifact.artifactId,
+              stageName: selectedStageName,
+              nextStageId: result.phaseStatus === "approved" ? null : result.currentStageId,
+              updatedAt: result.updatedAt,
+            });
+          }
+          setSession((current) => {
+            const reconciled = reconcilePhaseMutationResult(current, result);
+            if (
+              !confirmedApproval ||
+              compareSessionTimestamps(result.updatedAt, current.updatedAt) < 0
+            )
+              return reconciled;
+            const completion = {
+              completedAt: result.updatedAt,
+              stageId: artifact.stageId,
+              stageSlug: previousStageSlug,
+            };
+            return reconciled.phaseCompletions.some((entry) =>
+              sameCompletionStage(entry, completion),
+            )
+              ? reconciled
+              : applySessionMutationPatch(reconciled, { phaseCompletion: completion });
+          });
           setSelectedStageSlug((currentSlug) =>
             currentSlug === previousStageSlug ? result.currentStage.slug : currentSlug,
           );
         },
         rollback: () => {
-          if (!reviewStillCurrent) return;
+          if (action !== "reject") return;
           setSession((current) =>
             rollbackSessionMutationPatch(current, optimisticPatch, previousPatch),
           );
-          if (nextStage) {
-            setSelectedStageSlug((currentSlug) =>
-              currentSlug === nextStage.slug ? previousStageSlug : currentSlug,
-            );
-          }
         },
       });
 
@@ -1437,7 +1619,6 @@ function SessionDetailContent({
     </div>
   );
 
-  const pendingBriefArtifact = pendingPhaseAction?.briefArtifact;
   const readOnlyReason = sessionReviewReadOnlyReason(session);
   const artifactViewer = artifactAvailable ? (
     <ArtifactPanel
@@ -1472,6 +1653,7 @@ function SessionDetailContent({
       sessionId={session.id}
       specification={selectedStageIsSpecification}
       stageSlug={selectedStageSlug}
+      versionNamedAbove={artifactNamedAbove && reviewVersion !== undefined}
     />
   ) : null;
   const stopControl = exactTarget ? null : !session.archivedAt &&
@@ -1499,6 +1681,7 @@ function SessionDetailContent({
         creatorDisplayName={creatorDisplayName}
         initialNow={renderNow}
         repository={repository}
+        reviewHandoff={<SessionReviewHandoff {...handoff} />}
         session={session}
         workspaceSlug={initialData.workspaceSlug}
         workflowInspection={workflowInspection}
@@ -1525,27 +1708,6 @@ function SessionDetailContent({
         title={`Stop work and archive session #${session.number}?`}
       />
       <SessionCompletionSummary session={session} />
-      {exactTarget ? (
-        <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-          <p role="status" className="text-muted">
-            {exactReviewState === "stale"
-              ? "This review link is no longer current."
-              : exactReviewState === "checking" || exactReviewState === "checking_clarification"
-                ? "Checking this review link…"
-                : exactReviewState === "error"
-                  ? "Could not verify this review link."
-                  : "Viewing a linked review."}
-          </p>
-          <Link
-            className="text-accent underline underline-offset-2"
-            href={workspaceSessionDetailPath(initialData.workspaceSlug, session.number, {
-              returnTo: browseReturn?.href,
-            })}
-          >
-            Open current review
-          </Link>
-        </div>
-      ) : null}
       <div className="mb-5">
         <StageTimeline
           onSelect={handleSelectStage}
@@ -1555,7 +1717,7 @@ function SessionDetailContent({
         />
       </div>
       <SessionStageWorkspace
-        stageName={selectedStage?.name ?? selectedStageSlug}
+        stageName={selectedStageName}
         stageSlug={selectedStageSlug}
         specification={selectedStageIsSpecification}
         focus={stageFocus}
@@ -1565,6 +1727,7 @@ function SessionDetailContent({
             : "No output was recorded for this stage."
         }
         artifact={artifactViewer}
+        artifactNamedAbove={artifactNamedAbove}
         evidence={
           stageFocus === "run" || exactReadOnly ? null : (
             <SessionReviewEvidenceView
@@ -1577,63 +1740,50 @@ function SessionDetailContent({
           )
         }
         reviewControls={
-          exactReviewState === "clarification" ||
-          exactReviewState === "checking_clarification" ||
-          (!exactTarget &&
-            ((selectedStageIsSpecification && specificationExhausted) ||
-              (stageFocus === "artifact" &&
-                selectedStageIsSpecification &&
-                specificationArtifact &&
-                stickyReviewMode.kind === "reviewable" &&
-                !phaseActionPending &&
-                !specification.canReview))) ? (
-            <SessionSpecificationControl
-              canAnswer={
-                Boolean(reviewArtifact) &&
-                !actionPending &&
-                (!exactTarget || exactReviewState === "clarification")
-              }
-              onAccepted={(receipt, artifactId) => {
-                if (receipt.feedbackBatchId) {
-                  publishArtifactFeedbackSubmission({
-                    sessionId: session.id,
-                    artifactId,
-                    batchId: receipt.feedbackBatchId,
-                  });
+          showsSpecificationControl ? (
+            <div
+              className="scroll-mt-20 focus-visible:outline-accent"
+              id={SESSION_REVIEW_DECISION_ID}
+              tabIndex={-1}
+            >
+              <SessionSpecificationControl
+                canAnswer={
+                  Boolean(reviewArtifact) &&
+                  !actionPending &&
+                  (!exactTarget || exactReviewState === "clarification")
                 }
-                queuedMutationRefreshRef.current = true;
-                setPostMutationRefreshRequested(true);
-              }}
-              refresh={async () => {
-                refreshSession();
-                await specification.refresh();
-              }}
-              sessionId={session.id}
-              view={specification.view}
-            />
+                onAccepted={(receipt, artifactId) => {
+                  if (receipt.feedbackBatchId) {
+                    publishArtifactFeedbackSubmission({
+                      sessionId: session.id,
+                      artifactId,
+                      batchId: receipt.feedbackBatchId,
+                    });
+                  }
+                  queuedMutationRefreshRef.current = true;
+                  setPostMutationRefreshRequested(true);
+                }}
+                refresh={async () => {
+                  refreshSession();
+                  await specification.refresh();
+                }}
+                sessionId={session.id}
+                view={specification.view}
+              />
+            </div>
           ) : (
             <SessionReviewBar
               attached
               sessionId={session.id}
               approvalReview={approvalReview}
               verificationState={verificationState}
+              deliveryEvidenceAvailable={verification?.requirements.deliveryMode === "code"}
               onRefreshReview={refreshReview}
               stageNames={stageNames}
               exactReviewRevision={exactTarget?.reviewRevision}
-              approveLabel="Approve stage"
-              approveDescription={
-                phaseActionPending
-                  ? undefined
-                  : "Approval advances or completes the session. Final-stage approval may also archive the session."
-              }
-              mode={
-                stageFocus === "artifact" &&
-                (!exactTarget ||
-                  (exactReviewState === "review" && Boolean(reviewArtifact)) ||
-                  phaseActionPending)
-                  ? stickyReviewMode
-                  : { kind: "running" }
-              }
+              approveLabel={`Approve ${selectedStageName}`}
+              approveDescription={approvalEffect}
+              mode={decisionMode}
               onApprove={(artifact, revision) =>
                 void handlePhaseAction("approve", artifact, undefined, undefined, revision)
               }
@@ -1643,7 +1793,7 @@ function SessionDetailContent({
               requestError={phaseActionError}
               reviewArtifact={reviewArtifact}
               phaseActionPending={phaseActionPending}
-              stageName={selectedStage?.name}
+              stageName={selectedStageName}
             />
           )
         }
@@ -1655,9 +1805,7 @@ function SessionDetailContent({
               value={{
                 currentStage: {
                   id: session.currentStageId,
-                  name:
-                    session.pipeline.stages.find((stage) => stage.id === session.currentStageId)
-                      ?.name ?? "Current stage",
+                  name: currentStageName,
                   phaseStatus: session.phaseStatus,
                 },
                 reviewIdentityUnavailable,

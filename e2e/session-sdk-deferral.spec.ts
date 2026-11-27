@@ -94,7 +94,7 @@ async function expectArtifact(page: Page) {
 
 async function expectReviewReady(page: Page) {
   await expectArtifact(page);
-  await expect(page.getByRole("button", { name: "Approve stage", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Approve Plan", exact: true })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Request changes", exact: true })).toBeEnabled();
 }
 
@@ -124,7 +124,7 @@ test("review and activity work while the SDK loads, then authenticated recovery 
     await expectArtifact(page);
     await expect.poll(fixture.requested).toBe(true);
     await expect.poll(() => approvalRequested).toBe(true);
-    await expect(page.getByRole("button", { name: "Approve stage", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Approve Plan", exact: true })).toBeDisabled();
     const approval = page.waitForResponse((response) =>
       /\/api\/sessions\/[^/]+\/approval-review$/.test(new URL(response.url()).pathname),
     );

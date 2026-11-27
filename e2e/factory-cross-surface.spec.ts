@@ -361,7 +361,7 @@ test("one exact factory session survives browser, API and MCP handoffs", async (
         await link.click();
         const clarification = page.getByRole("region", { name: "Specification clarification" });
         await expect(clarification.getByText(question)).toBeVisible();
-        await expect(page.getByRole("button", { name: "Approve stage" })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: /^Approve / })).toHaveCount(0);
         await clarification.getByLabel("Your answer").fill(answer);
         const endpoint = `/api/sessions/${sessionId}/specification`;
         const response = postResponse(page, endpoint);
@@ -481,7 +481,7 @@ test("one exact factory session survives browser, API and MCP handoffs", async (
           ).toBeVisible();
           await expect(historical.getByText(draft)).toBeVisible();
           await expect(historical.getByRole("button", { name: "Submit answer" })).toHaveCount(0);
-          await expect(historical.getByRole("button", { name: "Approve stage" })).toHaveCount(0);
+          await expect(historical.getByRole("button", { name: /^Approve / })).toHaveCount(0);
         } finally {
           await historical.close();
         }
@@ -526,7 +526,7 @@ test("one exact factory session survives browser, API and MCP handoffs", async (
         expect(lateApproval.status()).toBe(409);
         await page.getByRole("link", { name: `Open review for ${title}` }).click();
         await expect(page.getByText(revised)).toBeVisible();
-        const approval = page.getByRole("button", { name: "Approve stage", exact: true });
+        const approval = page.getByRole("button", { name: /^Approve / });
         await expect(approval).toBeEnabled();
         const response = postResponse(page, phaseAction);
         await approval.click();

@@ -10,6 +10,7 @@ export type SessionStageFocus = "run" | "artifact" | "empty";
 export function SessionStageWorkspace({
   activity,
   artifact,
+  artifactNamedAbove = false,
   specification = false,
   emptyText,
   evidence,
@@ -20,6 +21,7 @@ export function SessionStageWorkspace({
 }: {
   activity: ReactNode;
   artifact: ReactNode;
+  artifactNamedAbove?: boolean;
   specification?: boolean;
   emptyText: string;
   evidence?: ReactNode;
@@ -38,18 +40,20 @@ export function SessionStageWorkspace({
       >
         {showingArtifact ? (
           <>
-            <div className="border-b border-border px-4 py-4 sm:px-5">
-              <h2 className="text-base font-semibold text-foreground">{artifactHeading}</h2>
-            </div>
+            {artifactNamedAbove ? null : (
+              <div className="border-b border-border px-4 py-4 sm:px-5">
+                <h2 className="text-base font-semibold text-foreground">{artifactHeading}</h2>
+              </div>
+            )}
             <div className="min-w-0 p-4 sm:p-5">{artifact}</div>
           </>
         ) : null}
+        {reviewControls}
         {focus !== "run" && evidence ? (
           <div className={showingArtifact ? "min-w-0 px-4 pb-5 sm:px-5" : "min-w-0"}>
             {evidence}
           </div>
         ) : null}
-        {reviewControls}
       </section>
       {focus === "empty" ? (
         <section className="py-3" aria-label={`${stageName} stage`}>
@@ -57,7 +61,12 @@ export function SessionStageWorkspace({
           <p className="mt-1 text-sm text-muted">{emptyText}</p>
         </section>
       ) : null}
-      <section aria-label="Session runs" className="min-w-0">
+      <section
+        aria-label="Session runs"
+        className="min-w-0"
+        id="session-run-activity"
+        tabIndex={-1}
+      >
         {focus !== "run" ? (
           <h2 id="session-runs-heading" className="text-base font-semibold text-foreground">
             Run history

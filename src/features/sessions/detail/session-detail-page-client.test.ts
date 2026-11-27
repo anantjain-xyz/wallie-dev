@@ -289,7 +289,7 @@ describe("SessionDetailPageClient", () => {
     renderExactReview(data, target);
 
     await waitFor(() => expect(screen.getByText(artifact.payload)).toBeVisible());
-    fireEvent.click(await screen.findByRole("button", { name: "Approve stage" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Approve Product" }));
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith(
         `/api/sessions/${data.session.id}/phase-action`,
@@ -322,7 +322,7 @@ describe("SessionDetailPageClient", () => {
       "href",
       "/w/acme/sessions/7",
     );
-    expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Approve / })).toBeNull();
     expect(screen.queryByRole("button", { name: "Request changes" })).toBeNull();
     expect(request.mock.calls.some(([url]) => String(url).endsWith("/phase-action"))).toBe(false);
   });
@@ -442,7 +442,7 @@ describe("SessionDetailPageClient", () => {
     await waitFor(() => expect(screen.getByText(artifact.payload)).toBeVisible());
     expect(screen.getByRole("region", { name: "Product artifact" })).toBeVisible();
     expect(screen.getByText("This review link is no longer current.")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Approve / })).toBeNull();
     expect(request.mock.calls.some(([url]) => String(url).includes("stage=build"))).toBe(false);
   });
 
@@ -522,7 +522,7 @@ describe("SessionDetailPageClient", () => {
     window.history.replaceState(window.history.state, "", "/");
   });
 
-  it("sends the displayed artifact identity and version before optimistic stage advancement", async () => {
+  it("does not send a decision if the displayed version differs from the current artifact", () => {
     const data = makeSessionDetailData();
     data.session.currentArtifactVersion = 2;
     data.session.artifacts = [
@@ -563,27 +563,13 @@ describe("SessionDetailPageClient", () => {
         initialFormattedArtifactKey: `${data.session.id}:product:id:artifact-1`,
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Approve stage" }));
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        `/api/sessions/${data.session.id}/phase-action`,
-        expect.objectContaining({
-          body: JSON.stringify({
-            action: "approve",
-            expectedReviewRevision: 7,
-            artifactId: "artifact-1",
-            stageId: "stage-1",
-            version: 1,
-          }),
-          method: "POST",
-        }),
-      ),
-    );
-    await waitFor(() =>
-      expect(mocked.pushToast).toHaveBeenCalledWith(
-        expect.objectContaining({ description: "Review is stale." }),
-      ),
-    );
+    expect(screen.getByText("Reviewed output")).toBeVisible();
+    for (const name of ["Approve Product", "Request changes"]) {
+      const decision = screen.getByRole("button", { name });
+      expect(decision).toBeDisabled();
+      fireEvent.click(decision);
+    }
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/phase-action"))).toBe(false);
   });
 
   it("blocks ambiguous review and exposes recovery when current identity is unavailable", () => {
@@ -615,7 +601,7 @@ describe("SessionDetailPageClient", () => {
         initialFormattedArtifactKey: `${data.session.id}:product:id:legacy-artifact`,
       }),
     );
-    expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Approve / })).toBeNull();
     expect(screen.queryByRole("button", { name: "Request changes" })).toBeNull();
     expect(screen.queryByText("Old cached output")).toBeNull();
     expect(screen.getByText(/current artifact cannot be identified safely/i)).toBeTruthy();
@@ -673,16 +659,16 @@ describe("SessionDetailPageClient", () => {
       }),
     );
     expect(screen.getByText("Current formatted")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Approve stage" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Approve Product" })).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
     fireEvent.click(await screen.findByRole("button", { name: /Version 1.*Historical author/i }));
     expect(await screen.findByText("Historical formatted")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Approve / })).toBeNull();
     expect(screen.queryByRole("button", { name: "Request changes" })).toBeNull();
     fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
     fireEvent.click(await screen.findByRole("button", { name: /Version 1.*Current author/i }));
     expect(screen.getByText("Current formatted")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Approve stage" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Approve Product" })).toBeTruthy();
   });
 
   it("preserves the feedback dialog and draft when an optimistic rerun fails", async () => {
@@ -1037,7 +1023,7 @@ describe("SessionDetailPageClient", () => {
         { wrapper: OverlayProvider },
       );
       if (action === "approve")
-        fireEvent.click(screen.getByRole("button", { name: "Approve stage" }));
+        fireEvent.click(screen.getByRole("button", { name: "Approve Product" }));
       else {
         fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
         fireEvent.change(await screen.findByLabelText("Feedback for Wallie"), {
@@ -1186,7 +1172,7 @@ describe("SessionDetailPageClient", () => {
     await act(async () => undo?.action?.onClick());
     expect(requests).toEqual(["POST", "DELETE"]);
     expect(screen.getByRole("button", { name: "Archive" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Approve / })).toBeNull();
   });
 
   it("reconciles recovered snapshots without overwriting newer session state", async () => {
@@ -1208,7 +1194,7 @@ describe("SessionDetailPageClient", () => {
     await act(async () => view.rerender(element(fresh)));
     expect(view.getByRole("heading", { level: 1 }).textContent).toBe("Recovered title");
     await act(async () => view.rerender(element({ ...data, session: { ...data.session } }, false)));
-    expect(view.queryByRole("button", { name: "Approve stage" })).toBeNull();
+    expect(view.queryByRole("button", { name: /^Approve / })).toBeNull();
     expect(view.getByRole("heading", { level: 1 }).textContent).toBe("Recovered title");
     const withPr = {
       ...fresh,
@@ -1416,7 +1402,7 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain("acme/app");
   });
 
-  it("does not promise a next stage that live pipeline edits could change", () => {
+  it("names the next selected stage without claiming to start it", () => {
     const data = makeSessionDetailData();
     data.session.pipeline.stages.push({
       id: "custom-stage",
@@ -1426,9 +1412,9 @@ describe("SessionDetailPageClient", () => {
       position: 10,
     });
     const html = renderDetail({ data });
-    expect(html).toContain("Approve stage");
+    expect(html).toContain("Approve Product");
     expect(html).not.toContain("Approve &amp; start Security check");
-    expect(html).toContain("Final-stage approval may also archive the session.");
+    expect(html).toContain("Approval queues the next selected stage (currently Security check).");
   });
 
   it("attaches review controls to the artifact and keeps session context above stages", () => {
@@ -1436,7 +1422,7 @@ describe("SessionDetailPageClient", () => {
     const document = new DOMParser().parseFromString(html, "text/html");
     const artifact = document.querySelector('section[aria-label="Product artifact"]')!;
     expect(artifact.textContent).toContain("Request changes");
-    expect(artifact.textContent).toContain("Approve stage");
+    expect(artifact.textContent).toContain("Approve Product");
     expect(artifact.querySelector('[aria-label="Session context"]')).toBeNull();
     expect(document.querySelector('header [aria-label="Session context"]')).not.toBeNull();
     expect(html).not.toContain('aria-label="Current execution"');
@@ -1476,13 +1462,13 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain("Product artifact");
     expect(html).toContain("Rendered artifact");
     expect(html).toContain("Request changes");
-    expect(html).toContain("Approve stage");
+    expect(html).toContain("Approve Product");
   });
 
   it("shows reviewable controls when awaiting review", () => {
     const html = renderDetail();
     expect(html).toContain("Request changes");
-    expect(html).toContain("Approve stage");
+    expect(html).toContain("Approve Product");
   });
 
   it("shows stop run while generating", () => {
@@ -1563,7 +1549,7 @@ describe("SessionDetailPageClient", () => {
     const html = renderDetail({ canReview: false });
     expect(html).toContain("Request changes");
     expect(html).toContain("You are not authorized to approve this stage.");
-    expect(html).not.toContain("Approve stage");
+    expect(html).not.toContain("Approve Product");
   });
 
   it("shows an explicit read-only reason when the stage is not ready for review", () => {
@@ -1649,11 +1635,11 @@ it("replays an unconfirmed exact clarification answer and keeps approval closed"
     }),
   );
 
-  expect(screen.getByRole("heading", { name: "Specification" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "Specification" })).toBeVisible();
   expect(screen.getByRole("tab", { name: "Versions" })).toBeVisible();
   expect(await screen.findByRole("heading", { name: "Clarification needed" })).toBeVisible();
   expect(screen.getByText(clarification.question)).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Approve / })).toBeNull();
 
   const input = screen.getByRole("textbox", { name: "Your answer" });
   await waitFor(() => expect(input).toBeEnabled());
@@ -1673,7 +1659,7 @@ it("replays an unconfirmed exact clarification answer and keeps approval closed"
     reviewRevision: 7,
     answer: "Start in Europe.",
   });
-  expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Approve / })).toBeNull();
   expect(mocked.refresh).toHaveBeenCalled();
 });
 
@@ -1724,10 +1710,10 @@ it("waits for an authoritative current specification before offering approval", 
   );
   for (let refresh = 0; refresh < 2; refresh++) {
     expect(await screen.findByText("Could not confirm clarification status.")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Approve / })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Refresh clarification" }));
   }
-  expect(await screen.findByRole("button", { name: "Approve stage" })).toBeEnabled();
+  expect(await screen.findByRole("button", { name: "Approve Product" })).toBeEnabled();
   expect(mocked.refresh).toHaveBeenCalled();
 });
 
@@ -1778,7 +1764,7 @@ it("shows an accepted budget exhaustion after reloading the parked specification
     ),
   ).toBeVisible();
   expect(screen.getByText("The specification’s execution budget is exhausted.")).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Approve / })).toBeNull();
   expect(screen.queryByRole("button", { name: "Submit answer" })).toBeNull();
 });
 
@@ -1786,7 +1772,7 @@ it("does not promise automatic archival for a Linear-linked manual-merge workflo
   const data = makeSessionDetailData();
   data.session.linearIssueId = "TEAM-123";
   const html = renderDetail({ data });
-  expect(html).toContain("Final-stage approval may also archive the session.");
+  expect(html).toContain("Final-stage approval completes the session and may archive it.");
   expect(html).not.toContain("completes and archives");
 });
 
@@ -1844,7 +1830,7 @@ it("discovers an artifact completed during a subscription outage without a route
   );
   act(() => mocked.statuses.get(`session-detail:${initial.session.id}`)?.("CHANNEL_ERROR"));
   await waitFor(() => expect(screen.getByText("Artifact saved while offline")).toBeTruthy());
-  expect(screen.getByRole("button", { name: "Approve stage" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Approve Product" })).toBeTruthy();
   expect(mocked.refresh).not.toHaveBeenCalled();
   expect(mocked.rpc).toHaveBeenCalledWith("get_session_detail_page", {
     target_session_number: 7,
@@ -1927,8 +1913,8 @@ it("waits for matching stage data before enabling recovered approval permissions
   expect(mocked.statuses.has(`session-detail:${initial.session.id}`)).toBe(true);
   act(() => mocked.statuses.get(`session-detail:${initial.session.id}`)?.("CHANNEL_ERROR"));
   await act(async () => vi.advanceTimersByTimeAsync(200));
-  expect(screen.queryByRole("button", { name: "Approve stage" })).toBeNull();
-  expect(screen.getByText("Product artifact")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /^Approve / })).toBeNull();
+  expect(screen.getByRole("region", { name: "Product artifact" })).toBeTruthy();
 
   incoming = makeSessionDetailData();
   incoming.session.currentStageId = "stage-2";
@@ -1942,8 +1928,8 @@ it("waits for matching stage data before enabling recovered approval permissions
     position: 1,
   });
   await act(async () => vi.advanceTimersByTimeAsync(1_000));
-  expect(screen.getByText("Build artifact")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Approve stage" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Build artifact" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Approve Build" })).toBeTruthy();
 });
 
 it("renders queued startup before activity loads and retains it across a stale page refresh", () => {

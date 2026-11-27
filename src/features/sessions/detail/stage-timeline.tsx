@@ -2,7 +2,6 @@
 
 import { useEffect, useRef } from "react";
 
-import { useChangeMotion } from "@/components/ui/use-change-motion";
 import { CheckIcon } from "@/components/shared/icons/check-icon";
 import type { SessionReviewPipeline, SessionReviewSession } from "@/features/sessions/detail/data";
 import type { SessionPhaseStatus } from "@/features/sessions/types";
@@ -33,7 +32,11 @@ function stageIndex(pipeline: SessionReviewPipeline, stageId: string): number {
 
 export function buildStageTimeline(
   session: SessionReviewSession,
-  options?: { failedStageSlug?: string | null; currentRun?: StageExecution | null },
+  options?: {
+    failedStageSlug?: string | null;
+    currentRun?: StageExecution | null;
+    queuedStageId?: string;
+  },
 ): StageTimelineEntry[] {
   const completedStageIds = new Set(
     session.phaseCompletions
@@ -59,6 +62,9 @@ export function buildStageTimeline(
         return { phaseStatus: session.phaseStatus, stage, status: "current" as const };
       }
       const run = options?.currentRun?.stageId === stage.id ? options.currentRun : null;
+      if (!run && options?.queuedStageId === stage.id) {
+        return { phaseStatus: session.phaseStatus, stage, status: "queued" as const };
+      }
       // Review readiness is authoritative. Otherwise an active rerun supersedes
       // rejection and any failure left over from the previous attempt.
       if (!session.archivedAt && run) {
@@ -224,11 +230,9 @@ export function StageTimeline({
 }
 
 function StageMarker({ entry, index }: { entry: StageTimelineEntry; index: number }) {
-  const ref = useChangeMotion<HTMLSpanElement>(`${entry.status}:${entry.phaseStatus}`);
   const isCurrent = entry.phaseStatus !== null && entry.status !== "completed";
   return (
     <span
-      ref={ref}
       aria-hidden="true"
       className={cn(
         "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-xs",

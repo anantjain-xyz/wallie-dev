@@ -94,6 +94,7 @@ for (const profile of ["desktop", "mobile"] as const) {
     );
     if (profile === "mobile") await page.emulateMedia({ colorScheme: "dark" });
     await page.goto(path);
+    await page.getByText("Evidence", { exact: true }).press("Enter");
     const disclosure = page.getByRole("button", { name: "Browser screenshots" });
     await expect(disclosure).toBeVisible();
     expect(reads).toBe(0);

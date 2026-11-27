@@ -217,8 +217,48 @@ test("ready state renders identity, checks, evidence, and an enabled approval", 
   await expect(page.getByRole("link", { name: /wallie-dev#592/ })).toBeVisible();
   await expect(page.getByText(/Current-head approvals:/)).toContainText("1 of 1 required");
   await expect(page.getByRole("link", { name: /tests\/report/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Approve stage" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Approve Land" })).toBeEnabled();
   await page.screenshot({ path: testInfo.outputPath("op509-ready-desktop.png"), fullPage: true });
+});
+
+test("blocking comments and GitHub verification have separate recovery actions", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockReadiness(page, blockedDelivery());
+  let verificationRequests = 0;
+  await page.route("**/pr-verification/refresh", (route) => {
+    verificationRequests += 1;
+    return route.fulfill({ status: 202, json: { queued: true } });
+  });
+  await signIn(page, sessionPath);
+
+  const summary = page.getByRole("region", { name: "Review Land v1" });
+  await expect(
+    summary.getByText("1 open blocking request must be resolved before approval."),
+  ).toBeVisible();
+  await summary.getByRole("link", { name: "Jump to decision" }).press("Enter");
+  await expect(page.getByRole("heading", { name: "Stage decision" })).toBeFocused();
+  const decision = page.getByRole("region", { name: "Stage decision" });
+  await expect(decision.getByRole("button", { name: "Approve Land" })).toBeDisabled();
+  await expect(decision.getByRole("button", { name: "Request changes" })).toBeEnabled();
+  await expect(decision.getByRole("link", { name: "View GitHub evidence" })).toHaveAttribute(
+    "href",
+    "#review-evidence",
+  );
+  await expect(decision.getByText(/GitHub delivery readiness: Blocked/)).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("390-blocking-and-github.png") });
+
+  const commentsRead = page.waitForRequest((request) =>
+    request.url().includes("/approval-review?include=blockingTarget"),
+  );
+  await decision.getByRole("button", { name: "Reload review comments" }).click();
+  await commentsRead;
+  expect(verificationRequests).toBe(0);
+
+  const evidence = page.getByRole("region", { name: "Delivery readiness" });
+  await evidence.getByRole("button", { name: "Refresh verification", exact: true }).click();
+  expect(verificationRequests).toBe(1);
 });
 
 test("historical blocked view lists sources and bounded large/binary diffs", async ({
@@ -231,7 +271,7 @@ test("historical blocked view lists sources and bounded large/binary diffs", asy
   await signIn(page, sessionPath);
   await expect(page.getByText(/Required check “CI” failed/)).toBeVisible();
   await expect(page.getByRole("link", { name: /Open GitHub checks/ }).first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "Approve stage" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Approve Land" })).toBeDisabled();
   await page.getByRole("button", { name: /^Plan:/ }).click();
   await expect(page.getByRole("note")).toContainText("Historical view");
   await page.getByRole("button", { name: "Show code changes" }).click();
@@ -332,14 +372,14 @@ test("gated approval follows refreshed verification from blocked to ready and ba
     },
   );
   await signIn(page, sessionPath);
-  const approve = page.getByRole("button", { name: "Approve stage" });
-  await expect(page.getByText("PR delivery readiness: Blocked.")).toBeVisible();
+  const approve = page.getByRole("button", { name: "Approve Land" });
+  await expect(page.getByText("GitHub delivery readiness: Blocked.")).toBeVisible();
   await expect(approve).toBeDisabled();
 
   for (const target of ["ready", "blocked"] as const) {
     refreshTo(target);
     await page.getByRole("button", { name: "Refresh verification" }).click();
-    await expect(page.getByText("PR delivery readiness: Checking…")).toBeVisible();
+    await expect(page.getByText("GitHub delivery readiness: Checking…")).toBeVisible();
     await expect(approve).toBeDisabled();
     await expect(
       page.getByText(target === "ready" ? "Ready" : "Blocked", { exact: true }),
@@ -348,7 +388,7 @@ test("gated approval follows refreshed verification from blocked to ready and ba
     if (target === "ready") await expect(approve).toBeEnabled();
     else await expect(approve).toBeDisabled();
     await expect(
-      page.getByText(`PR delivery readiness: ${target === "ready" ? "Ready" : "Blocked"}.`),
+      page.getByText(`GitHub delivery readiness: ${target === "ready" ? "Ready" : "Blocked"}.`),
     ).toBeVisible();
   }
 });
