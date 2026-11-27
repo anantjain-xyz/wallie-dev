@@ -672,10 +672,16 @@ describe("ShellHeader", () => {
     },
   );
 
-  it.each(["success", "rejected", "unconfirmed"] as const)(
-    "keeps the newer workflow launch open when the previous launch settles with %s",
-    async (outcome) => {
-      const header = { viewerId: `overlapping-launches-${outcome}` };
+  it.each([
+    { outcome: "success", close: "Escape" },
+    { outcome: "rejected", close: "Escape" },
+    { outcome: "unconfirmed", close: "Escape" },
+    { outcome: "success", close: "Discard draft" },
+    { outcome: "rejected", close: "Discard draft" },
+  ] as const)(
+    "keeps the newer workflow launch open after $outcome, until $close",
+    async ({ outcome, close }) => {
+      const header = { viewerId: `overlapping-launches-${outcome}-${close}` };
       const sessions = "/w/acme-corp/sessions";
       const canonicalUrl = "/w/acme-corp/sessions/42";
       const pending = Promise.withResolvers<{ canonicalUrl: string; number: number }>();
@@ -703,6 +709,7 @@ describe("ShellHeader", () => {
       await waitFor(() => expect(submit).toBeEnabled());
       fireEvent.click(submit);
       expect(screen.getByRole("region", { name: "Creating session" })).toBeVisible();
+      const [original] = clientMocks.createSessionFromClient.mock.calls[0];
       expect(mocked.replace).toHaveBeenCalledExactlyOnceWith(
         `${sessions}?factory=${creationFactory.id}`,
         { scroll: false },
@@ -736,15 +743,36 @@ describe("ShellHeader", () => {
       }
       expect(mocked.push).not.toHaveBeenCalled();
       expect(mocked.replace).toHaveBeenCalledTimes(1);
-      fireEvent.click(within(nextDialog).getByRole("button", { name: "Close" }));
+      const resultTitle =
+        outcome === "success" ? "Session #42 created." : "Session creation needs attention.";
+      expect(screen.queryByText(resultTitle)).toBeNull();
+      if (close === "Escape") fireEvent.keyDown(nextDialog, { key: "Escape" });
+      else fireEvent.click(within(nextDialog).getByRole("button", { name: close }));
       expect(mocked.replace).toHaveBeenLastCalledWith(nextOrigin, { scroll: true });
+      expect(screen.queryByRole("dialog", { name: "Start a new session" })).toBeNull();
+      if (close === "Discard draft" && outcome === "rejected") {
+        expect(screen.queryByText(resultTitle)).toBeNull();
+        return;
+      }
+      expect(await screen.findByText(resultTitle)).toBeVisible();
       if (outcome === "success") {
         fireEvent.click(await screen.findByRole("button", { name: "Open session" }));
         expect(mocked.push).toHaveBeenCalledExactlyOnceWith(canonicalUrl);
       } else {
         fireEvent.click(await screen.findByRole("button", { name: "Open draft" }));
         expect(mocked.push).toHaveBeenCalledExactlyOnceWith(`${sessions}?${originalQuery}`);
-        expect(screen.queryByRole("dialog", { name: "Start a new session" })).toBeNull();
+        mocked.searchParams = originalQuery;
+        view.rerender(shellElement(header));
+        const recovered = screen.getByRole("dialog", { name: "Start a new session" });
+        expect(await within(recovered).findByText(releaseWorkflow.label)).toBeVisible();
+        expect(within(recovered).getByLabelText("Prompt")).toHaveValue(original.promptMd);
+        if (outcome === "unconfirmed") {
+          const retry = within(recovered).getByRole("button", { name: "Retry creation" });
+          await waitFor(() => expect(retry).toBeEnabled());
+          clientMocks.createSessionFromClient.mockResolvedValueOnce({ canonicalUrl, number: 42 });
+          await act(async () => fireEvent.click(retry));
+          expect(clientMocks.createSessionFromClient).toHaveBeenNthCalledWith(2, original);
+        }
       }
     },
   );

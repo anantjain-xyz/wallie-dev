@@ -14,7 +14,7 @@ import {
   useOptionalRouteProgress,
 } from "@/components/ui/route-progress";
 import { SelectField } from "@/components/ui/select";
-import { useOptionalToast } from "@/components/ui/toast";
+import { useOptionalToast, type ToastInput } from "@/components/ui/toast";
 import {
   createSessionFromClient,
   deletePendingSessionAttachmentFromClient,
@@ -102,6 +102,11 @@ type SessionCreationAttempt = {
   workflowLabel: string;
 };
 
+type SessionCreationNotice = {
+  kind: "created" | "recovery";
+  toast: ToastInput;
+};
+
 function routingTargetKey({ ruleId, target }: OverrideTarget) {
   return `${ruleId}:${target}`;
 }
@@ -155,26 +160,81 @@ export function isCreateSessionSubmitDisabled(input: {
 
 // Keep a draft in the workspace shell's memory until it is submitted or discarded.
 // The key also prevents a draft from crossing account or workspace boundaries.
-export function CreateSessionDialog({ onDraftReset, ...props }: CreateSessionDialogProps) {
+export function CreateSessionDialog(props: CreateSessionDialogProps) {
+  return <ScopedCreateSessionDialog {...props} key={`${props.userId}:${props.workspaceId}`} />;
+}
+
+function ScopedCreateSessionDialog({ onDraftReset, ...props }: CreateSessionDialogProps) {
   const [revision, setRevision] = useState(0);
+  const { dismissToast, pushToast } = useOptionalToast();
+  const recoveryToastRef = useRef<number | null>(null);
+  const deferredNoticeRef = useRef<SessionCreationNotice | null>(null);
+  const deferNotice = props.open && Boolean(props.onPreviewChange);
+  const deferNoticeRef = useRef(deferNotice);
+  useLayoutEffect(() => {
+    deferNoticeRef.current = deferNotice;
+  }, [deferNotice]);
+
+  const dismissRecoveryToast = useCallback(() => {
+    if (recoveryToastRef.current !== null) {
+      dismissToast(recoveryToastRef.current);
+      recoveryToastRef.current = null;
+    }
+  }, [dismissToast]);
+  const clearRecoveryToast = useCallback(() => {
+    if (deferredNoticeRef.current?.kind === "recovery") deferredNoticeRef.current = null;
+    dismissRecoveryToast();
+  }, [dismissRecoveryToast]);
+  const publishNotice = useCallback(
+    ({ kind, toast }: SessionCreationNotice) => {
+      const id = pushToast(toast);
+      if (kind === "recovery") recoveryToastRef.current = id;
+    },
+    [pushToast],
+  );
+  const notifyResult = useCallback(
+    (kind: SessionCreationNotice["kind"], toast: ToastInput) => {
+      const notice = { kind, toast };
+      if (deferNoticeRef.current) deferredNoticeRef.current = notice;
+      else publishNotice(notice);
+    },
+    [publishNotice],
+  );
+  useEffect(() => {
+    if (props.open) {
+      dismissRecoveryToast();
+      return;
+    }
+    const notice = deferredNoticeRef.current;
+    if (!notice) return;
+    deferredNoticeRef.current = null;
+    publishNotice(notice);
+  }, [dismissRecoveryToast, props.open, publishNotice]);
+  useEffect(() => dismissRecoveryToast, [dismissRecoveryToast]);
+
   const reset = useCallback(() => {
+    clearRecoveryToast();
     onDraftReset?.();
     setRevision((current) => current + 1);
-  }, [onDraftReset]);
+  }, [clearRecoveryToast, onDraftReset]);
   return (
     <CreateSessionDialogBody
       {...props}
-      key={`${props.userId}:${props.workspaceId}:${revision}`}
+      clearRecoveryToast={clearRecoveryToast}
+      key={revision}
+      notifyResult={notifyResult}
       onReset={reset}
     />
   );
 }
 
 function CreateSessionDialogBody({
+  clearRecoveryToast,
   creationFactoryId,
   creationFactoryName,
   creationScope,
   launchKey,
+  notifyResult,
   onClose,
   onCloseAutoFocus,
   onPreviewChange,
@@ -184,17 +244,13 @@ function CreateSessionDialogBody({
   userId,
   workspaceId,
   workflowLaunchActivationId,
-}: CreateSessionDialogProps & { onReset: () => void }) {
+}: CreateSessionDialogProps & {
+  clearRecoveryToast: () => void;
+  notifyResult: (kind: SessionCreationNotice["kind"], toast: ToastInput) => void;
+  onReset: () => void;
+}) {
   const router = useRouter();
   const pathname = usePathname();
-  const { dismissToast, pushToast } = useOptionalToast();
-  const recoveryToastRef = useRef<number | null>(null);
-  const clearRecoveryToast = useCallback(() => {
-    if (recoveryToastRef.current !== null) {
-      dismissToast(recoveryToastRef.current);
-      recoveryToastRef.current = null;
-    }
-  }, [dismissToast]);
   const { startNavigation } = useOptionalRouteProgress();
   const errorRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -233,7 +289,6 @@ function CreateSessionDialogBody({
     unconfirmed && unconfirmedAttempt.input.factoryId !== targetFactoryId;
 
   const refreshImagesOnOpen = useEffectEvent(() => {
-    clearRecoveryToast();
     if (sessionCommittedRef.current) {
       onPreviewChange?.(null);
       onReset();
@@ -425,7 +480,6 @@ function CreateSessionDialogBody({
     disposedRef.current = false;
     return () => {
       disposedRef.current = true;
-      clearRecoveryToast();
       for (const image of imageDraftsRef.current) {
         URL.revokeObjectURL(image.previewUrl);
         if (!sessionCommittedRef.current && !attemptRef.current && image.attachmentId) {
@@ -436,7 +490,7 @@ function CreateSessionDialogBody({
         }
       }
     };
-  }, [workspaceId, clearRecoveryToast]);
+  }, [workspaceId]);
 
   function updateImageDrafts(
     update: SessionImageDraft[] | ((current: SessionImageDraft[]) => SessionImageDraft[]),
@@ -900,7 +954,6 @@ function CreateSessionDialogBody({
     try {
       const result = await createSessionFromClient(attempt.input);
       if (disposedRef.current) return;
-      clearRecoveryToast();
       const scopeCurrent = dialogContextRef.current.scopeKey === attempt.scopeKey;
       sessionCommittedRef.current = scopeCurrent;
       const navigateToSession = scopeCurrent && (!onPreviewChange || previewVisibleRef.current);
@@ -920,7 +973,7 @@ function CreateSessionDialogBody({
         startNavigation(result.canonicalUrl);
         router.push(result.canonicalUrl);
       } else {
-        pushToast({
+        notifyResult("created", {
           title: `Session #${result.number} created.`,
           ...(attempt.snapshot.factoryName
             ? { description: `Factory: ${attempt.snapshot.factoryName}` }
@@ -993,8 +1046,7 @@ function CreateSessionDialogBody({
       onPreviewChange?.(null);
       if (reopen) onReopen?.();
       else if ((onPreviewChange || !scopeCurrent) && shouldOfferRecovery) {
-        clearRecoveryToast();
-        recoveryToastRef.current = pushToast({
+        notifyResult("recovery", {
           title: "Session creation needs attention.",
           description: "Your draft is saved.",
           tone: "danger",

@@ -231,14 +231,19 @@ test("a newer workflow launch keeps its publication and return while an earlier 
     await page.evaluate((href) => window.history.pushState(null, "", href), newerHref);
     await expect(dialog.getByText(newer.label, { exact: true })).toBeVisible();
     await expect(dialog.getByRole("button", { name: "Close", exact: true })).toBeEnabled();
+    const submit = dialog.getByRole("button", { name: "Start session", exact: true });
+    await expect(submit).toBeDisabled();
     await expect(preview).toBeHidden();
     responseGate.release();
-    await expect(page.getByText("Session #1 created.", { exact: true })).toBeVisible();
+    await expect(submit).toBeEnabled();
+    await expect(page.getByText("Session #1 created.", { exact: true })).toHaveCount(0);
     await expect(page).toHaveURL(newerHref);
     await expect(dialog.getByText(newer.label, { exact: true })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page).toHaveURL(origin("newer"));
-    await page.getByRole("button", { name: "Open session" }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByText("Session #1 created.", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Open session" }).press("Enter");
     await expect(page).toHaveURL(canonicalUrl);
   } finally {
     responseGate.release();
