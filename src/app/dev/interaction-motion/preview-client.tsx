@@ -178,7 +178,6 @@ function InteractionMotionContent({
           reviewControls={
             showingBuild ? (
               <SessionReviewBar
-                attached
                 approveLabel="Approve stage"
                 approveDescription="Approval advances or completes the session. Final-stage approval may also archive the session."
                 mode={resolveReviewMode({

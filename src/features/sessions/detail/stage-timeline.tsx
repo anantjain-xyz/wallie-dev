@@ -128,7 +128,7 @@ export function centerStageTimelineSelection(
 ) {
   if (rail.scrollWidth <= rail.clientWidth) return;
 
-  rail.scrollTo({
+  rail.scrollTo?.({
     behavior: "auto",
     left: Math.max(
       0,
@@ -183,14 +183,18 @@ export function StageTimeline({
   }, [selectedStageSlug]);
 
   return (
-    <nav aria-label="Pipeline stages" className="border-b border-border pb-3">
-      <ol className="flex flex-wrap items-center gap-1.5" ref={railRef}>
+    <nav aria-label="Pipeline stages" className="border-b border-border pb-1.5">
+      <ol
+        className="relative flex items-center gap-1 overflow-x-auto py-0.5 focus-visible:outline-accent"
+        ref={railRef}
+        tabIndex={selectionDisabled ? 0 : undefined}
+      >
         {timeline.map((entry, index) => {
           const isSelected = entry.stage.slug === selectedStageSlug;
           const label = stageTimelineLabel(entry);
           const isCurrent = entry.phaseStatus !== null && entry.status !== "completed";
           return (
-            <li key={entry.stage.id} className="flex min-w-0 items-center gap-1.5">
+            <li key={entry.stage.id} className="flex shrink-0 items-center gap-1.5">
               <button
                 ref={(node) => {
                   if (node) {
@@ -203,7 +207,7 @@ export function StageTimeline({
                 disabled={selectionDisabled}
                 onClick={() => onSelect(entry.stage.slug)}
                 className={cn(
-                  "group flex min-w-0 max-w-full items-center gap-2 rounded-[6px] px-3 py-2 text-left text-xs font-medium transition-colors",
+                  "flex min-h-11 min-w-11 max-w-52 items-center gap-1.5 rounded-[6px] px-2 py-1 text-left text-xs font-medium leading-tight transition-colors focus-visible:outline-accent focus-visible:outline-offset-[-2px] sm:gap-2 sm:px-3",
                   isSelected
                     ? "bg-accent-soft text-accent"
                     : "text-muted enabled:hover:bg-control-muted enabled:hover:text-foreground",
@@ -215,7 +219,7 @@ export function StageTimeline({
                 <StageMarker entry={entry} index={index} />
                 <span className="min-w-0 [overflow-wrap:anywhere]">
                   <span className="block text-foreground">{entry.stage.name}</span>
-                  <span className="block font-normal">{label}</span>
+                  <span className="type-annotation block font-normal">{label}</span>
                 </span>
               </button>
               {index < timeline.length - 1 ? (
@@ -235,7 +239,7 @@ function StageMarker({ entry, index }: { entry: StageTimelineEntry; index: numbe
     <span
       aria-hidden="true"
       className={cn(
-        "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-xs",
+        "hidden h-5 w-5 shrink-0 items-center justify-center rounded-full border text-xs sm:flex",
         entry.status === "completed"
           ? "border-success/30 bg-success-soft text-success"
           : entry.status === "failed"

@@ -4,7 +4,6 @@ import Image from "next/image";
 import { useId, useState } from "react";
 
 import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
-import { GitHubIcon } from "@/components/shared/icons/github-icon";
 import { TimeDisplay } from "@/components/shared/time-display";
 import { WorkflowInspectionDisclosure } from "@/features/factory-workflows/workflow-inspection-disclosure";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
@@ -44,60 +43,19 @@ export function SessionInspector({
 
   return (
     <section aria-label="Session context" className="min-w-0">
-      <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted">
-        {repository ? (
-          <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-2">
-            <GitHubIcon className="size-3.5 shrink-0" />
-            <a
-              className="min-w-0 text-accent hover:underline [overflow-wrap:anywhere]"
-              href={repository.htmlUrl}
-              rel="noreferrer"
-              target="_blank"
-            >
-              <span className="sr-only">Repository: </span>
-              {repository.fullName}
-            </a>
-            {repository.defaultBranch ? (
-              <span className="max-w-full rounded-[4px] bg-control-muted px-1.5 py-0.5 font-mono type-annotation [overflow-wrap:anywhere]">
-                <span className="sr-only">Default branch: </span>
-                {repository.defaultBranch}
-              </span>
-            ) : null}
-          </span>
-        ) : null}
+      <div className="flex min-w-0 flex-wrap items-center gap-x-4 text-xs text-muted">
         <SessionConnections
           linearIssueId={session.linearIssueId}
           linearIssueUrl={session.linearIssueUrl}
           pullRequests={session.pullRequests}
           quiet
         />
-        <span className="inline-flex min-w-0 flex-wrap items-center gap-2">
-          {creatorDisplayName ? (
-            <>
-              <span
-                aria-hidden="true"
-                className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border bg-control-muted type-annotation text-foreground"
-              >
-                {creatorDisplayName.trim().charAt(0).toUpperCase()}
-              </span>
-              <span className="min-w-0 [overflow-wrap:anywhere]">
-                <span className="sr-only">Created by </span>
-                {creatorDisplayName}
-              </span>
-              <span aria-hidden="true">·</span>
-            </>
-          ) : null}
-          <span>
-            <span className="sr-only">Created </span>
-            <TimeDisplay absoluteStyle="short" initialNow={initialNow} value={session.createdAt} />
-          </span>
-        </span>
         {hasInput ? (
           <button
             type="button"
             aria-controls={inputId}
             aria-expanded={inputOpen}
-            className="inline-flex min-h-9 items-center gap-1.5 rounded-[4px] text-xs text-muted hover:text-foreground focus-visible:outline-accent"
+            className="inline-flex min-h-11 items-center gap-1 rounded-[4px] text-xs text-muted hover:text-foreground focus-visible:outline-accent sm:min-h-8"
             onClick={() => setInputOpen((open) => !open)}
           >
             Original request
@@ -113,7 +71,7 @@ export function SessionInspector({
           type="button"
           aria-controls={conversationId}
           aria-expanded={conversation.open}
-          className="inline-flex min-h-9 items-center gap-1.5 rounded-[4px] text-xs text-muted hover:text-foreground focus-visible:outline-accent"
+          className="inline-flex min-h-11 items-center gap-1 rounded-[4px] text-xs text-muted hover:text-foreground focus-visible:outline-accent sm:min-h-8"
           onClick={conversation.toggle}
         >
           Conversation
@@ -124,6 +82,51 @@ export function SessionInspector({
             )}
           />
         </button>
+        <details className="group/metadata min-w-0 open:basis-full">
+          <summary className="inline-flex min-h-11 cursor-pointer list-none items-center gap-1 rounded-[4px] hover:text-foreground focus-visible:outline-accent sm:min-h-8 [&::-webkit-details-marker]:hidden">
+            Details
+            <ChevronDownIcon className="size-3.5 group-open/metadata:rotate-180" />
+          </summary>
+          <dl className="flex flex-wrap gap-x-5 gap-y-2 rounded-md bg-control-muted p-3 [overflow-wrap:anywhere]">
+            {repository ? (
+              <div className="min-w-0">
+                <dt>Repository</dt>
+                <dd>
+                  <a
+                    className="text-accent hover:underline focus-visible:outline-accent"
+                    href={repository.htmlUrl}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    {repository.fullName}
+                  </a>
+                </dd>
+              </div>
+            ) : null}
+            {repository?.defaultBranch ? (
+              <div className="min-w-0">
+                <dt>Default branch</dt>
+                <dd className="font-mono text-foreground">{repository.defaultBranch}</dd>
+              </div>
+            ) : null}
+            {creatorDisplayName ? (
+              <div className="min-w-0">
+                <dt>Created by</dt>
+                <dd className="text-foreground">{creatorDisplayName}</dd>
+              </div>
+            ) : null}
+            <div className="min-w-0">
+              <dt>Created</dt>
+              <dd className="text-foreground">
+                <TimeDisplay
+                  absoluteStyle="short"
+                  initialNow={initialNow}
+                  value={session.createdAt}
+                />
+              </dd>
+            </div>
+          </dl>
+        </details>
       </div>
       {hasInput ? (
         <div id={inputId} hidden={!inputOpen}>

@@ -8,6 +8,7 @@ import {
   type RefObject,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -101,7 +102,6 @@ type CachedArtifactBody = Omit<SessionArtifactBody, "sanitizedHtml"> & {
 
 const VIEW_TABS = ["rendered", "raw"] as const;
 const REVIEW_VIEW_TABS = ["brief", "rendered", "raw"] as const;
-const HISTORY_TABS = ["versions", "compare"] as const;
 export const ARTIFACT_ID_PARAM = "artifactId";
 export const ARTIFACT_VERSION_PARAM = "artifactVersion";
 export const ARTIFACT_STAGE_PARAM = "artifactStage";
@@ -330,6 +330,15 @@ function ArtifactPanelStage({
   const urlVersion = parseArtifactVersionParam(searchParams.get(ARTIFACT_VERSION_PARAM));
   const [selectedTab, setSelectedTab] = useState<ArtifactTab | null>(null);
   const [openComments, setOpenComments] = useState(false);
+  const [commentControlHost, setCommentControlHost] = useState<HTMLDivElement | null>(null);
+  const [showEvidence, setShowEvidence] = useState(false);
+  const [dismissedEvidenceHash, setDismissedEvidenceHash] = useState<string | null>(null);
+  const evidenceId = useId();
+  const hash = useBrowserEvidenceHash();
+  const evidenceOpen =
+    showEvidence ||
+    (dismissedEvidenceHash !== hash &&
+      (isBrowserScreenshotHash(hash) || Boolean(parseBrowserRecordingHash(hash))));
   const showRawArtifact = useCallback(() => setSelectedTab("raw"), []);
   // URL is authoritative for shared links; local state updates immediately on
   // click. Client-side URL writes use history.replaceState (not router.replace)
@@ -472,9 +481,13 @@ function ArtifactPanelStage({
       (retainBriefFor?.artifactId === visibleBody.id &&
         retainBriefFor.version === visibleBody.version));
   const viewTabs = hasReviewBrief ? REVIEW_VIEW_TABS : VIEW_TABS;
-  const tabs: ArtifactTab[] = [...viewTabs, ...HISTORY_TABS];
+  const tabs: Exclude<ArtifactTab, "compare">[] = [...viewTabs, "versions"];
   const defaultTab = hasReviewBrief && !searchParams.has("reviewThread") ? "brief" : "rendered";
-  const activeTab = selectedTab && tabs.includes(selectedTab) ? selectedTab : defaultTab;
+  const activeTab =
+    selectedTab && (selectedTab === "compare" || tabs.includes(selectedTab))
+      ? selectedTab
+      : defaultTab;
+  const toolbarTab = activeTab === "compare" ? "versions" : activeTab;
 
   useLayoutEffect(() => {
     onViewingHistoricalChange?.(viewingHistorical);
@@ -1106,6 +1119,7 @@ function ArtifactPanelStage({
   function selectTab(tab: ArtifactTab) {
     setSelectedTab(tab);
     setOpenComments(false);
+    if (tab === "versions") setShowEvidence(false);
   }
 
   function selectVersion(artifact: SessionArtifactMetadata) {
@@ -1130,7 +1144,7 @@ function ArtifactPanelStage({
   function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
-    const currentIndex = tabs.indexOf(activeTab);
+    const currentIndex = tabs.indexOf(toolbarTab);
     let nextIndex = currentIndex;
     if (event.key === "ArrowRight") nextIndex = Math.min(tabs.length - 1, currentIndex + 1);
     if (event.key === "ArrowLeft") nextIndex = Math.max(0, currentIndex - 1);
@@ -1184,13 +1198,31 @@ function ArtifactPanelStage({
     else setSelectedBodyRetry((value) => value + 1);
   };
 
-  const tabLabels: Record<ArtifactTab, string> = {
+  const tabLabels: Record<Exclude<ArtifactTab, "compare">, string> = {
     brief: "Review brief",
     raw: "Raw",
     rendered: hasReviewBrief ? "Full artifact" : "Rendered",
     versions: "Versions",
-    compare: hasReviewBrief ? "Compare versions" : "Compare",
   };
+  const hasComments = visibleBody?.id && typeof visibleBody.payload === "string";
+  const revisionReview =
+    activeTab === "brief" || activeTab === "compare" ? (
+      visibleBody?.id ? (
+        <RevisionReviewPanel
+          key={visibleBody.id}
+          sessionId={sessionId}
+          artifactId={visibleBody.id}
+          version={visibleBody.version}
+          stageSlug={stageSlug}
+          source={visibleBody.payload}
+          view={activeTab}
+        />
+      ) : bodyError ? (
+        <FailureHint message={bodyError} onRetry={retryBody} />
+      ) : (
+        <ProgressHint text="Loading artifact identity for comparison." />
+      )
+    ) : null;
 
   return (
     <div>
@@ -1200,54 +1232,44 @@ function ArtifactPanelStage({
           {viewingIsLatest ? " · Latest" : " · Historical"}
         </p>
       ) : null}
-      <div className="mb-3 flex flex-wrap items-end gap-x-2 gap-y-1 sm:gap-x-4">
+      <div
+        aria-label={specification ? "Specification tools" : "Artifact tools"}
+        className="-mx-2 mb-3 flex flex-wrap items-center border-b border-border px-1 pb-1.5 sm:mx-0 sm:gap-x-2 sm:px-0"
+        role="group"
+      >
         <div
           aria-label={specification ? "Specification views" : "Artifact views"}
-          className="flex min-w-0 flex-wrap items-start gap-x-2 gap-y-1 sm:gap-x-4"
+          className="flex min-w-0 flex-wrap items-center"
           role="tablist"
         >
-          {(
-            [
-              { label: "View", tabs: viewTabs },
-              { label: "History", tabs: HISTORY_TABS },
-            ] as const
-          ).map((group) => (
-            <div aria-label={group.label} key={group.label} role="group">
-              <span aria-hidden="true" className="type-annotation block text-muted">
-                {group.label}
-              </span>
-              <div className="flex flex-wrap gap-1">
-                {group.tabs.map((tab) => (
-                  <TabButton
-                    key={tab}
-                    active={activeTab === tab}
-                    controls={`artifact-${tab}-panel`}
-                    label={tabLabels[tab]}
-                    shortLabel={
-                      tab === "brief"
-                        ? "Brief"
-                        : tab === "rendered" && hasReviewBrief
-                          ? "Full"
-                          : tab === "compare"
-                            ? "Compare"
-                            : undefined
-                    }
-                    onClick={() => selectTab(tab)}
-                    onKeyDown={handleTabKeyDown}
-                    ref={(node) => {
-                      if (node) tabRefs.current.set(tab, node);
-                      else tabRefs.current.delete(tab);
-                    }}
-                    tabId={`artifact-${tab}-tab`}
-                  />
-                ))}
-              </div>
-            </div>
+          {tabs.map((tab) => (
+            <TabButton
+              key={tab}
+              active={toolbarTab === tab}
+              controls={`artifact-${tab}-panel`}
+              label={tabLabels[tab]}
+              shortLabel={
+                tab === "brief"
+                  ? "Brief"
+                  : tab === "rendered" && hasReviewBrief
+                    ? "Full"
+                    : undefined
+              }
+              onClick={() => selectTab(tab)}
+              onKeyDown={handleTabKeyDown}
+              ref={(node) => {
+                if (node) tabRefs.current.set(tab, node);
+                else tabRefs.current.delete(tab);
+              }}
+              tabId={`artifact-${tab}-tab`}
+            />
           ))}
         </div>
-        {activeTab === "brief" ? (
+        {hasComments && (activeTab === "rendered" || activeTab === "raw") ? (
+          <div ref={setCommentControlHost} />
+        ) : hasComments ? (
           <button
-            className="min-h-11 rounded-[4px] px-2 text-xs text-muted hover:text-foreground hover:underline focus-visible:outline-accent sm:min-h-8"
+            className="min-h-11 rounded-[4px] px-1.5 text-xs text-muted hover:text-foreground hover:underline focus-visible:outline-accent sm:min-h-8 sm:px-2"
             onClick={() => {
               setSelectedTab("rendered");
               setOpenComments(true);
@@ -1259,17 +1281,56 @@ function ArtifactPanelStage({
           </button>
         ) : null}
         {activeTab !== "versions" && visibleBody?.id ? (
-          <ArtifactEvidenceTools
-            artifactId={visibleBody.id}
-            sessionId={sessionId}
-            stageSlug={stageSlug}
-            version={visibleBody.version}
-          />
+          <button
+            type="button"
+            aria-expanded={evidenceOpen}
+            aria-controls={evidenceId}
+            onClick={() => {
+              setShowEvidence(!evidenceOpen);
+              setDismissedEvidenceHash(evidenceOpen ? hash : null);
+            }}
+            className="inline-flex min-h-11 items-center gap-1 rounded-[4px] px-1.5 text-xs text-muted hover:text-foreground hover:underline focus-visible:outline-accent sm:min-h-8 sm:px-2"
+          >
+            Evidence
+            <ChevronDownIcon
+              aria-hidden="true"
+              className={cn("hidden size-3.5 sm:block", evidenceOpen && "rotate-180")}
+            />
+          </button>
         ) : null}
       </div>
+      {activeTab !== "versions" && visibleBody?.id ? (
+        <div hidden={!evidenceOpen} id={evidenceId} className="mb-3 min-w-0">
+          {evidenceOpen ? (
+            <ArtifactEvidenceInspector
+              source={{
+                kind: "review",
+                sessionId,
+                artifactId: visibleBody.id,
+                artifactLinkQuery: new URLSearchParams({
+                  [ARTIFACT_STAGE_PARAM]: stageSlug,
+                  [ARTIFACT_ID_PARAM]: visibleBody.id,
+                  [ARTIFACT_VERSION_PARAM]: String(visibleBody.version),
+                  [SCREENSHOT_EVIDENCE_PARAM]: "1",
+                }).toString(),
+              }}
+            />
+          ) : null}
+        </div>
+      ) : null}
 
       {activeTab === "versions" ? (
         <div aria-labelledby="artifact-versions-tab" id="artifact-versions-panel" role="tabpanel">
+          <button
+            type="button"
+            className="ui-button mb-3 min-h-11 focus-visible:outline-accent sm:min-h-8"
+            onClick={() => {
+              selectTab("compare");
+              tabRefs.current.get("versions")?.focus();
+            }}
+          >
+            Compare versions
+          </button>
           {metadataLoading ? <ProgressHint text="Loading version history." /> : null}
           {metadataError ? (
             <FailureHint
@@ -1345,25 +1406,25 @@ function ArtifactPanelStage({
         </div>
       ) : activeTab === "brief" || activeTab === "compare" ? (
         <div
-          aria-labelledby={`artifact-${activeTab}-tab`}
-          id={`artifact-${activeTab}-panel`}
+          aria-labelledby={`artifact-${toolbarTab}-tab`}
+          id={`artifact-${toolbarTab}-panel`}
           role="tabpanel"
         >
-          {visibleBody?.id ? (
-            <RevisionReviewPanel
-              key={visibleBody.id}
-              sessionId={sessionId}
-              artifactId={visibleBody.id}
-              version={visibleBody.version}
-              stageSlug={stageSlug}
-              source={visibleBody.payload}
-              view={activeTab}
-            />
-          ) : bodyError ? (
-            <FailureHint message={bodyError} onRetry={retryBody} />
-          ) : (
-            <ProgressHint text="Loading artifact identity for comparison." />
-          )}
+          <div id={activeTab === "compare" ? "artifact-compare-panel" : undefined}>
+            {revisionReview}
+          </div>
+          {activeTab === "brief" ? (
+            <button
+              type="button"
+              className="mt-2 min-h-11 rounded-[4px] text-xs font-medium text-accent hover:underline focus-visible:outline-accent sm:min-h-8"
+              onClick={() => {
+                selectTab("compare");
+                tabRefs.current.get("versions")?.focus();
+              }}
+            >
+              Compare versions
+            </button>
+          ) : null}
         </div>
       ) : (
         <div
@@ -1400,6 +1461,7 @@ function ArtifactPanelStage({
               }}
               sessionId={sessionId}
               historical={persistStageInUrl || !viewingIsLatest}
+              commentControlHost={commentControlHost}
               openComments={openComments}
               onShowRaw={showRawArtifact}
               readOnlyReason={readOnlyReason}
@@ -1412,50 +1474,6 @@ function ArtifactPanelStage({
         </div>
       )}
     </div>
-  );
-}
-
-function ArtifactEvidenceTools({
-  artifactId,
-  sessionId,
-  stageSlug,
-  version,
-}: {
-  artifactId: string;
-  sessionId: string;
-  stageSlug: string;
-  version: number;
-}) {
-  const ref = useRef<HTMLDetailsElement>(null);
-  const hash = useBrowserEvidenceHash();
-  useLayoutEffect(() => {
-    if (ref.current && (isBrowserScreenshotHash(hash) || parseBrowserRecordingHash(hash))) {
-      ref.current.open = true;
-    }
-  }, [hash, artifactId]);
-
-  return (
-    <details className="group/evidence min-w-0 open:w-full" ref={ref}>
-      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-1 rounded-[4px] px-2 text-xs text-muted hover:text-foreground focus-visible:outline-accent sm:min-h-8 [&::-webkit-details-marker]:hidden">
-        Evidence
-        <ChevronDownIcon aria-hidden="true" className="size-3.5 group-open/evidence:rotate-180" />
-      </summary>
-      <div className="hidden min-w-0 border-t border-border py-3 group-open/evidence:block">
-        <ArtifactEvidenceInspector
-          source={{
-            kind: "review",
-            sessionId,
-            artifactId,
-            artifactLinkQuery: new URLSearchParams({
-              [ARTIFACT_STAGE_PARAM]: stageSlug,
-              [ARTIFACT_ID_PARAM]: artifactId,
-              [ARTIFACT_VERSION_PARAM]: String(version),
-              [SCREENSHOT_EVIDENCE_PARAM]: "1",
-            }).toString(),
-          }}
-        />
-      </div>
-    </details>
   );
 }
 
@@ -1487,7 +1505,7 @@ function TabButton({
       aria-label={shortLabel ? label : undefined}
       aria-selected={active}
       className={cn(
-        "min-h-11 rounded-[4px] px-2 py-1 text-xs font-medium focus-visible:outline-accent sm:min-h-8 sm:px-2.5",
+        "min-h-11 min-w-11 rounded-[4px] px-0.5 py-1 text-xs font-medium focus-visible:outline-accent sm:min-h-8 sm:px-2.5",
         active ? "bg-control-muted text-foreground" : "text-muted hover:text-foreground",
       )}
       id={tabId}
@@ -1511,6 +1529,7 @@ function ArtifactBodyView({
   onCopyResult,
   sessionId,
   historical,
+  commentControlHost,
   openComments,
   onShowRaw,
   readOnlyReason,
@@ -1523,6 +1542,7 @@ function ArtifactBodyView({
   onCopyResult: (result: "success" | "failure") => void;
   sessionId: string;
   historical: boolean;
+  commentControlHost: HTMLDivElement | null;
   openComments: boolean;
   onShowRaw: () => void;
   readOnlyReason: ReviewSessionReadOnlyReason | null;
@@ -1612,6 +1632,7 @@ function ArtifactBodyView({
           artifactVersion={artifact.version}
           source={formatted}
           historical={historical}
+          commentControlHost={commentControlHost}
           initiallyOpen={openComments}
           displayMode={displayMode}
           onShowRaw={onShowRaw}
