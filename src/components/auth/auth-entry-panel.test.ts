@@ -22,7 +22,7 @@ describe("AuthEntryPanel", () => {
     const html = renderPanel();
 
     expect(html).not.toContain("Check your email");
-    expect(html).not.toContain("Continue with code");
+    expect(html).not.toContain("Verify code");
     expect(html).not.toContain("Request a new email");
     expect(html).not.toContain('name="tokenDigit"');
   });
@@ -32,14 +32,17 @@ describe("AuthEntryPanel", () => {
 
     expect(countMatches(html, "<h1")).toBe(1);
     expect(html).toContain("Sign in to Wallie");
-    expect(html).toContain("Sign in to continue to the page you opened.");
-    expect(html).toContain("Sign in with email");
+    expect(html).toContain("After you sign in, you’ll return to the page you opened.");
+    expect(html).not.toContain("Sign in with email");
     expect(html).toContain("Work email");
+    expect(html).toContain("Send sign-in email");
+    expect(html).toContain("a link and a 6-digit code");
+    expect(html).toContain('aria-describedby="email-delivery"');
     expect(html).toContain('autoComplete="email"');
     expect(html).toContain('inputMode="email"');
     expect(html).toContain('class="grid gap-3"');
     expect(html).toContain("ui-button-primary min-h-11 w-full");
-    expect(html).toContain("Visit the home page");
+    expect(html).toContain("Back to Wallie");
   });
 
   it("does not render social auth options", () => {
@@ -56,9 +59,11 @@ describe("AuthEntryPanel", () => {
       statusCode: "check_email",
     });
 
-    expect(html).toContain("Check your email");
+    expect(countMatches(html, "<h1")).toBe(1);
+    expect(html).toMatch(/<h1[^>]*>Check your email<\/h1>/);
+    expect(html).not.toContain("Sign in to Wallie");
     expect(html).toContain("Verification code");
-    expect(html).toContain("Continue with code");
+    expect(html).toContain("Verify code");
     expect(html).toContain("ui-button-primary min-h-11 w-full");
     expect(html).toContain("Request a new email");
     expect(html).toContain('href="/login?next=%2Fw%2Facme"');
@@ -67,11 +72,11 @@ describe("AuthEntryPanel", () => {
     expect(countMatches(html, 'inputMode="numeric"')).toBe(6);
     expect(countMatches(html, 'pattern="[0-9]*"')).toBe(6);
     expect(countMatches(html, 'maxLength="1"')).toBe(6);
-    expect(html).toContain("use the sign-in link inside");
+    expect(html).toContain("Open the sign-in link in your email, or enter the 6-digit code below.");
     expect(html).not.toContain("Check your inbox for a secure sign-in link");
     expect(html).toContain('autoComplete="one-time-code"');
     expect(countMatches(html, 'autoComplete="off"')).toBe(5);
-    expect(html).not.toContain("Send magic link");
+    expect(html).not.toContain("Send sign-in email");
     expect(html).not.toContain('name="email"');
     expect(html).not.toContain('type="email"');
     expect(html).not.toContain("you@company.com");
@@ -81,9 +86,9 @@ describe("AuthEntryPanel", () => {
   it("keeps check-email guidance visible when the continuation cookie is absent", () => {
     const html = renderPanel({ statusCode: "check_email" });
 
-    expect(html).toContain("This browser has no pending code request.");
-    expect(html).toContain("Open the link in your email");
-    expect(html).toContain("Request a new sign-in email");
+    expect(html).toContain("There’s no pending code in this browser.");
+    expect(html).toContain("Use the link in your email");
+    expect(html).toContain("Request a new email");
     expect(html).toContain('role="status"');
     expect(html).toContain('name="email"');
     expect(html).not.toContain('name="tokenDigit"');
@@ -96,12 +101,12 @@ describe("AuthEntryPanel", () => {
     });
 
     expect(html).toContain("Check your email");
-    expect(html).toContain("That code could not be verified.");
+    expect(html).toContain("That code couldn’t be verified.");
     expect(html).toContain("Request a new email");
-    expect(html).toContain("Try code again");
+    expect(html).toContain("Verify code");
     expect(html).toContain('role="alert" tabindex="-1"');
     expect(countMatches(html, 'name="tokenDigit"')).toBe(6);
-    expect(html).not.toContain("Send magic link");
+    expect(html).not.toContain("Send sign-in email");
     expect(html).not.toContain('name="email"');
     expect(html).not.toContain('type="email"');
   });
@@ -114,7 +119,7 @@ describe("AuthEntryPanel", () => {
 
     expect(countMatches(html, 'name="tokenDigit"')).toBe(6);
     expect(html).toContain("Request a new email");
-    expect(html).not.toContain("Send magic link");
+    expect(html).not.toContain("Send sign-in email");
     expect(html).not.toContain('name="email"');
   });
 
@@ -125,7 +130,7 @@ describe("AuthEntryPanel", () => {
       retryEmail: "retry@example.test",
     });
 
-    expect(html).toContain("We could not send a sign-in email.");
+    expect(html).toContain("We couldn’t send a sign-in email.");
     expect(html).toContain("Try sending again");
     expect(html).toContain('role="alert" tabindex="-1"');
     expect(html).toContain('name="email"');
@@ -140,15 +145,15 @@ describe("AuthEntryPanel", () => {
     });
 
     expect(html).not.toContain('name="tokenDigit"');
-    expect(html).not.toContain("Continue with code");
+    expect(html).not.toContain("Verify code");
   });
 
   it("offers only available recovery options for a failed code without a pending email", () => {
     const html = renderPanel({ errorCode: "email_code_failed" });
 
-    expect(html).toContain("This browser has no pending code request.");
-    expect(html).toContain("Request a new sign-in email");
-    expect(html).not.toContain("Check all six digits");
+    expect(html).toContain("There’s no pending code in this browser.");
+    expect(html).toContain("Request a new email");
+    expect(html).not.toContain("Check all 6 digits");
     expect(html).not.toContain('name="tokenDigit"');
   });
 });

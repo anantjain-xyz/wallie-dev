@@ -283,13 +283,17 @@ test("registers a client, consents with PKCE, rotates credentials and disconnect
       const state = randomUUID();
       const query = authorizationQuery(verifier, state, resource);
       await memberPage.goto(`/oauth/authorize?${query}`);
-      await expect(memberPage.getByText(clientName, { exact: true })).toBeVisible();
+      await expect(memberPage.getByText(`${clientName} is asking for access in`)).toBeVisible();
       await expect(memberPage.getByText("Read sessions", { exact: true }).first()).toBeVisible();
       if (resource) {
         await expect(memberPage.getByText(factory.name, { exact: true })).toBeVisible();
+        const technical = memberPage.getByText("Technical details", { exact: true });
+        await expect(memberPage.getByText("Issuer", { exact: true })).not.toBeVisible();
+        await technical.click();
         await expect(memberPage.getByText("Issuer", { exact: true })).toBeVisible();
         await expect(memberPage.getByText(app, { exact: true })).toBeVisible();
         await expect(memberPage.getByText(resource, { exact: true })).toBeVisible();
+        await technical.click();
         await expect(memberPage.getByRole("checkbox")).toHaveCount(0);
       } else {
         await memberPage.getByRole("checkbox", { name: factory.name, exact: true }).check();

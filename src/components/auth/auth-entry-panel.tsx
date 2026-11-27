@@ -1,19 +1,17 @@
 import Link from "next/link";
 
 import { AuthForm } from "@/components/auth/auth-form";
-import { EmailMagicLinkForm } from "@/components/auth/email-magic-link-form";
 import { EmailCodeInputs } from "@/components/auth/email-code-inputs";
 import { WallieMark } from "@/components/shared/wallie-mark";
 import { loginPath } from "@/lib/routes";
 
 const authErrorMessages = {
-  auth_callback_failed: "The sign-in callback did not complete. Start the flow again.",
-  auth_confirmation_failed:
-    "The sign-in link couldn’t be confirmed. Request a new sign-in email and try again.",
+  auth_callback_failed: "Sign-in didn’t finish. Request a new email below.",
+  auth_confirmation_failed: "The sign-in link couldn’t be confirmed. Request a new email below.",
   email_code_failed:
-    "That code could not be verified. Check all six digits or request a new code, then try again.",
+    "That code couldn’t be verified. Check all 6 digits, or request a new email if the code has expired.",
   email_sign_in_failed:
-    "We could not send a sign-in email. Check the address or your connection, then try again.",
+    "We couldn’t send a sign-in email. Check the address or wait a moment before trying again.",
   invalid_provider: "That sign-in method isn’t available. Use your email to sign in.",
   oauth_sign_in_failed: "That sign-in method couldn’t start. Use your email to sign in.",
 } as const;
@@ -41,99 +39,106 @@ export function AuthEntryPanel({
   const missingContinuation =
     !canUseEmailCode && (statusCode === "check_email" || errorCode === "email_code_failed");
   const continuationMessage =
-    "This browser has no pending code request. Open the link in your email, or request a new sign-in email below.";
+    "There’s no pending code in this browser. Use the link in your email or request a new email here.";
   let errorMessage = null;
   if (errorCode === "email_code_failed" && missingContinuation) {
     errorMessage = continuationMessage;
   } else if (errorCode === "auth_confirmation_failed" && showEmailCodeForm) {
-    errorMessage =
-      "The sign-in link couldn’t be confirmed. Enter the code from that email or request a new sign-in email.";
+    errorMessage = "The sign-in link couldn’t be confirmed. Try the code from that email instead.";
   } else if (errorCode) {
     errorMessage = Object.hasOwn(authErrorMessages, errorCode)
       ? authErrorMessages[errorCode as keyof typeof authErrorMessages]
-      : "Sign-in could not be completed. Request a new sign-in email and try again.";
+      : "Sign-in didn’t finish. Request a new email below.";
   }
-  const requestAnotherCodeHref = loginPath(next);
-  const emailStatusMessage = missingContinuation ? continuationMessage : null;
-  const codeFeedback = errorMessage ? { kind: "error" as const, message: errorMessage } : null;
+  const feedback = errorMessage
+    ? { kind: "error" as const, message: errorMessage }
+    : missingContinuation
+      ? { kind: "status" as const, message: continuationMessage }
+      : null;
+  const nextMessage =
+    next === "/"
+      ? "After you sign in, Wallie opens your workspace or asks you to create one."
+      : "After you sign in, you’ll return to the page you opened.";
 
   return (
     <div className="w-full max-w-[400px]">
-      <div className="mb-10 text-center">
-        <WallieMark className="mx-auto mb-4 size-14 text-foreground" />
-        <h1 className="text-balance text-2xl font-semibold tracking-tight text-foreground">
-          Sign in to Wallie
+      <header className="mb-5 space-y-2">
+        <WallieMark className="mb-3 size-9 text-foreground" />
+        <h1 id="sign-in-heading" className="type-page-title">
+          {showEmailCodeForm ? "Check your email" : "Sign in to Wallie"}
         </h1>
-        <p className="mt-2 text-pretty text-sm leading-6 text-muted">
-          {next === "/"
-            ? "Use your email to create a workspace or open one you already have."
-            : "Sign in to continue to the page you opened."}
-        </p>
-      </div>
-
-      <div>
-        {!showEmailCodeForm ? (
-          <div>
-            <div className="mb-4">
-              <p className="text-sm font-medium text-foreground">Sign in with email</p>
-            </div>
-            <EmailMagicLinkForm
-              defaultEmail={errorCode === "email_sign_in_failed" ? retryEmail : undefined}
-              errorMessage={errorMessage}
-              next={next}
-              statusMessage={emailStatusMessage}
-              submitLabel={
-                errorCode === "email_sign_in_failed"
-                  ? "Try sending again"
-                  : missingContinuation || errorCode
-                    ? "Request a new sign-in email"
-                    : undefined
-              }
-            />
-            <p className="mt-3 text-xs leading-5 text-muted">
-              We’ll email a secure link and a six-digit code. No password required.
-            </p>
-          </div>
-        ) : null}
-
         {showEmailCodeForm ? (
-          <div>
-            <h2 id="email-code-heading" className="text-xl font-semibold text-foreground">
-              Check your email
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-muted">
-              Enter the six-digit code from your email, or use the sign-in link inside.
-            </p>
-            <AuthForm
-              action="/auth/code"
-              ariaLabelledBy="email-code-heading"
-              className="email-code-form mt-8 grid gap-6"
-              feedback={codeFeedback}
-              pendingLabel="Verifying code…"
-              submitLabel={errorMessage ? "Try code again" : "Continue with code"}
-            >
-              <input type="hidden" name="next" value={next} />
-              <EmailCodeInputs />
-            </AuthForm>
-            <Link
-              href={requestAnotherCodeHref}
-              className="ui-touch-target mt-4 inline-flex min-h-11 w-full items-center justify-center rounded-[6px] text-sm font-medium text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
-            >
-              Request a new email
-            </Link>
-          </div>
+          <p className="type-body text-pretty text-foreground">
+            Open the sign-in link in your email, or enter the 6-digit code below.
+          </p>
         ) : null}
-      </div>
+        <p className="type-body text-pretty text-muted">{nextMessage}</p>
+      </header>
 
-      <p className="mt-8 text-center text-xs leading-5 text-muted">
-        Looking for Wallie?{" "}
-        <Link
-          href="/"
-          className="inline-flex min-h-11 items-center rounded-[6px] font-medium text-foreground underline decoration-muted underline-offset-4 hover:decoration-foreground"
-        >
-          Visit the home page
-        </Link>
-      </p>
+      {showEmailCodeForm ? (
+        <>
+          <AuthForm
+            action="/auth/code"
+            ariaLabelledBy="sign-in-heading"
+            className="email-code-form grid gap-4"
+            feedback={feedback}
+            pendingLabel="Verifying code…"
+            submitLabel="Verify code"
+          >
+            <input type="hidden" name="next" value={next} />
+            <EmailCodeInputs />
+          </AuthForm>
+          <Link
+            href={loginPath(next)}
+            className="ui-touch-target mt-1 inline-flex min-h-11 items-center rounded-[6px] text-sm font-medium text-foreground underline decoration-border-strong underline-offset-4 hover:decoration-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            Request a new email
+          </Link>
+        </>
+      ) : (
+        <>
+          <AuthForm
+            action="/auth/email"
+            ariaLabelledBy="sign-in-heading"
+            className="grid gap-3"
+            feedback={feedback}
+            pendingLabel="Sending sign-in email…"
+            submitLabel={
+              errorCode === "email_sign_in_failed"
+                ? "Try sending again"
+                : missingContinuation || errorCode
+                  ? "Request a new email"
+                  : "Send sign-in email"
+            }
+          >
+            <input type="hidden" name="next" value={next} />
+            <label className="block">
+              <span className="ui-label mb-1.5 block text-foreground">Work email</span>
+              <input
+                aria-describedby="email-delivery"
+                type="email"
+                name="email"
+                defaultValue={errorCode === "email_sign_in_failed" ? retryEmail : undefined}
+                required
+                autoComplete="email"
+                inputMode="email"
+                placeholder="you@company.com"
+                spellCheck={false}
+                className="ui-input"
+              />
+            </label>
+          </AuthForm>
+          <p id="email-delivery" className="type-secondary mt-2 text-muted">
+            We’ll send a link and a 6-digit code. No password needed.
+          </p>
+        </>
+      )}
+      <Link
+        href="/"
+        className="ui-touch-target mt-4 flex min-h-11 w-fit items-center rounded-[6px] text-sm text-muted underline decoration-border-strong underline-offset-4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      >
+        Back to Wallie
+      </Link>
     </div>
   );
 }

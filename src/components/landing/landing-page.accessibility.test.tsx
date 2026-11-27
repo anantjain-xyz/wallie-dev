@@ -29,10 +29,9 @@ describe("LandingPage accessibility", () => {
     expect(steps[0]).toHaveTextContent(/Plan\s*Wallie/);
     expect(steps[1]).toHaveTextContent(/Approve plan\s*You/);
     expect(steps[2]).toHaveTextContent(/Build\s*Wallie/);
-    expect(screen.getByRole("list", { name: "Supported coding agents" })).toHaveTextContent(
-      "Cursor",
-    );
-    expect(screen.getByRole("list", { name: "Supported sandboxes" })).toHaveTextContent("Daytona");
+    const providers = within(screen.getByRole("region", { name: "Works with" }));
+    expect(providers.getByRole("list", { name: "Coding agents" })).toHaveTextContent("Cursor");
+    expect(providers.getByRole("list", { name: "Sandboxes" })).toHaveTextContent("Daytona");
     expect(screen.queryAllByRole("textbox")).toHaveLength(0);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
       "Turn a task into a pull request you can trust",
@@ -47,19 +46,28 @@ describe("LandingPage accessibility", () => {
     expect(main).toHaveAttribute("tabindex", "-1");
     expect(main).not.toContainElement(screen.getByRole("banner"));
     expect(main).not.toContainElement(screen.getByRole("contentinfo"));
-    expect(main).toContainElement(screen.getByRole("link", { name: "Get started" }));
+    expect(main).toContainElement(screen.getByRole("link", { name: "Start with email" }));
   });
 
   it("keeps CTA links keyboard-focusable and names their destinations", () => {
     render(<LandingPage />);
 
-    const signIn = screen.getByRole("link", { name: "Get started" });
-    signIn.focus();
-    expect(signIn).toHaveFocus();
-    expect(signIn).toHaveAttribute("href", "/login");
-    expect(signIn).toHaveAccessibleDescription("Sign in by email, then set up your workspace.");
+    const hosted = screen.getByRole("link", { name: "Start with email" });
+    hosted.focus();
+    expect(hosted).toHaveFocus();
+    expect(hosted).toHaveAttribute("href", "/login");
+    expect(hosted).toHaveAccessibleDescription(
+      "For a new hosted workspace, connect a GitHub repository, a sandbox, and your agent credentials. Linear is optional.",
+    );
+    expect(screen.getByRole("link", { name: /^Sign in$/ })).toHaveAttribute("href", "/login");
+    expect(screen.getByRole("link", { name: "Self-host Wallie" })).toHaveAttribute(
+      "href",
+      "https://github.com/anantjain-xyz/wallie-dev/blob/main/docs/deployment/self-hosting.md",
+    );
 
-    const github = screen.getByRole("link", { name: /GitHub/ });
-    expect(github).toHaveAttribute("href", "https://github.com/anantjain-xyz/wallie-dev");
+    const docs = within(screen.getByRole("contentinfo")).getByRole("link", {
+      name: "Docs & source",
+    });
+    expect(docs).toHaveAttribute("href", "https://github.com/anantjain-xyz/wallie-dev#readme");
   });
 });

@@ -48,37 +48,39 @@ function invitePath(token: string) {
   return `/invite/${encodeURIComponent(token)}`;
 }
 
+const requestNewInvitation = "Ask the person who invited you to send a new link.";
+
 function invitationErrorCopy(errorCode: string | undefined) {
   switch (errorCode) {
     case "already_accepted":
       return {
         status: 409,
         title: "Invitation already accepted",
-        body: "This workspace invitation has already been used.",
+        body: "Go back to Wallie and open the workspace with the account that received the invitation.",
       };
     case "email_mismatch":
       return {
         status: 403,
         title: "Use the invited email",
-        body: "This invitation can only be accepted by the email address it was sent to.",
+        body: "Sign out, then sign in with the email address the invitation was sent to.",
       };
     case "expired":
       return {
         status: 410,
         title: "Invitation expired",
-        body: "Ask a workspace admin to resend your invitation.",
+        body: requestNewInvitation,
       };
     case "revoked":
       return {
         status: 410,
         title: "Invitation revoked",
-        body: "This workspace invitation is no longer active.",
+        body: requestNewInvitation,
       };
     default:
       return {
         status: 404,
         title: "Invitation not found",
-        body: "This invitation link is invalid or no longer available.",
+        body: requestNewInvitation,
       };
   }
 }
@@ -104,19 +106,27 @@ function invitationErrorResponse({ errorCode, token }: { errorCode?: string; tok
     <title>${htmlEscape(copy.title)} - Wallie</title>
     <style>
       * { box-sizing: border-box; }
-      body { margin: 0; background: #f4f5f7; color: #1d2027; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      main { min-height: 100svh; display: grid; place-items: center; padding: 24px; }
-      section { width: min(100%, 420px); border: 1px solid #7f8793; border-radius: 8px; background: #fff; padding: 28px; box-shadow: 0 12px 40px rgba(29, 32, 39, 0.08); }
-      h1 { margin: 0 0 10px; font-size: 22px; line-height: 1.25; }
-      p { margin: 0; color: #5b616b; font-size: 14px; line-height: 1.6; }
-      nav { display: grid; gap: 12px; margin-top: 22px; }
-      a { display: inline-flex; align-items: center; min-height: 44px; color: #4338ca; font-size: 14px; text-underline-offset: 3px; }
+      :root {
+        color-scheme: light dark;
+        --sheet: light-dark(#fff, #1d2027);
+        --ink: light-dark(#1d2027, #f7f8fa);
+        --muted: light-dark(#5b616b, #b9bec7);
+        --accent: light-dark(#4f46e5, #a5b4fc);
+        --accent-ink: light-dark(#fff, #13161b);
+      }
+      body { margin: 0; background: var(--sheet); color: var(--ink); font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      main { min-height: 100svh; display: grid; place-items: center; padding: 24px max(16px, env(safe-area-inset-right)) 24px max(16px, env(safe-area-inset-left)); }
+      section { width: min(100%, 400px); }
+      h1 { margin: 0 0 8px; font-size: 1.75rem; line-height: 1.25; letter-spacing: -0.025em; font-weight: 600; text-wrap: balance; }
+      p { margin: 0; color: var(--muted); font-size: 0.875rem; line-height: 1.6; }
+      .actions { display: grid; justify-items: start; gap: 4px; margin-top: 16px; }
+      a { display: inline-flex; align-items: center; min-height: 44px; color: var(--muted); font-size: 0.875rem; text-underline-offset: 3px; }
+      a:hover { color: var(--ink); }
       form { margin: 0; }
-      button { min-height: 44px; border: 1px solid #7f8793; border-radius: 6px; background: #fff; color: #1d2027; cursor: pointer; font: inherit; font-size: 14px; font-weight: 650; padding: 8px 12px; transition: background-color 150ms ease, transform 150ms ease; }
-      button:hover { background: #f7f8fa; }
-      a:focus-visible, button:focus-visible { outline: 2px solid #4f46e5; outline-offset: 2px; box-shadow: 0 0 0 2px #fff; }
-      button:active { background: #eff1f5; transform: translateY(1px); }
-      @media (prefers-reduced-motion: reduce) { button { transition: none; } button:active { transform: none; } }
+      button { min-height: 44px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: var(--accent-ink); cursor: pointer; font: inherit; font-size: 0.875rem; font-weight: 600; padding: 8px 12px; }
+      button:hover { background: color-mix(in srgb, var(--accent) 88%, var(--sheet)); }
+      a, button { touch-action: manipulation; }
+      a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     </style>
   </head>
   <body>
@@ -124,17 +134,17 @@ function invitationErrorResponse({ errorCode, token }: { errorCode?: string; tok
       <section>
         <h1>${htmlEscape(copy.title)}</h1>
         <p>${htmlEscape(copy.body)}</p>
-        <nav aria-label="Invitation recovery">
+        <div class="actions">
           ${
             errorCode === "email_mismatch"
               ? `<form action="/auth/signout" method="post">
             <input type="hidden" name="next" value="${next}" />
-            <button type="submit">Sign out and try another account</button>
+            <button type="submit">Use a different account</button>
           </form>`
               : ""
           }
           <a href="/">Back to Wallie</a>
-        </nav>
+        </div>
       </section>
     </main>
   </body>

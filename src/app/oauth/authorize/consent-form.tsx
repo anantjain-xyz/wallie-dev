@@ -68,9 +68,37 @@ export function ConsentForm({
         </p>
       )}
       {children}
+      <div className="flex flex-wrap justify-end gap-2">
+        <button
+          aria-disabled={!!pending}
+          className="ui-button min-h-11"
+          name="decision"
+          type="submit"
+          value="deny"
+        >
+          <ActionButtonLabel
+            idle="Deny"
+            pending={pending === "deny"}
+            pendingLabel="Denying access…"
+          />
+        </button>
+        <button
+          aria-disabled={!!pending}
+          className="ui-button-primary min-h-11"
+          name="decision"
+          type="submit"
+          value="allow"
+        >
+          <ActionButtonLabel
+            idle="Allow access"
+            pending={pending === "allow"}
+            pendingLabel="Allowing access…"
+          />
+        </button>
+      </div>
       {technicalDetails && (
         <details className="border-t border-border pt-3">
-          <summary className="type-label min-h-11 cursor-pointer content-center text-foreground">
+          <summary className="type-label min-h-11 cursor-pointer content-center rounded-[6px] text-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
             Technical details
           </summary>
           <dl className="min-w-0 space-y-2 [overflow-wrap:anywhere]">
@@ -104,34 +132,6 @@ export function ConsentForm({
           </p>
         </details>
       )}
-      <div className="flex flex-wrap justify-end gap-2">
-        <button
-          aria-disabled={!!pending}
-          className="ui-button min-h-11"
-          name="decision"
-          type="submit"
-          value="deny"
-        >
-          <ActionButtonLabel
-            idle="Deny"
-            pending={pending === "deny"}
-            pendingLabel="Denying access…"
-          />
-        </button>
-        <button
-          aria-disabled={!!pending}
-          className="ui-button-primary min-h-11"
-          name="decision"
-          type="submit"
-          value="allow"
-        >
-          <ActionButtonLabel
-            idle="Allow access"
-            pending={pending === "allow"}
-            pendingLabel="Allowing access…"
-          />
-        </button>
-      </div>
       <span className="sr-only" role="status">
         {pending === "allow" ? "Allowing access…" : pending === "deny" ? "Denying access…" : ""}
       </span>

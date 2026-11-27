@@ -14,59 +14,66 @@ const sandboxes = [
   { id: "daytona", label: "Daytona" },
 ] as const;
 
-export function LandingIllustrations() {
+export function LandingWorkflow() {
   return (
-    <div className={styles.illustrations}>
-      <figure
-        className={styles.workflow}
-        aria-labelledby="landing-workflow"
-        aria-describedby="landing-workflow-description"
-      >
-        <figcaption>
-          <h2 id="landing-workflow" className="type-section-title">
-            Example workflow
-          </h2>
-        </figcaption>
-        <ol className={styles.stages} role="list">
-          <li className={styles.stage}>
-            <span className={styles.stageNode}>
-              <WallieMark className="size-5" />
-            </span>
-            <span className="font-medium">Plan</span>
-            <span className="text-xs text-muted">Wallie</span>
-          </li>
-          <li className={styles.stage}>
-            <span className={`${styles.stageNode} ${styles.approvalNode}`}>
-              <svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.5" />
-                <path
-                  d="M5 21v-2a7 7 0 0 1 14 0v2"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </span>
-            <span className="font-medium">Approve plan</span>
-            <span className="text-xs text-muted">You</span>
-          </li>
-          <li className={styles.stage}>
-            <span className={styles.stageNode}>
-              <WallieMark className="size-5" />
-            </span>
-            <span className="font-medium">Build</span>
-            <span className="text-xs text-muted">Wallie</span>
-          </li>
-        </ol>
-        <p id="landing-workflow-description" className="text-sm leading-5 text-muted">
-          Wallie starts the build after you approve the plan.
-        </p>
-      </figure>
-
-      <div className={styles.providers}>
-        <h2 id="landing-agents" className="type-label text-muted">
-          Supported coding agents
+    <figure
+      className={styles.workflow}
+      aria-labelledby="landing-workflow"
+      aria-describedby="landing-workflow-description"
+    >
+      <figcaption>
+        <h2 id="landing-workflow" className="type-section-title">
+          Example workflow
         </h2>
+      </figcaption>
+      <ol className={styles.stages} role="list">
+        <li className={styles.stage}>
+          <span className={styles.stageNode}>
+            <WallieMark className="size-5" />
+          </span>
+          <span className="font-semibold">Plan</span>
+          <span className="text-xs text-muted">Wallie</span>
+        </li>
+        <li className={styles.stage}>
+          <span className={`${styles.stageNode} ${styles.approvalNode}`}>
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.5" />
+              <path
+                d="M5 21v-2a7 7 0 0 1 14 0v2"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+            </svg>
+          </span>
+          <span className="font-semibold">Approve plan</span>
+          <span className="text-xs font-medium text-accent">You</span>
+        </li>
+        <li className={styles.stage}>
+          <span className={styles.stageNode}>
+            <WallieMark className="size-5" />
+          </span>
+          <span className="font-semibold">Build</span>
+          <span className="text-xs text-muted">Wallie</span>
+        </li>
+      </ol>
+      <p id="landing-workflow-description" className="type-body text-pretty text-muted">
+        Wallie starts the build after you approve the plan.
+      </p>
+    </figure>
+  );
+}
+
+export function LandingProviders() {
+  return (
+    <section className={styles.providers} aria-labelledby="landing-providers">
+      <h2 className="type-section-title" id="landing-providers">
+        Works with
+      </h2>
+      <div className="min-w-0">
+        <h3 id="landing-agents" className="type-label mb-2 text-muted">
+          Coding agents
+        </h3>
         <ul className={styles.agents} role="list" aria-labelledby="landing-agents">
           {agents.map((provider) => (
             <li key={provider} className={styles.provider} translate="no">
@@ -75,9 +82,11 @@ export function LandingIllustrations() {
             </li>
           ))}
         </ul>
-        <h2 id="landing-sandboxes" className="type-label text-muted">
-          Supported sandboxes
-        </h2>
+      </div>
+      <div className="min-w-0">
+        <h3 id="landing-sandboxes" className="type-label mb-2 text-muted">
+          Sandboxes
+        </h3>
         <ul className={styles.sandboxes} role="list" aria-labelledby="landing-sandboxes">
           {sandboxes.map(({ id, label }) => (
             <li key={id} className={styles.provider} translate="no">
@@ -89,6 +98,6 @@ export function LandingIllustrations() {
           ))}
         </ul>
       </div>
-    </div>
+    </section>
   );
 }
