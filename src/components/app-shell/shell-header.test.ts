@@ -672,6 +672,58 @@ describe("ShellHeader", () => {
     },
   );
 
+  it.each(["viewer", "workspace"] as const)(
+    "does not carry a saved workflow launch across a change of %s at the same URL",
+    async (identity) => {
+      const owner = { viewerId: `workflow-owner-${identity}` };
+      const next =
+        identity === "viewer"
+          ? { viewerId: "another-viewer" }
+          : { ...owner, workspace: { ...workspace, id: "another-workspace" } };
+      const canonicalUrl = "/w/acme-corp/sessions/42";
+      const pending = Promise.withResolvers<{ canonicalUrl: string; number: number }>();
+      clientMocks.createSessionFromClient.mockReset().mockReturnValueOnce(pending.promise);
+      mockWorkflowSessionOptions();
+      mocked.pathname = "/w/acme-corp/sessions";
+      mocked.searchParams = new URLSearchParams({
+        factory: creationFactory.id,
+        create: "1",
+        returnTo: workflowOrigin,
+        workflowActivation: releaseWorkflow.activationId,
+      });
+      const view = mountShell(owner);
+      fireEvent.change(await screen.findByLabelText("Prompt"), {
+        target: { value: "Prepare the original release" },
+      });
+      const submit = screen.getByRole("button", { name: "Start session" });
+      await waitFor(() => expect(submit).toBeEnabled());
+      fireEvent.click(submit);
+
+      mocked.searchParams = new URLSearchParams({ factory: creationFactory.id });
+      view.rerender(shellElement(owner));
+      fireEvent.click(screen.getByRole("button", { name: /Back to workspace/ }));
+      mocked.replace.mockClear();
+      view.rerender(shellElement(next));
+      fireEvent.click(screen.getByRole("button", { name: "New session" }));
+      const dialog = await screen.findByRole("dialog", { name: "Start a new session" });
+      expect(within(dialog).getByLabelText("Prompt")).toHaveValue("");
+      expect(await within(dialog).findByRole("combobox", { name: "Workflow" })).toHaveTextContent(
+        "Default pipeline",
+      );
+      expect(within(dialog).queryByText(releaseWorkflow.label)).toBeNull();
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      expect(mocked.replace).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole("button", { name: "New session" }));
+      expect(screen.getByRole("dialog", { name: "Start a new session" })).toBeVisible();
+      view.rerender(shellElement(owner));
+      expect(screen.queryByRole("dialog", { name: "Start a new session" })).toBeNull();
+      await act(async () => pending.resolve({ canonicalUrl, number: 42 }));
+      expect(mocked.push).not.toHaveBeenCalled();
+      expect(screen.queryByText("Session #42 created.")).toBeNull();
+    },
+  );
+
   it.each([
     { outcome: "success", close: "Escape" },
     { outcome: "rejected", close: "Escape" },

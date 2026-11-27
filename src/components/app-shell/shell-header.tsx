@@ -403,17 +403,20 @@ export function ShellHeader({
   const urlWorkflowActivation = createFromUrl
     ? readSessionLaunchActivation(searchParams)
     : undefined;
-  const [userCreateOpen, setUserCreateOpen] = useState(false);
+  const composerKey = `${viewerId}:${workspace.id}`;
+  const [userCreateOwner, setUserCreateOwner] = useState<string | null>(null);
   const [recoverableLaunch, setRecoverableLaunch] = useState<{
+    composerKey: string;
     location: string;
     activationId?: string | null;
     returnTo: string | null;
   } | null>(null);
-  if (recoverableLaunch && !createFromUrl && recoverableLaunch.location !== locationKey) {
+  const ownedLaunch = recoverableLaunch?.composerKey === composerKey ? recoverableLaunch : null;
+  const launchOnLocation = ownedLaunch?.location === locationKey ? ownedLaunch : null;
+  if (recoverableLaunch && (!ownedLaunch || (!createFromUrl && !launchOnLocation))) {
     setRecoverableLaunch(null);
   }
   const clearRecoverableLaunch = useCallback(() => setRecoverableLaunch(null), []);
-  const launchOnLocation = recoverableLaunch?.location === locationKey ? recoverableLaunch : null;
   const returnTo = createFromUrl
     ? resolveSessionReturnTo(returnParam, workspace.slug)
     : (launchOnLocation?.returnTo ?? null);
@@ -421,17 +424,18 @@ export function ShellHeader({
     ? urlWorkflowActivation
     : launchOnLocation?.activationId;
   const launchKey = JSON.stringify({ workflowLaunchActivationId, returnTo });
-  const composerKey = `${viewerId}:${workspace.id}`;
   const createUrlKey = JSON.stringify([composerKey, pathname, creationFactoryQuery, launchKey]);
   const [dismissedCreateUrlKey, setDismissedCreateUrlKey] = useState<string | null>(null);
   if (!createFromUrl && dismissedCreateUrlKey) setDismissedCreateUrlKey(null);
   // Leaving the direct scope closes the dialog but keeps it mounted: drafts and
   // attachments live inside it. Reopening takes an explicit new action.
-  if (!creationScope && userCreateOpen) setUserCreateOpen(false);
+  if (userCreateOwner !== null && (userCreateOwner !== composerKey || !creationScope)) {
+    setUserCreateOwner(null);
+  }
   const createOpen =
     creationScope !== null &&
     !shouldResumeSetup &&
-    (userCreateOpen || (createFromUrl && dismissedCreateUrlKey !== createUrlKey));
+    (userCreateOwner === composerKey || (createFromUrl && dismissedCreateUrlKey !== createUrlKey));
   const previewLocationKey = creationFactoryQuery && !shouldResumeSetup ? createUrlKey : null;
   const [creationPreview, setCreationPreview] = useState<{
     locationKey: string;
@@ -451,7 +455,7 @@ export function ShellHeader({
   const handleCreateReopen = useCallback(
     (submittedFactoryId?: string) => {
       if (!submittedFactoryId) {
-        setUserCreateOpen(true);
+        setUserCreateOwner(composerKey);
         return;
       }
       const href = sessionLaunchHref(
@@ -522,7 +526,7 @@ export function ShellHeader({
 
   const handleCreateClose = useCallback(
     (reason?: "preview") => {
-      setUserCreateOpen(false);
+      setUserCreateOwner(null);
       const cleanHref = withoutSessionLaunch(pathname, search);
       if (createFromUrl) {
         setDismissedCreateUrlKey(createUrlKey);
@@ -530,6 +534,7 @@ export function ShellHeader({
       if (reason === "preview") {
         if (createFromUrl) {
           setRecoverableLaunch({
+            composerKey,
             location: cleanHref,
             activationId: urlWorkflowActivation,
             returnTo,
@@ -550,6 +555,7 @@ export function ShellHeader({
     },
     [
       clearRecoverableLaunch,
+      composerKey,
       createFromUrl,
       createUrlKey,
       creationFactoryQuery,
@@ -639,7 +645,7 @@ export function ShellHeader({
         aria-label="New session"
         onClick={() => {
           startInteraction("open_create_dialog", interactionRouteTemplateForPath(pathname));
-          setUserCreateOpen(true);
+          setUserCreateOwner(composerKey);
         }}
         onFocus={preloadCreateDialog}
         onPointerEnter={preloadCreateDialog}
