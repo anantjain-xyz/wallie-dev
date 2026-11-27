@@ -26,6 +26,7 @@ const ibmPlexMono = IBM_Plex_Mono({
   adjustFontFallback: true,
   display: "swap",
   fallback: ["Courier New"],
+  preload: false,
   subsets: ["latin"],
   variable: "--font-ibm-plex-mono",
   weight: ["400", "500", "600", "700"],
