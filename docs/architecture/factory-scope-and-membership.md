@@ -91,5 +91,12 @@ membership and audit routes. Routes call the service-role command RPCs only afte
 `requireWorkspaceAccessById`; the database independently checks the same actor
 and factory-manager authority.
 
+In Workspace Settings, managers can rename the selected active factory without
+changing its address (`rename_factory` rejects stale names). Archive goes through
+`archive_additional_factory`, which preserves the workspace default and calls the
+existing archive command for every other factory. Archived factories keep their
+history and grants; restore before editing them in Settings. Factory grants never
+change workspace roles or access to other factories.
+
 See [Factory definition records](factory-definition-records.md) for definition
 draft, revision and activation history.

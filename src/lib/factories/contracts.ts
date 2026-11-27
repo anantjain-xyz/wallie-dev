@@ -6,13 +6,15 @@ export const FACTORY_NAME_MAX_LENGTH = 120;
 export const FACTORY_SLUG_MAX_LENGTH = 60;
 export const FACTORY_SLUG_TAKEN = "factory_slug_taken";
 
+export const factoryNameSchema = z
+  .string()
+  .trim()
+  .min(1, "Enter a factory name.")
+  .max(FACTORY_NAME_MAX_LENGTH, `Use ${FACTORY_NAME_MAX_LENGTH} characters or fewer.`);
+
 export const createFactorySchema = z
   .object({
-    name: z
-      .string()
-      .trim()
-      .min(1, "Enter a factory name.")
-      .max(FACTORY_NAME_MAX_LENGTH, `Use ${FACTORY_NAME_MAX_LENGTH} characters or fewer.`),
+    name: factoryNameSchema,
     slug: z
       .string()
       .trim()

@@ -10826,6 +10826,33 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      archive_additional_factory: {
+        Args: {
+          p_actor_user_id: string
+          p_factory_id: string
+          p_reason?: string
+          p_workspace_id: string
+        }
+        Returns: {
+          archived_at: string | null
+          archived_by: string | null
+          archived_reason: string | null
+          created_at: string
+          id: string
+          is_default: boolean
+          name: string
+          slug: string
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factories"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       archive_factory: {
         Args: {
           p_actor_user_id: string
@@ -16922,6 +16949,34 @@ export type Database = {
           id: string
           role: Database["public"]["Enums"]["member_role"]
         }[]
+      }
+      rename_factory: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_name: string
+          p_factory_id: string
+          p_name: string
+          p_workspace_id: string
+        }
+        Returns: {
+          archived_at: string | null
+          archived_by: string | null
+          archived_reason: string | null
+          created_at: string
+          id: string
+          is_default: boolean
+          name: string
+          slug: string
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factories"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       request_factory_diagnosis: {
         Args: {
