@@ -711,7 +711,45 @@ select throws_ok($$update public.factory_members
   'grant attribution stays immutable outside FK cleanup');
 set local role service_role;
 
-select lives_ok($$select public.archive_factory(
+select ok(
+  (select convalidated from pg_constraint
+    where conrelid = 'public.factory_audit_events'::regclass
+      and conname = 'factory_audit_events_action_check'),
+  'the widened factory audit constraint is validated by a separate migration');
+select throws_ok($$select public.archive_additional_factory(
+  '55000000-0000-4000-8000-000000000001',
+  (select id from public.factories where workspace_id = '55000000-0000-4000-8000-000000000001' and is_default),
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  'Reserved default')$$,
+  '23514', 'The workspace default factory cannot be archived.',
+  'even a workspace owner cannot archive the reserved default from Settings');
+select throws_ok($$select public.rename_factory(
+  '55000000-0000-4000-8000-000000000001',
+  (select id from public.factories where workspace_id = '55000000-0000-4000-8000-000000000001' and slug = 'payments'),
+  'b1b2c3d4-0002-4000-8000-000000000002',
+  'Payments', 'Unauthorized rename')$$,
+  '42501', null, 'a non-manager cannot rename a factory');
+select results_eq($$select name, slug, status, is_default from public.rename_factory(
+  '55000000-0000-4000-8000-000000000001',
+  (select id from public.factories where workspace_id = '55000000-0000-4000-8000-000000000001' and slug = 'payments'),
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  'Payments', ' Payments Ops ')$$,
+  $$values ('Payments Ops'::text, 'payments'::text, 'active'::text, false)$$,
+  'an owner can rename the factory without changing its address, state, or default designation');
+select throws_ok($$select public.rename_factory(
+  '55000000-0000-4000-8000-000000000001',
+  (select id from public.factories where workspace_id = '55000000-0000-4000-8000-000000000001' and slug = 'payments'),
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  'Payments', 'Stale rename')$$,
+  'PT409', 'The factory name changed.', 'a stale name cannot overwrite the newer name');
+select is(
+  (select count(*) from public.factory_audit_events
+    where workspace_id = '55000000-0000-4000-8000-000000000001' and action = 'factory.renamed'
+      and detail = '{"previousName":"Payments","name":"Payments Ops"}'::jsonb),
+  1::bigint,
+  'renaming records exactly one audit event naming the previous and current display name');
+
+select lives_ok($$select public.archive_additional_factory(
   '55000000-0000-4000-8000-000000000001',
   (select id from public.factories where workspace_id = '55000000-0000-4000-8000-000000000001' and slug = 'payments'),
   'b1b2c3d4-0001-4000-8000-000000000001',
@@ -727,6 +765,12 @@ select is(
     where workspace_id = '55000000-0000-4000-8000-000000000001' and action = 'factory.archived'),
   1::bigint,
   'archiving records an audit event with the operator and reason');
+select throws_ok($$select public.rename_factory(
+  '55000000-0000-4000-8000-000000000001',
+  (select id from public.factories where workspace_id = '55000000-0000-4000-8000-000000000001' and slug = 'payments'),
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  'Payments Ops', 'Archived rename')$$,
+  'P0011', 'Factory is archived.', 'an archived factory cannot be renamed until it is restored');
 select throws_ok($$insert into public.sessions(
   id, workspace_id, factory_id, number, title, creator_member_id, pipeline_id, current_stage_id
 ) values (
