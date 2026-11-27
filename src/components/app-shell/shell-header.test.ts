@@ -55,6 +55,12 @@ const defaultOptions = [
   { ...creationFactory, isDefault: true, status: "active", canManage: true },
   { id: "other-factory", name: "Mobile", isDefault: false, status: "active" },
 ] satisfies FactorySelectionOption[];
+const releaseWorkflow = {
+  workflowId: "00000000-0000-4000-8000-000000000011",
+  activationId: "00000000-0000-4000-8000-000000000012",
+  label: "Release workflow",
+};
+const workflowOrigin = "/w/acme-corp/workflows?factory=factory-1&q=release#workflow-release";
 
 type HeaderProps = Omit<Parameters<typeof ShellHeader>[0], "children">;
 
@@ -123,6 +129,14 @@ function mockScopedSessionOptions(definitionDigest?: string) {
       repositoryOptions: [{ id: "repo", fullName: "examples/product" }],
       stageOptions: [{ id: "plan", name: "Plan", position: 0, description: "" }],
     }),
+  );
+}
+
+function mockWorkflowSessionOptions() {
+  const definitionDigest = "d".repeat(64);
+  mockScopedSessionOptions(definitionDigest);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    Response.json({ definitionDigest, options: [releaseWorkflow] }),
   );
 }
 
@@ -369,18 +383,6 @@ describe("ShellHeader", () => {
     const fromAll = outcome === "unconfirmed";
     const launch = outcome === "workflow";
     const target = fromAll ? defaultOptions[1] : creationFactory;
-    const workflow = {
-      workflowId: "00000000-0000-4000-8000-000000000011",
-      activationId: "00000000-0000-4000-8000-000000000012",
-      label: "Release workflow",
-    };
-    const origin = "/w/acme-corp/workflows?factory=factory-1&q=release#workflow-release";
-    const definitionDigest = "d".repeat(64);
-    if (launch) {
-      vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-        Response.json({ definitionDigest, options: [workflow] }),
-      );
-    }
     const archivedFactory = {
       id: "archive",
       name: "Archive",
@@ -397,13 +399,18 @@ describe("ShellHeader", () => {
     const pending = Promise.withResolvers<{ canonicalUrl: string; number: number }>();
     clientMocks.createSessionFromClient.mockReset().mockReturnValueOnce(pending.promise);
     clientMocks.loadSessionCreationFactoriesFromClient.mockResolvedValue(defaultOptions);
-    mockScopedSessionOptions(launch ? definitionDigest : undefined);
+    if (launch) mockWorkflowSessionOptions();
+    else mockScopedSessionOptions();
 
     mocked.pathname = "/w/acme-corp/sessions";
     mocked.searchParams = new URLSearchParams({
       factory: fromAll ? "all" : target.id,
       ...(launch
-        ? { create: "1", returnTo: origin, workflowActivation: workflow.activationId }
+        ? {
+            create: "1",
+            returnTo: workflowOrigin,
+            workflowActivation: releaseWorkflow.activationId,
+          }
         : {}),
     });
     const view = render(shellElement(header, createElement("h1", null, "Sessions")));
@@ -427,8 +434,8 @@ describe("ShellHeader", () => {
       const cleanUrl = `${mocked.pathname}?factory=${target.id}`;
       expect(mocked.replace).toHaveBeenCalledExactlyOnceWith(cleanUrl, { scroll: false });
       expect(original.workflowSelection).toEqual({
-        workflowId: workflow.workflowId,
-        activationId: workflow.activationId,
+        workflowId: releaseWorkflow.workflowId,
+        activationId: releaseWorkflow.activationId,
       });
       mocked.searchParams = new URLSearchParams({ factory: target.id });
       view.rerender(shellElement(header, createElement("h1", null, "Sessions")));
@@ -485,7 +492,9 @@ describe("ShellHeader", () => {
     const recoveryQuery = new URLSearchParams({
       factory: target.id,
       create: "1",
-      ...(launch ? { returnTo: origin, workflowActivation: workflow.activationId } : {}),
+      ...(launch
+        ? { returnTo: workflowOrigin, workflowActivation: releaseWorkflow.activationId }
+        : {}),
     });
     expect(mocked.push.mock.lastCall?.[0]).toBe(`${mocked.pathname}?${recoveryQuery}`);
     expect(screen.queryByRole("dialog", { name: "Start a new session" })).toBeNull();
@@ -504,9 +513,9 @@ describe("ShellHeader", () => {
     const recovered = await screen.findByRole("dialog", { name: "Start a new session" });
     expect(within(recovered).getByLabelText("Prompt")).toHaveValue(draftPrompt);
     if (launch) {
-      expect(await within(recovered).findByText(workflow.label)).toBeVisible();
+      expect(await within(recovered).findByText(releaseWorkflow.label)).toBeVisible();
       fireEvent.keyDown(recovered, { key: "Escape" });
-      expect(mocked.replace).toHaveBeenLastCalledWith(origin, { scroll: true });
+      expect(mocked.replace).toHaveBeenLastCalledWith(workflowOrigin, { scroll: true });
       return;
     }
     const unconfirmed = outcome === "unconfirmed";
@@ -571,18 +580,82 @@ describe("ShellHeader", () => {
       view.rerender(shellElement(header));
       expect(screen.queryByRole("region", { name: "Creating session" })).toBeNull();
 
-      const origin = "/w/acme-corp/workflows?factory=factory-1&q=release#workflow-release";
       mocked.pathname = sessions;
       mocked.searchParams = new URLSearchParams({
         factory: creationFactory.id,
         create: "1",
-        returnTo: origin,
-        workflowActivation: "00000000-0000-4000-8000-000000000012",
+        returnTo: workflowOrigin,
+        workflowActivation: releaseWorkflow.activationId,
       });
       view.rerender(shellElement(header));
       const dialog = await screen.findByRole("dialog", { name: "Start a new session" });
       fireEvent.keyDown(dialog, { key: "Escape" });
-      expect(mocked.replace).toHaveBeenLastCalledWith(origin, { scroll: true });
+      expect(mocked.replace).toHaveBeenLastCalledWith(workflowOrigin, { scroll: true });
+    },
+  );
+
+  it.each(["resume the preview", "resume after Back", "start after completion"] as const)(
+    "keeps a launch for its pending draft only when choosing to %s",
+    async (action) => {
+      const header = { viewerId: `launch-${action}` };
+      const canonicalUrl = "/w/acme-corp/sessions/42";
+      const pending = Promise.withResolvers<{ canonicalUrl: string; number: number }>();
+      const rejected = Object.assign(new Error("Repository unavailable"), {
+        creationRejected: true,
+      });
+      const draft = "Prepare the release checklist";
+      clientMocks.createSessionFromClient
+        .mockReset()
+        .mockReturnValueOnce(pending.promise)
+        .mockRejectedValueOnce(rejected);
+      mockWorkflowSessionOptions();
+      mocked.pathname = "/w/acme-corp/sessions";
+      mocked.searchParams = new URLSearchParams({
+        factory: creationFactory.id,
+        create: "1",
+        returnTo: workflowOrigin,
+        workflowActivation: releaseWorkflow.activationId,
+      });
+      const view = mountShell(header);
+      fireEvent.change(await screen.findByLabelText("Prompt"), { target: { value: draft } });
+      const submit = screen.getByRole("button", { name: "Start session" });
+      await waitFor(() => expect(submit).toBeEnabled());
+      fireEvent.click(submit);
+      const [original] = clientMocks.createSessionFromClient.mock.calls[0];
+      expect(original.workflowSelection).toEqual({
+        workflowId: releaseWorkflow.workflowId,
+        activationId: releaseWorkflow.activationId,
+      });
+      mocked.searchParams = new URLSearchParams({ factory: creationFactory.id });
+      view.rerender(shellElement(header));
+      const back = screen.getByRole("button", { name: /Back to workspace/ });
+      if (action !== "resume the preview") fireEvent.click(back);
+
+      if (action === "start after completion") {
+        await act(async () => pending.resolve({ canonicalUrl, number: 42 }));
+        expect(mocked.push).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole("button", { name: "New session" }));
+        expect(await screen.findByLabelText("Prompt")).toHaveValue("");
+        expect(await screen.findByRole("combobox", { name: "Workflow" })).toHaveTextContent(
+          "Default pipeline",
+        );
+        return;
+      }
+
+      fireEvent.click(screen.getByRole("button", { name: "New session" }));
+      expect(screen.getByRole("region", { name: "Creating session" })).toBeVisible();
+      await act(async () => pending.reject(rejected));
+      expect(await screen.findByText(releaseWorkflow.label)).toBeVisible();
+      expect(screen.getByLabelText("Prompt")).toHaveValue(draft);
+      const retry = screen.getByRole("button", { name: "Start session" });
+      await waitFor(() => expect(retry).toBeEnabled());
+      await act(async () => fireEvent.click(retry));
+      const [resubmitted] = clientMocks.createSessionFromClient.mock.calls[1];
+      expect(resubmitted.workflowSelection).toEqual(original.workflowSelection);
+      fireEvent.keyDown(screen.getByRole("dialog", { name: "Start a new session" }), {
+        key: "Escape",
+      });
+      expect(mocked.replace).toHaveBeenLastCalledWith(workflowOrigin, { scroll: true });
     },
   );
 

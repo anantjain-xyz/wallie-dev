@@ -412,6 +412,7 @@ export function ShellHeader({
   if (recoverableLaunch && !createFromUrl && recoverableLaunch.location !== locationKey) {
     setRecoverableLaunch(null);
   }
+  const clearRecoverableLaunch = useCallback(() => setRecoverableLaunch(null), []);
   const launchOnLocation = recoverableLaunch?.location === locationKey ? recoverableLaunch : null;
   const returnTo = createFromUrl
     ? resolveSessionReturnTo(returnParam, workspace.slug)
@@ -534,12 +535,13 @@ export function ShellHeader({
         (createFromUrl && pathname !== sessionsHref
           ? workspaceSessionsPath(workspace.slug, { factory: creationFactoryQuery })
           : cleanHref + window.location.hash);
-      setRecoverableLaunch(null);
+      clearRecoverableLaunch();
       pendingFocusHref.current = destination.split("#", 1)[0];
       if (!createFromUrl && pendingFocusHref.current === locationKey) return;
       router.replace(destination, { scroll: destination.split(/[?#]/u, 1)[0] !== pathname });
     },
     [
+      clearRecoverableLaunch,
       createFromUrl,
       createUrlKey,
       creationFactoryQuery,
@@ -629,7 +631,6 @@ export function ShellHeader({
         aria-label="New session"
         onClick={() => {
           startInteraction("open_create_dialog", interactionRouteTemplateForPath(pathname));
-          setRecoverableLaunch(null);
           setUserCreateOpen(true);
         }}
         onFocus={preloadCreateDialog}
@@ -776,6 +777,7 @@ export function ShellHeader({
           open={createOpen}
           onClose={handleCreateClose}
           onCloseAutoFocus={handleCreateCloseAutoFocus}
+          onDraftReset={clearRecoverableLaunch}
           onPreviewChange={handleCreationPreview}
           onReopen={handleCreateReopen}
           userId={viewerId}

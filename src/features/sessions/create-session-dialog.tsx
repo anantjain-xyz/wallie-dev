@@ -81,6 +81,7 @@ type CreateSessionDialogProps = {
   creationScope?: SessionCreationScope;
   onClose: (reason?: "preview") => void;
   onCloseAutoFocus?: () => void;
+  onDraftReset?: () => void;
   onPreviewChange?: (preview: SessionCreationPreview | null) => void;
   onReopen?: (submittedFactoryId?: string) => void;
   open: boolean;
@@ -152,9 +153,12 @@ export function isCreateSessionSubmitDisabled(input: {
 
 // Keep a draft in the workspace shell's memory until it is submitted or discarded.
 // The key also prevents a draft from crossing account or workspace boundaries.
-export function CreateSessionDialog(props: CreateSessionDialogProps) {
+export function CreateSessionDialog({ onDraftReset, ...props }: CreateSessionDialogProps) {
   const [revision, setRevision] = useState(0);
-  const reset = useCallback(() => setRevision((current) => current + 1), []);
+  const reset = useCallback(() => {
+    onDraftReset?.();
+    setRevision((current) => current + 1);
+  }, [onDraftReset]);
   return (
     <CreateSessionDialogBody
       {...props}
