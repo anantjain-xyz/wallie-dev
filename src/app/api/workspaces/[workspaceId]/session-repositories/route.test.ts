@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
   loadActiveFactoryExecution: vi.fn(),
+  loadBrowserSessionFactories: vi.fn(),
   loadDefaultPipelineForWorkspace: vi.fn(),
   loadSessionRepositoryOptionsWithPrimary: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
@@ -9,6 +10,11 @@ const mocked = vi.hoisted(() => ({
 
 vi.mock("@/lib/factory-definitions/runtime-definition", () => ({
   loadActiveFactoryExecution: mocked.loadActiveFactoryExecution,
+}));
+
+vi.mock("@/lib/sessions/browser-factory", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/sessions/browser-factory")>()),
+  loadBrowserSessionFactories: mocked.loadBrowserSessionFactories,
 }));
 
 vi.mock("@/features/sessions/repository-options", async (importOriginal) => {
@@ -30,6 +36,8 @@ vi.mock("@/lib/pipeline/stages", () => ({
 import { GET } from "./route";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
+const DEFAULT_FACTORY_ID = "00000000-0000-4000-8000-000000000009";
+const BENCH_FACTORY_ID = "00000000-0000-4000-8000-000000000010";
 
 function routeContext(workspaceId = WORKSPACE_ID) {
   return { params: Promise.resolve({ workspaceId }) };
@@ -67,6 +75,11 @@ describe("session repositories route", () => {
 
   beforeEach(() => {
     mocked.loadActiveFactoryExecution.mockResolvedValue(null);
+    mocked.loadBrowserSessionFactories
+      .mockReset()
+      .mockResolvedValue([
+        { id: DEFAULT_FACTORY_ID, isDefault: true, name: "Default factory", status: "active" },
+      ]);
     mocked.loadDefaultPipelineForWorkspace.mockResolvedValue({
       id: "pipeline-1",
       isDefault: true,
@@ -113,10 +126,54 @@ describe("session repositories route", () => {
     });
     expect(mocked.loadSessionRepositoryOptionsWithPrimary).toHaveBeenCalledTimes(1);
     expect(mocked.loadSessionRepositoryOptionsWithPrimary).toHaveBeenCalledWith({
+      factoryId: DEFAULT_FACTORY_ID,
       supabase,
       workspaceId: WORKSPACE_ID,
     });
   });
+
+  it("does not use legacy options when the requested factory needs publication", async () => {
+    const supabase = grantAccess(null, "admin");
+    mocked.loadBrowserSessionFactories.mockResolvedValueOnce([
+      { id: BENCH_FACTORY_ID, isDefault: false, name: "Bench factory", status: "active" },
+    ]);
+    const response = await GET(
+      new Request(`http://localhost?factoryId=${BENCH_FACTORY_ID}`),
+      routeContext(),
+    );
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({
+      error: "Publish a factory definition before starting a session here.",
+      setupHref: `/w/wallie/settings/factory-definition?factory=${BENCH_FACTORY_ID}#factory-setup`,
+    });
+    expect(mocked.loadActiveFactoryExecution).toHaveBeenCalledExactlyOnceWith(
+      supabase,
+      WORKSPACE_ID,
+      BENCH_FACTORY_ID,
+    );
+    expect(mocked.loadSessionRepositoryOptionsWithPrimary).not.toHaveBeenCalled();
+    expect(mocked.loadDefaultPipelineForWorkspace).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["all", 400],
+    [`${BENCH_FACTORY_ID}&factoryId=${DEFAULT_FACTORY_ID}`, 400],
+    [BENCH_FACTORY_ID, 404],
+  ])(
+    "rejects invalid or inaccessible factory scope %s without fetching options",
+    async (query, status) => {
+      grantAccess();
+      mocked.loadBrowserSessionFactories.mockResolvedValueOnce([]);
+      const response = await GET(
+        new Request(`http://localhost?factoryId=${query}`),
+        routeContext(),
+      );
+      expect(response.status).toBe(status);
+      expect(mocked.loadActiveFactoryExecution).not.toHaveBeenCalled();
+      expect(mocked.loadSessionRepositoryOptionsWithPrimary).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     [

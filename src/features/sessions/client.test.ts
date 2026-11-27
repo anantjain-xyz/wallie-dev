@@ -43,6 +43,7 @@ describe("createSessionFromClient", () => {
     const factoryDefinitionDigest = "d".repeat(64);
     await createSessionFromClient({
       factoryDefinitionDigest,
+      factoryId: "33333333-3333-4333-8333-333333333333",
       promptMd: "Build it",
       requestId: SESSION_ID,
       routingOverride,
@@ -51,6 +52,7 @@ describe("createSessionFromClient", () => {
     const [, request] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(String(request.body))).toMatchObject({
       factoryDefinitionDigest,
+      factoryId: "33333333-3333-4333-8333-333333333333",
       requestId: SESSION_ID,
       routingOverride,
     });
@@ -239,6 +241,26 @@ describe("createSessionFromClient", () => {
 describe("loadSessionRepositoryOptionsFromClient", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("does not use a successful options response from a different factory", async () => {
+    const factoryId = "33333333-3333-4333-8333-333333333333";
+    const fetchMock = mockFetch({
+      body: {
+        factoryId: "44444444-4444-4444-8444-444444444444",
+        linearIssueLinking: false,
+        repositoryOptions: [],
+        stageOptions: [],
+      },
+      ok: true,
+    });
+    await expect(
+      loadSessionRepositoryOptionsFromClient({ factoryId, workspaceId: WORKSPACE_ID }),
+    ).rejects.toThrow("Session options response was invalid.");
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/workspaces/${WORKSPACE_ID}/session-repositories?factoryId=${factoryId}`,
+      { cache: "no-store", method: "GET" },
+    );
   });
 
   it("loads repository options lazily for the workspace", async () => {

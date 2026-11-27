@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { z } from "zod/v4";
 
@@ -20,6 +21,10 @@ import {
   uploadSessionAttachmentFromClient,
   type CreateSessionInput,
 } from "@/features/sessions/client";
+import {
+  useSessionCreationDestination,
+  type SessionCreationScope,
+} from "@/features/sessions/creation-destination";
 import { deriveSessionTitleFromPrompt } from "@/features/sessions/types";
 import {
   PendingSessionCreation,
@@ -57,6 +62,8 @@ import { finishInteraction } from "@/lib/telemetry/interaction-rum";
 import { workflowIntakeSelectionSchema } from "@/lib/factory-workflows/intake-selection";
 import { workflowAuthoringApiPath } from "@/lib/routes";
 
+export type { SessionCreationScope } from "@/features/sessions/creation-destination";
+
 const intakeOptionsSchema = z
   .object({
     definitionDigest: z
@@ -71,6 +78,7 @@ const defaultWorkflowOption = { label: "Default pipeline", value: "" };
 type CreateSessionDialogProps = {
   creationFactoryId?: string;
   creationFactoryName?: string;
+  creationScope?: SessionCreationScope;
   onClose: () => void;
   onCloseAutoFocus?: () => void;
   onPreviewChange?: (preview: SessionCreationPreview | null) => void;
@@ -86,6 +94,7 @@ type OverrideTarget = RoutingOverrideOptions["targets"][number];
 
 type SessionCreationAttempt = {
   input: CreateSessionInput;
+  scopeKey: string;
   snapshot: PendingSessionSnapshot;
   workflowLabel: string;
 };
@@ -158,6 +167,7 @@ export function CreateSessionDialog(props: CreateSessionDialogProps) {
 function CreateSessionDialogBody({
   creationFactoryId,
   creationFactoryName,
+  creationScope,
   onClose,
   onCloseAutoFocus,
   onPreviewChange,
@@ -180,6 +190,7 @@ function CreateSessionDialogBody({
   }, [dismissToast]);
   const { startNavigation } = useOptionalRouteProgress();
   const errorRef = useRef<HTMLDivElement>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
   const submitInFlightRef = useRef(false);
   const sessionCommittedRef = useRef(false);
   const disposedRef = useRef(false);
@@ -188,22 +199,37 @@ function CreateSessionDialogBody({
   const previewVisibleRef = useRef(false);
   const [unconfirmedAttempt, setUnconfirmedAttempt] = useState<SessionCreationAttempt | null>(null);
   const unconfirmed = unconfirmedAttempt !== null;
+  const destination = useSessionCreationDestination(creationScope, open, workspaceId);
+  const targetFactoryId = destination.factory?.id.toLowerCase();
+  const targetFactoryName = creationScope
+    ? destination.catalogIsCurrent
+      ? destination.factory?.name
+      : undefined
+    : creationFactoryName;
+  const workflowFactoryId = creationScope ? targetFactoryId : creationFactoryId;
+  const scopeKey = `${creationScope?.kind ?? "legacy"}:${targetFactoryId ?? ""}`;
+  const dialogContextRef = useRef({ open, scopeKey });
+  useLayoutEffect(() => {
+    dialogContextRef.current = { open, scopeKey };
+  }, [open, scopeKey]);
   const workflowLaunchRequested = workflowLaunchActivationId !== undefined;
   const workflowLaunchConflictsWithRetry =
     workflowLaunchRequested &&
     unconfirmed &&
     (!workflowLaunchActivationId ||
       workflowLaunchActivationId !== unconfirmedAttempt.input.workflowSelection?.activationId);
+  const factoryConflictsWithRetry =
+    unconfirmed && unconfirmedAttempt.input.factoryId !== targetFactoryId;
 
   const refreshImagesOnOpen = useEffectEvent(() => {
     clearRecoveryToast();
     if (sessionCommittedRef.current) {
       onPreviewChange?.(null);
       onReset();
-    } else if (attemptRef.current && isSubmitting && onPreviewChange) {
+    } else if (attemptRef.current?.scopeKey === scopeKey && isSubmitting && onPreviewChange) {
       showPendingPreview(attemptRef.current.snapshot);
       onClose();
-    } else if (!attemptRef.current) {
+    } else if (!attemptRef.current && scopeOptionsReady) {
       refreshExpiredImages();
     }
   });
@@ -214,7 +240,7 @@ function CreateSessionDialogBody({
       previewVisibleRef.current = false;
       onPreviewChange?.(null);
     }
-  }, [pathname, onPreviewChange, onReset]);
+  }, [pathname, scopeKey, onPreviewChange, onReset]);
 
   useEffect(() => {
     const dismissForNavigation = () => {
@@ -235,9 +261,17 @@ function CreateSessionDialogBody({
     if (open) {
       refreshImagesOnOpen();
       finishInteraction("open_create_dialog", "success");
-      void preloadSessionRepositories({ userId, workspaceId }).catch(() => undefined);
     }
-  }, [open, userId, workspaceId]);
+  }, [open]);
+
+  const scoped = Boolean(creationScope);
+  useEffect(() => {
+    if (open && destination.catalogIsCurrent && (!scoped || targetFactoryId)) {
+      void preloadSessionRepositories({ userId, workspaceId, factoryId: targetFactoryId }).catch(
+        () => undefined,
+      );
+    }
+  }, [open, destination.catalogIsCurrent, scoped, targetFactoryId, userId, workspaceId]);
 
   const [prompt, setPrompt] = useState("");
   const [manualDraftSpecification, setDraftSpecification] = useState(false);
@@ -262,7 +296,7 @@ function CreateSessionDialogBody({
   const [imageDrafts, setImageDrafts] = useState<SessionImageDraft[]>([]);
   const [attachmentMessage, setAttachmentMessage] = useState<string | null>(null);
   const [title, setTitle] = useState("");
-  const [linearUrl, setLinearUrl] = useState("");
+  const [linearDraftUrl, setLinearUrl] = useState("");
   const [githubRepositoryId, setGithubRepositoryId] = useState("");
   const [excludedStageIds, setExcludedStageIds] = useState<string[]>([]);
   const [manualOverrideChoice, setOverrideChoice] = useState<{
@@ -273,13 +307,41 @@ function CreateSessionDialogBody({
   const [overrideReason, setOverrideReason] = useState("");
   const [linearError, setLinearError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [setupHref, setSetupHref] = useState<string>();
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const repositoryCacheKey = { userId, workspaceId };
+  const [fieldsFactoryId, setFieldsFactoryId] = useState(targetFactoryId);
+  if (fieldsFactoryId !== targetFactoryId) {
+    setFieldsFactoryId(targetFactoryId);
+    setGithubRepositoryId("");
+    setExcludedStageIds([]);
+    setWorkflowActivationId("");
+    setWorkflowCatalog(null);
+    setDraftSpecification(false);
+    setOverrideChoice(null);
+    setOverrideReason("");
+    setLinearError(null);
+    setErrorMessage(null);
+    setSetupHref(undefined);
+  }
+  const repositoryCacheKey =
+    scoped && (!targetFactoryId || !destination.catalogIsCurrent)
+      ? null
+      : { userId, workspaceId, factoryId: targetFactoryId };
   const repositorySnapshot = useSessionRepositories(repositoryCacheKey);
+  const scopeOptionsReady =
+    !scoped ||
+    Boolean(
+      targetFactoryId &&
+      repositorySnapshot.data?.factoryId === targetFactoryId &&
+      !repositorySnapshot.isStale,
+    );
+  const linearIssueLinking =
+    !scoped || (scopeOptionsReady && repositorySnapshot.data?.linearIssueLinking === true);
+  const linearUrl = linearIssueLinking ? linearDraftUrl : "";
   const factoryDefinitionDigest = repositorySnapshot.data?.factoryDefinitionDigest;
   const canDraftSpecification = repositorySnapshot.data?.canDraftSpecification === true;
   const currentWorkflowCatalog =
-    workflowCatalog?.factoryId === creationFactoryId &&
+    workflowCatalog?.factoryId === workflowFactoryId &&
     workflowCatalog?.definitionDigest === factoryDefinitionDigest &&
     !repositorySnapshot.isStale
       ? workflowCatalog
@@ -288,9 +350,9 @@ function CreateSessionDialogBody({
   const workflowOptionsError = currentWorkflowCatalog?.options === null;
 
   useEffect(() => {
-    if (!open || !creationFactoryId || !factoryDefinitionDigest) return;
+    if (!open || !workflowFactoryId || !factoryDefinitionDigest) return;
     const controller = new AbortController();
-    void fetch(`${workflowAuthoringApiPath(workspaceId, creationFactoryId)}/intake-options`, {
+    void fetch(`${workflowAuthoringApiPath(workspaceId, workflowFactoryId)}/intake-options`, {
       cache: "no-store",
       signal: controller.signal,
     })
@@ -300,15 +362,15 @@ function CreateSessionDialogBody({
         if (controller.signal.aborted) return;
         if (result.definitionDigest && result.definitionDigest !== factoryDefinitionDigest) {
           setWorkflowCatalog({
-            factoryId: creationFactoryId,
+            factoryId: workflowFactoryId,
             definitionDigest: factoryDefinitionDigest,
             options: null,
           });
-          invalidateSessionRepositoryCache(workspaceId);
+          invalidateSessionRepositoryCache(workspaceId, targetFactoryId);
           return;
         }
         setWorkflowCatalog({
-          factoryId: creationFactoryId,
+          factoryId: workflowFactoryId,
           definitionDigest: result.definitionDigest ?? factoryDefinitionDigest,
           options: result.options,
         });
@@ -316,14 +378,21 @@ function CreateSessionDialogBody({
       .catch(() => {
         if (!controller.signal.aborted) {
           setWorkflowCatalog({
-            factoryId: creationFactoryId,
+            factoryId: workflowFactoryId,
             definitionDigest: factoryDefinitionDigest,
             options: null,
           });
         }
       });
     return () => controller.abort();
-  }, [open, creationFactoryId, factoryDefinitionDigest, workflowOptionsRevision, workspaceId]);
+  }, [
+    open,
+    workflowFactoryId,
+    factoryDefinitionDigest,
+    targetFactoryId,
+    workflowOptionsRevision,
+    workspaceId,
+  ]);
   const specificationUnavailable = draftSpecification && !canDraftSpecification;
   const specificationReadiness =
     "This factory needs an available named agent to draft a specification. Uncheck to start without one.";
@@ -333,7 +402,9 @@ function CreateSessionDialogBody({
   const selectedStageIds = stageOptions
     .filter((stage) => factoryDefinitionDigest || !excludedStageIdSet.has(stage.id))
     .map((stage) => stage.id);
-  const hasBlockingAttachments = imageDrafts.some((image) => image.status !== "ready");
+  const hasBlockingAttachments = imageDrafts.some(
+    (image) => image.status !== "ready" && image.status !== "local",
+  );
   const hasActiveAttachmentOperation = imageDrafts.some(
     (image) => image.status === "uploading" || image.status === "removing",
   );
@@ -364,7 +435,7 @@ function CreateSessionDialogBody({
   }
 
   function handleImageFiles(files: File[]) {
-    if (submitInFlightRef.current || attemptRef.current) return;
+    if (!scopeOptionsReady || submitInFlightRef.current || attemptRef.current) return;
     const availableSlots = maxSessionAttachments - imageDraftsRef.current.length;
     if (availableSlots <= 0) {
       setAttachmentMessage("A session may include at most five images.");
@@ -452,8 +523,9 @@ function CreateSessionDialogBody({
   function refreshExpiredImages(force = false) {
     const expired = imageDraftsRef.current.filter(
       (image) =>
-        image.status === "ready" &&
-        (force || (image.refreshAfter !== undefined && image.refreshAfter <= Date.now())),
+        image.status === "local" ||
+        (image.status === "ready" &&
+          (force || (image.refreshAfter !== undefined && image.refreshAfter <= Date.now()))),
     );
     if (expired.length === 0) return false;
     const expiredIds = new Set(expired.map((image) => image.clientId));
@@ -543,6 +615,7 @@ function CreateSessionDialogBody({
   }
 
   function handleLinearChange(value: string) {
+    if (!linearIssueLinking) return;
     setLinearUrl(value);
     if (linearError) {
       setLinearError(getLinearUrlError(value));
@@ -585,6 +658,7 @@ function CreateSessionDialogBody({
     (workflowLaunchRequested || !!workflowActivationId) && !workflow;
   const overrideOptions = repositorySnapshot.data?.routingOverrideOptions;
   const overrideScope = JSON.stringify([
+    targetFactoryId,
     overrideOptions?.activationNumber,
     factoryDefinitionDigest,
     selectedStageIds[0],
@@ -620,23 +694,33 @@ function CreateSessionDialogBody({
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (submitInFlightRef.current || workflowLaunchConflictsWithRetry) {
+    if (
+      submitInFlightRef.current ||
+      !destination.catalogIsCurrent ||
+      workflowLaunchConflictsWithRetry ||
+      factoryConflictsWithRetry
+    ) {
       return;
     }
 
     // A lost response may have committed and bound the images. Replay the exact
     // request before refreshing options or uploads that were valid at submission.
     if (unconfirmed && attemptRef.current) {
-      await submitAttempt(attemptRef.current);
+      await submitAttempt({ ...attemptRef.current, scopeKey });
+      return;
+    }
+
+    if (scoped && !targetFactoryId) {
+      setErrorMessage("Choose a factory before starting a session.");
       return;
     }
 
     if (!repositorySnapshot.data) {
-      setErrorMessage("Wait for repositories to load.");
+      setErrorMessage("Wait for session options to load.");
       return;
     }
 
-    if (repositorySnapshot.isStale) {
+    if (!scopeOptionsReady || repositorySnapshot.isStale) {
       setErrorMessage("Refresh session options first.");
       return;
     }
@@ -669,7 +753,9 @@ function CreateSessionDialogBody({
     }
 
     if (!prompt.trim() && !linearUrl.trim()) {
-      setErrorMessage("Enter a Linear issue URL or a prompt.");
+      setErrorMessage(
+        linearIssueLinking ? "Enter a Linear issue URL or a prompt." : "Enter a prompt.",
+      );
       return;
     }
 
@@ -679,7 +765,7 @@ function CreateSessionDialogBody({
     }
 
     if (refreshExpiredImages()) {
-      setErrorMessage("Refreshing expired images. Start the session once they are ready.");
+      setErrorMessage("Uploading draft images. Start the session once they are ready.");
       return;
     }
 
@@ -696,11 +782,13 @@ function CreateSessionDialogBody({
     }
 
     const attempt: SessionCreationAttempt = {
+      scopeKey,
       workflowLabel: workflow?.label ?? defaultWorkflowOption.label,
       input: {
         attachmentIds: imageDrafts.map((image) => image.attachmentId!),
         ...(draftSpecification ? { draftSpecification: true } : {}),
         ...(factoryDefinitionDigest ? { factoryDefinitionDigest } : {}),
+        ...(targetFactoryId ? { factoryId: targetFactoryId } : {}),
         githubRepositoryId: selectedGithubRepositoryId || null,
         linearIssueUrl: linearUrl.trim() || null,
         promptMd: prompt.trim(),
@@ -719,6 +807,7 @@ function CreateSessionDialogBody({
         workspaceId,
       },
       snapshot: {
+        ...(targetFactoryName ? { factoryName: targetFactoryName } : {}),
         images: imageDrafts.map(({ clientId, fileName, previewUrl }) => ({
           clientId,
           fileName,
@@ -768,10 +857,29 @@ function CreateSessionDialogBody({
     });
   }
 
+  function keepDraftWithoutAttempt(attempt: SessionCreationAttempt) {
+    const submittedIds = new Set(attempt.input.attachmentIds);
+    if (submittedIds.size) {
+      updateImageDrafts((current) =>
+        current.map((image) =>
+          image.attachmentId && submittedIds.has(image.attachmentId)
+            ? { ...image, attachmentId: undefined, refreshAfter: undefined, status: "local" }
+            : image,
+        ),
+      );
+    }
+    attemptRef.current = null;
+    clearRecoveryToast();
+    setUnconfirmedAttempt(null);
+    setErrorMessage(null);
+    setSetupHref(undefined);
+  }
+
   async function submitAttempt(attempt: SessionCreationAttempt) {
     clearRecoveryToast();
     attemptRef.current = attempt;
     setErrorMessage(null);
+    setSetupHref(undefined);
     submitInFlightRef.current = true;
     setIsSubmitting(true);
     if (onPreviewChange) {
@@ -780,26 +888,32 @@ function CreateSessionDialogBody({
     }
     try {
       const result = await createSessionFromClient(attempt.input);
-      // The dialog now lives in the workspace shell (stays mounted across
-      // route changes), so we must explicitly close it on success — the
-      // previous page-scoped mounting closed it implicitly on navigation.
-      sessionCommittedRef.current = true;
       if (disposedRef.current) return;
       clearRecoveryToast();
-      const navigateToSession = !onPreviewChange || previewVisibleRef.current;
+      const scopeCurrent = dialogContextRef.current.scopeKey === attempt.scopeKey;
+      sessionCommittedRef.current = scopeCurrent;
+      const navigateToSession = scopeCurrent && (!onPreviewChange || previewVisibleRef.current);
       previewVisibleRef.current = false;
       // Keep the preview visible until the canonical route commits. Otherwise
       // the previous page flashes while Next loads the newly created session.
       if (!navigateToSession) onPreviewChange?.(null);
-      if (!onPreviewChange) onClose();
-      // Retain the draft's image URLs until the shell removes the preview.
-      if (!onPreviewChange || !navigateToSession) onReset();
+      if (scopeCurrent) {
+        if (!onPreviewChange) onClose();
+        if (!onPreviewChange || !navigateToSession) onReset();
+      } else {
+        keepDraftWithoutAttempt(attempt);
+        submitInFlightRef.current = false;
+        setIsSubmitting(false);
+      }
       if (navigateToSession) {
         startNavigation(result.canonicalUrl);
         router.push(result.canonicalUrl);
       } else {
         pushToast({
           title: `Session #${result.number} created.`,
+          ...(attempt.snapshot.factoryName
+            ? { description: `Factory: ${attempt.snapshot.factoryName}` }
+            : {}),
           tone: "success",
           action: {
             label: "Open session",
@@ -813,6 +927,7 @@ function CreateSessionDialogBody({
       }
     } catch (error) {
       if (disposedRef.current) return;
+      const scopeCurrent = dialogContextRef.current.scopeKey === attempt.scopeKey;
       submitInFlightRef.current = false;
       const rejected =
         error instanceof Error &&
@@ -823,9 +938,9 @@ function CreateSessionDialogBody({
       setUnconfirmedAttempt(rejected ? null : attempt);
       if (rejected) attemptRef.current = null;
       if (isSessionOptionsChangedError(error)) {
-        invalidateSessionRepositoryCache(workspaceId);
-        if (attempt.input.routingOverride) invalidateOverrideChoice();
-        if (attempt.input.workflowSelection) {
+        invalidateSessionRepositoryCache(workspaceId, attempt.input.factoryId);
+        if (scopeCurrent && attempt.input.routingOverride) invalidateOverrideChoice();
+        if (scopeCurrent && attempt.input.workflowSelection) {
           setWorkflowCatalog(null);
           setWorkflowOptionsRevision((revision) => revision + 1);
         }
@@ -836,17 +951,18 @@ function CreateSessionDialogBody({
         "status" in error &&
         error.status === 403
       ) {
-        invalidateSessionRepositoryCache(workspaceId);
-        invalidateOverrideChoice();
+        invalidateSessionRepositoryCache(workspaceId, attempt.input.factoryId);
+        if (scopeCurrent) invalidateOverrideChoice();
       }
       if (
+        scopeCurrent &&
         error instanceof Error &&
         "code" in error &&
         error.code === "session_attachments_changed" &&
         refreshExpiredImages(true)
       ) {
         setErrorMessage("Images expired or changed. Refreshing; start once ready.");
-      } else {
+      } else if (scopeCurrent) {
         setErrorMessage(
           rejected
             ? error instanceof Error
@@ -854,13 +970,16 @@ function CreateSessionDialogBody({
               : "Failed to create session."
             : "Creation unconfirmed. Draft saved. Retry to check the original request.",
         );
+        if (error instanceof Error && "setupHref" in error && typeof error.setupHref === "string") {
+          setSetupHref(error.setupHref);
+        }
       }
       setIsSubmitting(false);
-      const reopen = previewVisibleRef.current;
+      const reopen = scopeCurrent && previewVisibleRef.current;
       previewVisibleRef.current = false;
       onPreviewChange?.(null);
       if (reopen) onReopen?.();
-      else if (onPreviewChange) {
+      else if ((onPreviewChange || !scopeCurrent) && (rejected || !dialogContextRef.current.open)) {
         clearRecoveryToast();
         recoveryToastRef.current = pushToast({
           title: "Session creation needs attention.",
@@ -889,6 +1008,33 @@ function CreateSessionDialogBody({
     }
   }
 
+  const draftHasEdits = Boolean(
+    prompt ||
+    title ||
+    linearDraftUrl ||
+    imageDrafts.length ||
+    githubRepositoryId ||
+    excludedStageIds.length ||
+    manualDraftSpecification ||
+    manualWorkflowActivationId ||
+    manualOverrideChoice,
+  );
+  const dialogDisabled = isSubmitting || unconfirmed;
+  const repositoryField = repositoryCacheKey ? (
+    <RepositoryField
+      disabled={dialogDisabled}
+      cacheKey={repositoryCacheKey}
+      onValueChange={(repositoryId) => {
+        if (repositoryId !== selectedGithubRepositoryId) invalidateOverrideChoice();
+        setGithubRepositoryId(repositoryId);
+      }}
+      options={repositorySelectOptions}
+      selectedGithubRepositoryId={selectedGithubRepositoryId}
+      showFixedValue={scoped}
+      snapshot={repositorySnapshot}
+    />
+  ) : null;
+
   return (
     <Dialog
       open={open}
@@ -899,11 +1045,6 @@ function CreateSessionDialogBody({
       <DialogContent
         bodyClassName="flex min-h-0 flex-col"
         className="flex max-w-xl flex-col overflow-hidden"
-        description={
-          creationFactoryName
-            ? `This session will run in ${creationFactoryName}, the workspace’s default factory. Describe the work or link a Linear issue.`
-            : "Describe the work or link a Linear issue, then choose where Wallie should run."
-        }
         dismissible={!isSubmitting && !hasActiveAttachmentOperation}
         title="Start a new session"
         onCloseAutoFocus={onCloseAutoFocus}
@@ -944,71 +1085,130 @@ function CreateSessionDialogBody({
                 tabIndex={-1}
                 className="rounded-[6px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
               >
-                {errorMessage}
+                <p>{errorMessage}</p>
+                {setupHref ? (
+                  <Link className="mt-1 inline-block underline" href={setupHref}>
+                    Open setup
+                  </Link>
+                ) : null}
               </div>
             ) : null}
-            <div className="space-y-4 rounded-[8px] border border-border bg-control-muted/40 p-4">
-              <div className="space-y-2">
-                <label className="text-sm font-semibold text-foreground" htmlFor="session-prompt">
-                  Prompt
-                </label>
-                <textarea
-                  id="session-prompt"
-                  disabled={isSubmitting || unconfirmed}
-                  aria-describedby={
-                    ["session-prompt-description", errorMessage ? "create-session-error" : null]
-                      .filter(Boolean)
-                      .join(" ") || undefined
-                  }
-                  autoComplete="off"
-                  autoFocus={!errorMessage}
-                  name="prompt"
-                  value={prompt}
-                  onChange={(event) => setPrompt(event.target.value)}
-                  onPaste={(event) => {
-                    const files = Array.from(event.clipboardData.items)
-                      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
-                      .map((item) => item.getAsFile())
-                      .filter((file): file is File => file !== null);
-                    if (files.length > 0) handleImageFiles(files);
-                  }}
-                  className="ui-textarea min-h-32 leading-6"
-                  placeholder="What should Wallie build?"
-                />
-                <p className="type-annotation text-muted" id="session-prompt-description">
-                  Required only when no Linear issue is linked.
+            {creationScope?.kind === "all" &&
+            destination.catalog?.factories?.length &&
+            (destination.catalog.factories.length > 1 || !destination.factory) ? (
+              <SelectField
+                aria-required="true"
+                disabled={isSubmitting || hasActiveAttachmentOperation}
+                fallbackLabel="Choose a factory"
+                label="Factory"
+                onValueChange={destination.choose}
+                options={destination.catalog.factories.map(({ id, name }) => ({
+                  label: name,
+                  value: id,
+                }))}
+                value={destination.factory?.id ?? ""}
+                wrap
+              />
+            ) : targetFactoryName ? (
+              <dl className="space-y-1">
+                <dt className="text-sm font-medium">Factory</dt>
+                <dd className="text-sm text-muted wrap-anywhere">{targetFactoryName}</dd>
+              </dl>
+            ) : null}
+            {creationScope?.kind === "all" && (!destination.catalog || !destination.factory) ? (
+              !destination.catalog ? (
+                <p aria-busy="true" className="text-sm text-muted" role="status">
+                  Loading factories…
                 </p>
+              ) : destination.catalog.error ? (
+                <div
+                  className="flex flex-wrap items-center justify-between gap-2 text-sm"
+                  role="alert"
+                >
+                  <p>{destination.catalog.error}</p>
+                  <button className="ui-button" onClick={destination.reload} type="button">
+                    Retry factories
+                  </button>
+                </div>
+              ) : destination.catalog.factories?.length === 0 ? (
+                <p className="text-sm text-muted" role="status">
+                  You can’t start a session in any active factory. Ask a workspace admin for access.
+                </p>
+              ) : null
+            ) : null}
+            {factoryConflictsWithRetry ? (
+              <div className="space-y-2 rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2">
+                <p className="text-sm text-warning" role="status">
+                  Creation is unconfirmed in{" "}
+                  {unconfirmedAttempt.snapshot.factoryName ?? "the default factory"}. A session may
+                  already exist. Return there to retry.
+                </p>
+                {scopeOptionsReady && targetFactoryId ? (
+                  <button
+                    className="ui-button min-h-9"
+                    disabled={isSubmitting}
+                    onClick={() => {
+                      keepDraftWithoutAttempt(unconfirmedAttempt);
+                      requestAnimationFrame(() => promptRef.current?.focus());
+                    }}
+                    type="button"
+                  >
+                    Use draft for a new session
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            {!scopeOptionsReady ? repositoryField : null}
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-foreground" htmlFor="session-prompt">
+                Prompt
+              </label>
+              <textarea
+                id="session-prompt"
+                disabled={dialogDisabled}
+                aria-describedby={errorMessage ? "create-session-error" : undefined}
+                autoComplete="off"
+                autoFocus={!errorMessage && creationScope?.kind !== "all"}
+                name="prompt"
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                onPaste={(event) => {
+                  const files = Array.from(event.clipboardData.items)
+                    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+                    .map((item) => item.getAsFile())
+                    .filter((file): file is File => file !== null);
+                  if (files.length > 0) handleImageFiles(files);
+                }}
+                className="ui-textarea min-h-32 leading-6"
+                placeholder="Describe the work…"
+                ref={promptRef}
+              />
+              {scopeOptionsReady ? (
                 <SessionImageAttachments
-                  disabled={isSubmitting || unconfirmed}
+                  disabled={dialogDisabled}
                   images={imageDrafts}
                   maxImages={maxSessionAttachments}
                   onFiles={handleImageFiles}
                   onRemove={(clientId) => void handleRemoveImage(clientId)}
                   onRetry={handleRetryImage}
                 />
-                {attachmentMessage ? (
-                  <p className="text-xs text-warning" role="status">
-                    {attachmentMessage}
-                  </p>
-                ) : null}
-              </div>
-
-              <div className="flex items-center gap-3" aria-hidden="true">
-                <span className="h-px flex-1 bg-border" />
-                <span className="type-annotation text-muted">or</span>
-                <span className="h-px flex-1 bg-border" />
-              </div>
-
+              ) : null}
+              {scopeOptionsReady && attachmentMessage ? (
+                <p className="text-xs text-warning" role="status">
+                  {attachmentMessage}
+                </p>
+              ) : null}
+            </div>
+            {linearIssueLinking ? (
               <div className="space-y-2">
                 <label className="text-sm font-semibold text-foreground" htmlFor="session-linear">
                   Linear issue URL
                 </label>
                 <input
                   id="session-linear"
-                  disabled={isSubmitting || unconfirmed}
+                  disabled={dialogDisabled}
                   aria-describedby={
                     [
-                      "session-linear-description",
                       linearError ? "session-linear-error" : null,
                       errorMessage ? "create-session-error" : null,
                     ]
@@ -1017,23 +1217,30 @@ function CreateSessionDialogBody({
                   }
                   autoComplete="off"
                   name="linearUrl"
+                  spellCheck={false}
                   value={linearUrl}
                   onChange={(event) => handleLinearChange(event.target.value)}
                   onBlur={handleLinearBlur}
                   className="ui-input"
-                  placeholder="https://linear.app/acme/issue/TEAM-123"
+                  placeholder="https://linear.app/…"
                   type="url"
                 />
-                <p className="type-annotation text-muted" id="session-linear-description">
-                  Wallie uses the issue title and, when the prompt is empty, its description.
-                </p>
+                {hasLinearIssue && !prompt.trim() ? (
+                  <p className="type-annotation text-muted">
+                    Uses the linked issue’s description when the prompt is empty.
+                  </p>
+                ) : null}
                 {linearError ? (
                   <p className="text-xs text-danger" id="session-linear-error" role="alert">
                     {linearError}
                   </p>
                 ) : null}
               </div>
-            </div>
+            ) : scopeOptionsReady && linearDraftUrl.trim() ? (
+              <p className="type-annotation text-muted" role="status">
+                The draft’s Linear link is saved, but won’t be sent to this factory.
+              </p>
+            ) : null}
 
             <div className="space-y-2">
               <label className="text-sm font-semibold text-foreground" htmlFor="session-title">
@@ -1051,36 +1258,21 @@ function CreateSessionDialogBody({
                   hasLinearIssue ? "From the linked Linear issue" : "Generated from the prompt"
                 }
               />
-              {hasLinearIssue ? (
-                <p className="type-annotation text-muted">Linear issue titles take precedence.</p>
-              ) : null}
             </div>
 
-            <RepositoryField
-              disabled={isSubmitting || unconfirmed}
-              cacheKey={repositoryCacheKey}
-              onValueChange={(repositoryId) => {
-                if (repositoryId !== selectedGithubRepositoryId) invalidateOverrideChoice();
-                setGithubRepositoryId(repositoryId);
-              }}
-              options={repositorySelectOptions}
-              selectedGithubRepositoryId={selectedGithubRepositoryId}
-              snapshot={repositorySnapshot}
-            />
+            {scopeOptionsReady ? repositoryField : null}
 
-            {repositorySnapshot.data ? (
+            {scopeOptionsReady && repositorySnapshot.data && factoryDefinitionDigest ? (
+              <dl className="space-y-1">
+                <dt className="text-sm font-medium">Stages</dt>
+                <dd className="text-sm text-muted wrap-anywhere">
+                  {stageOptions.map((stage) => stage.name).join(" → ")}
+                </dd>
+              </dl>
+            ) : scopeOptionsReady && repositorySnapshot.data ? (
               <MultiSelectField
-                description={
-                  factoryDefinitionDigest
-                    ? "The active factory sets the stage order."
-                    : "Choose the pipeline stages this session should run."
-                }
-                disabled={
-                  isSubmitting ||
-                  unconfirmed ||
-                  repositorySnapshot.isStale ||
-                  Boolean(factoryDefinitionDigest)
-                }
+                description="Uncheck stages to skip them."
+                disabled={dialogDisabled || repositorySnapshot.isStale}
                 emptyMessage="No pipeline stages are configured."
                 error={
                   stageOptions.length === 0
@@ -1105,23 +1297,12 @@ function CreateSessionDialogBody({
                   value: stage.id,
                 }))}
                 summary={
-                  factoryDefinitionDigest
-                    ? stageOptions.map((stage) => stage.name).join(" → ")
-                    : selectedStageIds.length === stageOptions.length
-                      ? `All ${stageOptions.length} stages.`
-                      : `${selectedStageIds.length} of ${stageOptions.length} stages.`
+                  selectedStageIds.length === stageOptions.length
+                    ? `All ${stageOptions.length} stages.`
+                    : `${selectedStageIds.length} of ${stageOptions.length} stages.`
                 }
                 values={selectedStageIds}
               />
-            ) : repositorySnapshot.isLoading ? (
-              <div
-                aria-busy="true"
-                aria-live="polite"
-                className="rounded-[6px] border border-border bg-control-muted px-3 py-2 text-xs text-muted"
-                role="status"
-              >
-                Loading stages…
-              </div>
             ) : null}
 
             {unconfirmed ||
@@ -1212,7 +1393,7 @@ function CreateSessionDialogBody({
                     {workflowLaunchRequested &&
                     (!repositorySnapshot.data || repositorySnapshot.isStale)
                       ? "Checking the factory’s current session options…"
-                      : factoryDefinitionDigest && creationFactoryId && !currentWorkflowCatalog
+                      : factoryDefinitionDigest && workflowFactoryId && !currentWorkflowCatalog
                         ? "Loading current workflows…"
                         : workflowLaunchRequested
                           ? "This publication is no longer available. Close and return to Workflows."
@@ -1312,22 +1493,21 @@ function CreateSessionDialogBody({
                 ) : null}
               </fieldset>
             ) : null}
-            <p className="text-xs text-muted">
-              Closing keeps your draft while you stay in this workspace. Reloading clears it.
-            </p>
+            {draftHasEdits ? (
+              <button
+                type="button"
+                disabled={dialogDisabled || hasActiveAttachmentOperation}
+                onClick={() => {
+                  onClose();
+                  onReset();
+                }}
+                className="min-h-9 rounded px-0.5 text-xs text-muted underline underline-offset-2 hover:text-danger focus-visible:outline-2 focus-visible:outline-offset-2 disabled:no-underline"
+              >
+                Discard draft
+              </button>
+            ) : null}
           </div>
-          <footer className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
-            <button
-              type="button"
-              disabled={isSubmitting || unconfirmed || hasActiveAttachmentOperation}
-              onClick={() => {
-                onClose();
-                onReset();
-              }}
-              className="ui-button mr-auto"
-            >
-              Discard draft
-            </button>
+          <footer className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
             <button
               type="button"
               disabled={isSubmitting || hasActiveAttachmentOperation}
@@ -1341,13 +1521,18 @@ function CreateSessionDialogBody({
               aria-keyshortcuts={SESSION_SUBMIT_KEY_SHORTCUTS}
               disabled={
                 unconfirmed
-                  ? isSubmitting || workflowLaunchConflictsWithRetry
+                  ? isSubmitting ||
+                    !destination.catalogIsCurrent ||
+                    workflowLaunchConflictsWithRetry ||
+                    factoryConflictsWithRetry
                   : specificationUnavailable ||
                     workflowSelectionUnavailable ||
                     overrideBlocksSubmission ||
                     isCreateSessionSubmitDisabled({
                       hasRepositoryResult:
-                        repositorySnapshot.data !== null && !factoryRepositorySelectionRequired,
+                        scopeOptionsReady &&
+                        repositorySnapshot.data !== null &&
+                        !factoryRepositorySelectionRequired,
                       hasBlockingAttachments,
                       isRepositoryStale: repositorySnapshot.isStale,
                       isSubmitting,
@@ -1378,6 +1563,7 @@ type RepositoryFieldProps = {
   onValueChange: (value: string) => void;
   options: Array<{ label: string; value: string }>;
   selectedGithubRepositoryId: string;
+  showFixedValue?: boolean;
   snapshot: SessionRepositorySnapshot;
 };
 
@@ -1387,6 +1573,7 @@ export function RepositoryField({
   onValueChange,
   options,
   selectedGithubRepositoryId,
+  showFixedValue = false,
   snapshot,
 }: RepositoryFieldProps) {
   function retry() {
@@ -1412,7 +1599,17 @@ export function RepositoryField({
         className="flex flex-wrap items-center justify-between gap-3 rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2 text-xs text-warning"
         role="alert"
       >
-        <span>{snapshot.error}</span>
+        <span>
+          {snapshot.error}
+          {snapshot.setupHref ? (
+            <>
+              {" "}
+              <Link className="underline" href={snapshot.setupHref}>
+                Open setup
+              </Link>
+            </>
+          ) : null}
+        </span>
         <button className="ui-button min-h-8" disabled={disabled} onClick={retry} type="button">
           Retry session options
         </button>
@@ -1428,9 +1625,18 @@ export function RepositoryField({
     );
   }
 
+  const fixedRepository =
+    options.length === 1 && options[0].value === selectedGithubRepositoryId
+      ? options[0]
+      : undefined;
   return (
     <div className="space-y-2">
-      {options.length > 0 ? (
+      {showFixedValue && fixedRepository ? (
+        <dl className="space-y-1">
+          <dt className="text-sm font-medium">Repository</dt>
+          <dd className="text-sm text-muted wrap-anywhere">{fixedRepository.label}</dd>
+        </dl>
+      ) : options.length > 0 ? (
         <SelectField
           disabled={
             disabled ||
@@ -1470,6 +1676,14 @@ export function RepositoryField({
               : snapshot.error
                 ? `Session options may be out of date. ${snapshot.error}`
                 : "Session options may be out of date."}
+            {snapshot.setupHref ? (
+              <>
+                {" "}
+                <Link className="underline" href={snapshot.setupHref}>
+                  Open setup
+                </Link>
+              </>
+            ) : null}
           </span>
           {!snapshot.isRefreshing ? (
             <button className="ui-button min-h-8" disabled={disabled} onClick={retry} type="button">

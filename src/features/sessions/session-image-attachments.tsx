@@ -14,7 +14,7 @@ export type SessionImageDraft = {
   fileName: string;
   previewUrl: string;
   sizeBytes: number;
-  status: "error" | "ready" | "removing" | "uploading";
+  status: "error" | "local" | "ready" | "removing" | "uploading";
 };
 
 type SessionImageAttachmentsProps = {
@@ -46,7 +46,7 @@ export function SessionImageAttachments({
   return (
     <div
       aria-label="Session images"
-      className="space-y-2 rounded-[6px] border border-dashed border-border bg-canvas p-3"
+      className="space-y-2"
       onDragOver={(event) => {
         event.preventDefault();
       }}
@@ -57,14 +57,11 @@ export function SessionImageAttachments({
       }}
       role="group"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <p className="text-xs font-semibold text-foreground">Images</p>
-          <p className="type-annotation text-muted">
-            PNG, JPEG, or WebP · 4 MB each · {images.length}/{maxImages}
-          </p>
-        </div>
-        <label className="ui-button cursor-pointer text-xs" aria-disabled={disabled || atLimit}>
+      <div className="flex flex-wrap items-center gap-2">
+        <label
+          className="ui-button min-h-9 cursor-pointer text-xs focus-within:ring-2 focus-within:ring-primary"
+          aria-disabled={disabled || atLimit}
+        >
           Add images
           <input
             ref={inputRef}
@@ -76,13 +73,10 @@ export function SessionImageAttachments({
             type="file"
           />
         </label>
+        {atLimit ? <span className="type-annotation text-muted">Five images added</span> : null}
       </div>
 
-      {images.length === 0 ? (
-        <p className="type-annotation text-muted">
-          Drop images here, choose files, or paste into the prompt.
-        </p>
-      ) : (
+      {images.length > 0 ? (
         <ul className="space-y-2" aria-live="polite">
           {images.map((image) => (
             <li
@@ -132,7 +126,7 @@ export function SessionImageAttachments({
             </li>
           ))}
         </ul>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -147,6 +141,8 @@ function statusLabel(status: SessionImageDraft["status"]) {
   switch (status) {
     case "error":
       return "Needs attention";
+    case "local":
+      return "Will reupload";
     case "ready":
       return "Ready";
     case "removing":

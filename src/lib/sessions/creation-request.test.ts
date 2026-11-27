@@ -23,6 +23,7 @@ describe("session creation fingerprint", () => {
     { title: "Explicit title" },
     { draftSpecification: true },
     { workspaceId: "another-workspace" },
+    { factoryId: "deadbeef-5555-4555-8555-555555555555" },
     { githubRepositoryId: "another-repository" },
     { selectedStageIds: ["stage-1"] },
     { attachmentIds: ["image-1"] },
