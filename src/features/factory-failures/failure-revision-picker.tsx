@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { FILTER_CONTROL_CLASS } from "@/components/ui/filter-controls";
 import { SelectField } from "@/components/ui/select";
 import {
   failureRevisionPageSchema,
@@ -12,23 +13,24 @@ import {
 export function FailureRevisionPicker({
   endpoint,
   initialPage,
+  onValueChange,
   selected,
   pinned,
 }: {
   endpoint: string;
   initialPage: FailureRevisionPage;
+  onValueChange: (value: string) => void;
   selected: string;
   pinned: FailureRevisionOption[];
 }) {
-  const [page, setPage] = useState(initialPage);
-  const [value, setValue] = useState(selected);
+  const [olderPage, setOlderPage] = useState<FailureRevisionPage | null>(null);
   const [retained, setRetained] = useState<FailureRevisionOption>();
-  const [older, setOlder] = useState(false);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
+  const page = olderPage ?? initialPage;
   const options = Array.from(
     new Map(
-      [...pinned, ...(retained ? [retained] : []), ...page.options].map((option) => [
+      [...(retained ? [retained] : []), ...pinned, ...page.options].map((option) => [
         option.id,
         option,
       ]),
@@ -44,8 +46,7 @@ export function FailureRevisionPicker({
       url.searchParams.set("before", page.next);
       const response = await fetch(url, { cache: "no-store" });
       if (!response.ok) throw new Error();
-      setPage(failureRevisionPageSchema.parse(await response.json()));
-      setOlder(true);
+      setOlderPage(failureRevisionPageSchema.parse(await response.json()));
     } catch {
       setFailed(true);
     } finally {
@@ -59,10 +60,10 @@ export function FailureRevisionPicker({
         name="revision"
         label="Factory definition revision"
         labelClassName="type-label"
-        value={value}
+        value={selected}
         onValueChange={(id) => {
-          setValue(id);
           setRetained(options.find((option) => option.id === id));
+          onValueChange(id);
         }}
         options={[
           { label: "Any revision", value: "" },
@@ -71,17 +72,17 @@ export function FailureRevisionPicker({
             value: id,
           })),
         ]}
+        triggerClassName={FILTER_CONTROL_CLASS}
         wrap
       />
-      {older || page.next ? (
+      {olderPage || page.next ? (
         <div className="flex flex-wrap items-center gap-x-3">
-          {older ? (
+          {olderPage ? (
             <button
               className="ui-button"
               type="button"
               onClick={() => {
-                setPage(initialPage);
-                setOlder(false);
+                setOlderPage(null);
                 setFailed(false);
               }}
               disabled={pending}
@@ -96,8 +97,8 @@ export function FailureRevisionPicker({
           ) : null}
         </div>
       ) : null}
-      <p className="type-annotation text-muted" role="status">
-        {pending ? "Loading revisions…" : older ? "Showing older revisions in the picker." : ""}
+      <p className={pending || olderPage ? "type-annotation text-muted" : "sr-only"} role="status">
+        {pending ? "Loading revisions…" : olderPage ? "Showing older revisions." : ""}
       </p>
       {failed ? (
         <p className="type-secondary text-muted" role="alert">

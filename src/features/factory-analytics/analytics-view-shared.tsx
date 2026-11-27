@@ -165,7 +165,7 @@ export function MetricPanel({
           <summary className="w-fit cursor-pointer rounded-sm hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
             Metric definition
           </summary>
-          <p className="mt-1">{definition}</p>
+          <p className="mt-1">{definition} Bars compare values within a group.</p>
         </details>
         {filters}
         {summary}
@@ -208,10 +208,8 @@ export function MetricPanel({
                     colSpan={compare ? 3 : 2}
                     scope="rowgroup"
                   >
-                    {group.label} ·{" "}
-                    {group.scale === "percent"
-                      ? "0–100% scale"
-                      : "Bars relative to the largest value in this group"}
+                    {group.label}
+                    {group.scale === "percent" ? " · 0–100% scale" : ""}
                   </th>
                 </tr>
                 {group.rows.map((row) => (

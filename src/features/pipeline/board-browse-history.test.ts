@@ -69,6 +69,21 @@ describe("board browse history", () => {
     expect(writeBoardBrowseHistory(historyScope, { status: "failed" })).not.toBe(oldKey);
   });
 
+  it("pushes applied searches without putting the search term in the page URL", () => {
+    window.history.replaceState(null, "", board);
+    const firstKey = writeBoardBrowseHistory(historyScope, { searchQuery: "first" }, "push");
+    const length = window.history.length;
+    const secondKey = writeBoardBrowseHistory(historyScope, { searchQuery: "second" }, "push");
+    expect(secondKey).not.toBe(firstKey);
+    expect(window.history.length).toBe(length + 1);
+    expect(window.location.pathname).toBe(board);
+    expect(window.location.search).toBe("");
+    expect(window.history.state).toEqual({ wallieBoard: secondKey });
+    expect(readBoardBrowseHistory(historyScope)?.searchQuery).toBe("second");
+    window.history.replaceState({ wallieBoard: firstKey }, "", board);
+    expect(readBoardBrowseHistory(historyScope)?.searchQuery).toBe("first");
+  });
+
   it("does not touch or read state on the List route", () => {
     window.history.replaceState(null, "", `${board}/sessions?scope=archived&q=list`);
     writeBoardBrowseHistory(historyScope, { searchQuery: "board only", status: "failed" });

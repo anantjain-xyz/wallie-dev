@@ -84,20 +84,16 @@ for (const viewport of [
 }
 
 for (const width of [320, 390]) {
-  test(`compact Pipeline keeps keyboard focus visible across factory stages at ${width}px`, async ({
+  test(`compact Pipeline keeps keyboard focus visible across long stages at ${width}px`, async ({
     page,
   }, info) => {
     await page.setViewportSize({ width, height: 844 });
-    await page.goto("/dev/pipeline-layout?aggregate=1");
+    await page.goto("/dev/pipeline-layout?longStages=1");
     const strip = page.getByRole("tablist", { name: "Pipeline stage" });
     const tabs = strip.getByRole("tab");
     await expect(tabs).toHaveCount(4);
-    await expect(tabs.first()).toHaveAccessibleName(
-      /Product engineering.*Plan the first production release/,
-    );
-    await expect(tabs.last()).toHaveAccessibleName(
-      /Customer tools.*Record the decision and publish/,
-    );
+    await expect(tabs.first()).toHaveAccessibleName(/Plan the first production release/);
+    await expect(tabs.last()).toHaveAccessibleName(/Record the decision and publish/);
     expect(await strip.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
     await page.getByRole("combobox", { name: "Filter by status" }).focus();
     await page.keyboard.press("Tab");
@@ -135,16 +131,28 @@ for (const width of [320, 390]) {
   });
 }
 
-test("aggregate Pipeline labels factory ownership without changing card hierarchy", async ({
+test("aggregate Pipeline keeps real factory and stage headings and has no horizontal overflow", async ({
   page,
 }, info) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/dev/pipeline-layout?aggregate=1");
-  const lane = page.getByRole("tabpanel", { name: "Review the generated release evidence" });
-  await expect(lane.getByText("Customer tools", { exact: true })).toBeVisible();
+  const overview = page.getByRole("region", { name: "All factories overview" });
+  const factory = overview.getByRole("region", { name: "Customer tools", exact: true });
+  const lane = factory.getByRole("region", { name: "Review the generated release evidence" });
+  await expect(
+    factory.getByRole("link", { name: "Open board for Customer tools" }),
+  ).toHaveAttribute("href", "/w/proof?factory=customer-tools");
   const card = lane.getByRole("article").first();
-  await expect(card.getByRole("heading", { level: 3 })).toBeVisible();
+  await expect(card.getByRole("heading", { level: 4 })).toBeVisible();
   await expect(card.getByRole("link", { name: /^Review session / })).toBeVisible();
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(overview.getByRole("tablist")).toHaveCount(0);
+    expect(await overview.evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(
+      await overview.evaluate((element) => element.clientWidth),
+    );
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.screenshot({ path: info.outputPath("pipeline-aggregate-desktop.png") });
 });
 

@@ -5,6 +5,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { Status, configurationStatusFromTone } from "@/components/ui/status";
 import { buildVerifyChecklist } from "@/features/onboarding/runtime-readiness";
 import { useFactorySettings } from "@/features/settings/factory-settings";
+import { PersonalSettingsLink } from "@/features/settings/personal-settings-navigation";
 import { SandboxCapabilitySection } from "@/features/settings/sandbox-capability-section";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
@@ -82,18 +83,15 @@ function ReadinessChecks({
               )}
             />
             {!item.passed && item.step !== "verify" ? (
-              <a
-                className="ui-button"
-                href={
-                  item.id === "provider-credentials"
-                    ? providerAccessHref
-                    : `#${stepAnchor[item.step]}`
-                }
-              >
-                {item.id === "provider-credentials"
-                  ? "Open provider access"
-                  : `Open ${stepLabel[item.step]} settings`}
-              </a>
+              item.id === "provider-credentials" ? (
+                <PersonalSettingsLink className="ui-button" href={providerAccessHref}>
+                  Open provider access
+                </PersonalSettingsLink>
+              ) : (
+                <a className="ui-button" href={`#${stepAnchor[item.step]}`}>
+                  {`Open ${stepLabel[item.step]} settings`}
+                </a>
+              )
             ) : null}
           </div>
         </li>

@@ -16,6 +16,7 @@ import {
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { useCandidateTests } from "@/features/factory-definition/use-candidate-tests";
+import { useBlockPersonalSettings } from "@/features/settings/personal-settings-navigation";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { readResponseJson } from "@/features/settings/use-api-action";
 import {
@@ -99,6 +100,7 @@ export function FactorySettingsProvider({
     active: canManage,
   });
   const hasDirtySections = Object.keys(dirtySections).length > 0;
+  useBlockPersonalSettings(busy || hasDirtySections);
   const canPublish = candidateTests.eligible && !hasDirtySections && !conflict;
   let publishEligibility: string | null = null;
   if (draft && !conflict) {

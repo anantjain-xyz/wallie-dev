@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -25,6 +24,10 @@ import {
   useFactorySettingsForm,
 } from "@/features/settings/factory-settings";
 import type { CursorConnectionStatus } from "@/features/settings/cursor-connection-panel";
+import {
+  PersonalSettingsLink,
+  useBlockPersonalSettings,
+} from "@/features/settings/personal-settings-navigation";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
 import {
@@ -312,6 +315,7 @@ export function AgentConfigSection({
   const dirtyFields = fieldStatuses.filter((status) => status.isDirty);
   const saveableFields = dirtyFields.filter((status) => status.validation?.ok === true);
   const editorBusy = isSaving || Boolean(revision?.busy);
+  useBlockPersonalSettings(canManage && (editorBusy || dirtyFields.length > 0));
   const canSave = !editorBusy && saveableFields.length > 0 && !hasErrors;
 
   function handleFieldChange(key: AgentConfigKey, next: string) {
@@ -420,20 +424,12 @@ export function AgentConfigSection({
   return (
     <Section
       actions={
-        <Link
+        <PersonalSettingsLink
           className="ui-button min-h-9"
           href={`${workspaceSettingsPath(workspaceSlug, { category: "personal", provider: selectedAgentProvider })}#provider-access`}
-          onNavigate={(event) => {
-            if (!editorBusy && dirtyFields.length === 0) return;
-            event.preventDefault();
-            setFlashMessage({
-              kind: "info",
-              text: "Save or discard your runtime edits before opening provider access.",
-            });
-          }}
         >
           Provider access
-        </Link>
+        </PersonalSettingsLink>
       }
       anchorId={anchorId}
       heading="h3"

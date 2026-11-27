@@ -25,8 +25,10 @@ it("bounds a failed, scope-specific health read and shows recovery without contr
     p_factory_id: "factory",
   });
   expect(abortSignal).toHaveBeenCalledWith(expect.objectContaining({ aborted: false }));
-  expect(screen.getByText("Unavailable", { exact: true })).toBeVisible();
+  expect(screen.getByText("Health unavailable", { exact: true })).toBeVisible();
   container.querySelector("details")!.open = true;
   expect(screen.getByText(/Reload this page to try again/)).toBeVisible();
   expect(screen.queryByRole("button", { name: /projection/u })).not.toBeInTheDocument();
+  expect(screen.queryByText("Advanced", { exact: true })).not.toBeInTheDocument();
+  expect(screen.queryByText("Projection snapshot", { exact: true })).not.toBeInTheDocument();
 });

@@ -74,7 +74,6 @@ test("Analytics reconciles authorized comparison periods and opens exact source 
     await expect(page).toHaveURL(/[?&]compare=previous(?:&|$)/);
     await page.getByRole("combobox", { name: "Deployment environment", exact: true }).click();
     await page.getByRole("option", { name: "production", exact: true }).click();
-    await page.getByRole("button", { name: "Apply environment", exact: true }).click();
     await expect(page).toHaveURL(/[?&]environment=production(?:&|#|$)/);
     await expect(page.getByLabel("From date (UTC)", { exact: true })).toHaveValue(fixture.from);
     await expect(page.getByLabel("To date (UTC, exclusive)", { exact: true })).toHaveValue(
@@ -183,6 +182,12 @@ test("Analytics reconciles authorized comparison periods and opens exact source 
     await fixture.observePendingRequest();
     await page.goto(comparison);
     await expect(page.getByText(/Updating · snapshot may be stale/u).first()).toBeVisible();
+    await expect(
+      page
+        .getByRole("region", { name: "Factory outcomes" })
+        .getByText(/Stale snapshot/)
+        .first(),
+    ).toBeVisible();
     await capture(page, info, "05-analytics-updating");
     await fixture.drainProjections();
     await page.reload();

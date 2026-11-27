@@ -85,6 +85,10 @@ test("reviews recurring failures and preserves source evidence across filters, s
     await expect(page.getByRole("link", { name: /^reconciliation-tests · .+ · / })).toBeVisible();
     await expect(main.getByText("Qualified evidence", { exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: /^Reconciliation quality · .+ · / })).toBeVisible();
+    await expect(main.getByRole("link", { name: "Improvements", exact: true })).toHaveAttribute(
+      "href",
+      `/w/${fixture.slug}/improvements?factory=${fixture.factoryId}`,
+    );
     await expect(main.getByText("Missing evidence")).toBeVisible();
     await capture(page, info, "01-failure-groups-desktop");
 
@@ -103,6 +107,7 @@ test("reviews recurring failures and preserves source evidence across filters, s
       exact: true,
     });
     await selectDropdownOption(symptom, "validation");
+    await expect(page).toHaveURL(/[?&]symptom=validation(?:&|$)/);
     await symptom.focus();
     await symptom.press("Tab");
     await expect(revision).toBeFocused();
@@ -111,8 +116,8 @@ test("reviews recurring failures and preserves source evidence across filters, s
       .getByRole("option", { name: /Factory revision · Activation \d+ · .* · Active · / })
       .click();
     await expectDropdownValue(revision, seeded.revisions[1]);
-    await page.getByRole("button", { name: "Apply filters", exact: true }).press("Enter");
     await expect(page).toHaveURL(new RegExp(`revision=${seeded.revisions[1]}`));
+    expect(new URL(page.url()).searchParams.get("symptom")).toBe("validation");
     await expect(page.getByRole("link", { name: /^reconciliation-tests · / })).toHaveCount(0);
     await expect(page.getByRole("link", { name: /^Reconciliation quality · / })).toHaveCount(0);
     const unavailableGroup = page.getByRole("link", { name: /^Validation failure · / });
@@ -136,10 +141,11 @@ test("reviews recurring failures and preserves source evidence across filters, s
     await expect(
       page
         .getByRole("region", { name: "Failure groups", exact: true })
-        .getByText("No failure groups match these filters.", { exact: true }),
+        .getByRole("heading", { name: "No failure groups match these filters", exact: true }),
     ).toBeVisible();
     await capture(page, info, "04-empty-filters-mobile");
     await page.getByRole("link", { name: "Clear filters", exact: true }).click();
+    await expect(page).toHaveURL(new URL(groupsPath, fixture.app).href);
     await expectDropdownValue(symptom, "");
     await expectDropdownValue(revision, "");
     await expectDropdownValue(
@@ -356,16 +362,16 @@ test("reviews recurring failures and preserves source evidence across filters, s
     const profilePath = new URL(z.string().parse(await profile.getAttribute("href")), fixture.app);
     await page.goto(profilePath.toString(), { waitUntil: "domcontentloaded" });
     const profileSection = page.locator("#execution-profile");
-    await expect(profileSection.getByText("Attempt 2", { exact: true })).toBeVisible();
+    await expect(profileSection.getByText("Recorded job attempt 2", { exact: true })).toBeVisible();
     await expect(
       profileSection.getByRole("heading", { name: "Recorded execution profile", exact: true }),
     ).toBeVisible();
     profilePath.searchParams.set("attempt", "1");
     await page.goto(profilePath.toString(), { waitUntil: "domcontentloaded" });
-    await expect(profileSection.getByText("Attempt 1", { exact: true })).toBeVisible();
     await expect(
-      profileSection.getByText("This attempt has no recorded execution profile.", { exact: true }),
+      profileSection.getByText("Execution profile (job attempt 1)", { exact: true }),
     ).toBeVisible();
+    await expect(profileSection.getByText("Not recorded", { exact: true })).toBeVisible();
     await profileSection.scrollIntoViewIfNeeded();
     await capture(page, info, "09-historical-attempt-profile-unavailable", true);
   } catch (error) {

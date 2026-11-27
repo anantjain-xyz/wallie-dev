@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 
 import { PageHeader } from "@/components/ui/page-shell";
 import { SkeletonBlock } from "@/components/ui/skeleton";
-import { FILTER_CONTROL_CLASS } from "@/components/ui/filter-controls";
+import { FILTER_CONTROL_CLASS, FILTER_SEARCH_CLASS } from "@/components/ui/filter-controls";
 import { pipelineLayout } from "@/features/pipeline/layout";
 import { cn } from "@/lib/utils";
 
@@ -78,9 +78,6 @@ export function PipelineLoadingSkeleton({
                   <div className="flex min-h-11 items-center sm:min-h-9 pointer-coarse:min-h-11">
                     <SkeletonBlock className="h-8 w-[108px]" />
                   </div>
-                  <div className="flex h-[1.375rem] items-center">
-                    <SkeletonBlock className="h-4 w-48" />
-                  </div>
                 </div>
               }
               titleAsChild
@@ -88,9 +85,20 @@ export function PipelineLoadingSkeleton({
           </div>
 
           <div aria-hidden="true" className={pipelineLayout.controls}>
-            <SkeletonBlock className="h-11 min-w-0 flex-1 basis-full sm:basis-60 md:h-9 pointer-coarse:h-11" />
-            <SkeletonBlock className="h-11 w-40 md:h-9 pointer-coarse:h-11" />
+            <div className={cn(FILTER_SEARCH_CLASS, "sm:flex sm:items-center sm:gap-2")}>
+              <SkeletonBlock className="mb-1 h-4 w-11 shrink-0 sm:mb-0" />
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                <SkeletonBlock
+                  className={cn(FILTER_CONTROL_CLASS, "min-w-0 flex-1 pointer-coarse:h-11")}
+                />
+                <SkeletonBlock
+                  className={cn(FILTER_CONTROL_CLASS, "w-16 shrink-0 pointer-coarse:h-11")}
+                />
+              </div>
+            </div>
+            <SkeletonBlock className={cn(FILTER_CONTROL_CLASS, "w-28 pointer-coarse:h-11")} />
           </div>
+          <div aria-hidden="true" className={pipelineLayout.searchFeedback} />
         </div>
 
         <div aria-hidden="true" className={pipelineLayout.stageTabs}>

@@ -1130,7 +1130,8 @@ describe("PipelinePageClient", () => {
 
     await userEvent.click(screen.getByRole("combobox", { name: "Filter by status" }));
     await userEvent.click(screen.getByRole("option", { name: "Awaiting review" }));
-    const planLane = (await screen.findByRole("heading", { name: "Plan" })).closest("section")!;
+    await screen.findByText("0 matching sessions");
+    const planLane = screen.getByRole("heading", { name: "Plan" }).closest("section")!;
     expect(within(planLane).getByText("No matching sessions in this stage")).toBeTruthy();
     expect(within(planLane).queryByRole("button", { name: "Load more Plan sessions" })).toBeNull();
     expect(screen.getByRole("tab", { name: "Plan, 0 matching sessions" })).toBeTruthy();
@@ -1200,7 +1201,7 @@ describe("PipelinePageClient", () => {
     await userEvent.click(status);
     await userEvent.click(screen.getByRole("option", { name: "All statuses" }));
     const search = screen.getByRole("searchbox", { name: "Search active board" });
-    await userEvent.type(search, "changes");
+    await userEvent.type(search, "changes{Enter}");
     expect(await screen.findByText("Needs changes")).toBeTruthy();
     expect(screen.getAllByRole("article")).toHaveLength(1);
     expect(
@@ -1320,6 +1321,7 @@ describe("PipelinePageClient", () => {
     await act(async () => vi.advanceTimersByTimeAsync(150));
     emitRunChange();
     expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await act(async () => vi.advanceTimersByTimeAsync(150));
     expect(fetchMock).toHaveBeenCalledTimes(1);
     emitRunChange();
@@ -1367,6 +1369,7 @@ describe("PipelinePageClient", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search active board" }), {
       target: { value: "Ticket" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await act(async () => vi.advanceTimersByTimeAsync(200));
     view.rerender(
       <PipelinePageClient enableRealtime={false} initialData={initialData([freshCard], [])} />,
@@ -1435,6 +1438,7 @@ describe("PipelinePageClient", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search active board" }), {
       target: { value: "Ticket" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await act(async () => vi.advanceTimersByTimeAsync(200));
     const loadMore = () =>
       screen.getByRole<HTMLButtonElement>("button", { name: "Load more Plan sessions" });
@@ -1508,6 +1512,7 @@ describe("PipelinePageClient", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search active board" }), {
       target: { value: "Session" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await act(async () => vi.advanceTimersByTimeAsync(200));
     fireEvent.click(screen.getByRole("button", { name: "Load more Plan sessions" }));
     view.rerender(<PipelinePageClient enableRealtime={false} initialData={initialData()} />);
@@ -1833,13 +1838,17 @@ describe("PipelinePageClient", () => {
     await userEvent.type(search, "  OP-353 ");
 
     expect((search as HTMLInputElement).value).toBe("  OP-353 ");
-    expect(screen.getByRole("button", { name: "Clear" })).toBeTruthy();
-    expect(
-      screen.getByText("Filtering sessions…", { selector: '[aria-hidden="true"]' }),
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Clear search" })).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Enter}");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(fetchMock.mock.calls[0]?.[0]).toContain("?q=OP-353");
+    expect(screen.getByText("Updating results…", { exact: false })).toBeTruthy();
+    expect(screen.getAllByRole("article")).toHaveLength(3);
+    await userEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(document.activeElement).toBe(search);
     fireEvent.change(search, { target: { value: "Beta" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByText("Beta item")).toBeTruthy();
     expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
     await act(async () => {
@@ -1851,9 +1860,9 @@ describe("PipelinePageClient", () => {
     expect(screen.getByText("Beta item")).toBeTruthy();
     expect(screen.queryByText("Gamma task")).toBeNull();
 
-    await userEvent.click(screen.getByRole("button", { name: "Clear" }));
+    await userEvent.click(screen.getByRole("button", { name: "Clear search" }));
     expect((search as HTMLInputElement).value).toBe("");
-    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
     await waitFor(() => expect(screen.getAllByRole("article")).toHaveLength(3));
   });
 
@@ -1867,6 +1876,7 @@ describe("PipelinePageClient", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search active board" }), {
       target: { value: query },
     });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await act(async () => vi.advanceTimersByTimeAsync(200));
 
     expect(fetchMock).toHaveBeenCalledTimes(1);

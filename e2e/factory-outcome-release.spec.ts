@@ -247,7 +247,7 @@ test("factory outcome release reconciles the signed-in Analytics report and priv
         "Observed canonical merges",
         "Previous period",
       ),
-    ).toHaveText(String(fixture.expected.previousObservedMergeCount));
+    ).toHaveText("Incomplete coverage");
     await expect(analyticsValue(page, "Revert rate", "Verified revert rate")).toHaveText(
       revertRate,
     );
@@ -355,7 +355,7 @@ test("factory outcome release reconciles the signed-in Analytics report and priv
       page.getByRole("combobox", { name: /^Break down throughput by/u }),
       "model",
     );
-    await page.getByRole("button", { name: "Apply breakdown", exact: true }).click();
+    await expect(page).toHaveURL(/[?&]dimension=model(?:&|#|$)/);
     await expect(analyticsValue(page, "Pull request throughput", "gpt-5.5")).toHaveText("1");
     await expect(analyticsValue(page, "Pull request throughput", "Unlinked")).toHaveText("3");
     await analyticsValue(page, "Pull request throughput", "gpt-5.5").press("Enter");
@@ -368,7 +368,7 @@ test("factory outcome release reconciles the signed-in Analytics report and priv
       page.getByRole("combobox", { name: /^Break down throughput by/u }),
       "person",
     );
-    await page.getByRole("button", { name: "Apply breakdown", exact: true }).click();
+    await expect(page).toHaveURL(/[?&]dimension=person(?:&|#|$)/);
     const requester = "Morgan Example · Owner";
     await expect(analyticsValue(page, "Pull request throughput", requester)).toHaveText("4");
 

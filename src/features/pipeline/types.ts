@@ -1,4 +1,5 @@
 import type { OnboardingResumeState } from "@/features/onboarding/flow";
+import type { SessionBrowseFactory } from "@/features/sessions/browse-pipeline-owners";
 import type { SessionPhaseStatus, SessionPullRequest } from "@/features/sessions/types";
 import type { Enums } from "@/lib/supabase/database.types";
 
@@ -43,6 +44,7 @@ export type PipelineDashboardLane = {
   cards: PipelineDashboardCard[];
   cursor: string | null;
   description: string;
+  factory?: SessionBrowseFactory;
   factoryName?: string;
   id: string;
   name: string;
@@ -69,6 +71,7 @@ export type PipelineBoardState = {
 export type PipelineDashboardData = {
   creationFactoryName?: string;
   aggregateFactories?: boolean;
+  overviewFactories?: SessionBrowseFactory[];
   factoryId?: string;
   showCreationOnboarding?: boolean;
   hasAnySession: boolean;

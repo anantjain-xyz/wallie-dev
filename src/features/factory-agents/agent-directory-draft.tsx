@@ -58,7 +58,7 @@ export function AgentDirectoryFactorySelector({
             if (dirtyRef?.current) setTarget({ navigate, label });
             else navigate();
           }}
-          resetParams={["q"]}
+          resetParams={["q", "new"]}
           selectedValue={selectedValue}
         />
       </div>

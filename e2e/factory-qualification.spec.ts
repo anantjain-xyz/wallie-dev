@@ -714,7 +714,9 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     const skillRevision = skillRevisionResponseSchema.parse(await createSkill.json()).revision;
     await page.getByRole("link", { name: "Agents", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Agents", exact: true })).toBeVisible();
+    await page.getByRole("link", { name: "New agent", exact: true }).click();
     await page.getByLabel("Agent name", { exact: true }).fill("Implementation reviewer");
+    await page.getByText("Advanced", { exact: true }).click();
     await page.getByLabel("Identifier", { exact: true }).fill("implementation-reviewer");
     const agentPrompt = page.getByRole("textbox", { name: "Implementation prompt", exact: true });
     await agentPrompt.fill("Review the assigned stage. {{session.prompt}} stays literal.");

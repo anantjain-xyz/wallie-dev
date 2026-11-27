@@ -108,7 +108,9 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-function readDirectory(searchParams = query) {
+function readDirectory(
+  searchParams: { factory: string; q?: string; after?: string; new?: string } = query,
+) {
   return AgentsPage({
     params: Promise.resolve({ workspaceSlug: "release" }),
     searchParams: Promise.resolve(searchParams),
@@ -142,6 +144,40 @@ it("names both directory roles and preserves the scoped search through paginatio
   expect(screen.queryByRole("link", { name: "New agent" })).not.toBeInTheDocument();
 });
 
+it.each([false, true])(
+  "offers one creation link and no inline form (populated: %s)",
+  async (populated) => {
+    loaders.loadAgentPageScope.mockResolvedValueOnce({
+      scope: { ...scope, canEditPrompt: true },
+      factories: [factory],
+    });
+    loaders.loadAgentsList.mockResolvedValueOnce({ agents: populated ? [agent] : [] });
+    render(await readDirectory({ factory: factory.id }));
+    const newAgent = screen.getByRole("link", { name: "New agent" });
+    expect(newAgent).toHaveAttribute(
+      "href",
+      `/w/release/agents?factory=${factory.id}&new=1#new-agent`,
+    );
+    expect(screen.queryByRole("textbox", { name: "Agent name" })).not.toBeInTheDocument();
+    if (populated) {
+      expect(screen.getByRole("link", { name: agent.name })).toBeVisible();
+      expect(newAgent.closest("header")).not.toBeNull();
+    } else {
+      expect(screen.getByText("No agents in this factory yet.")).toBeVisible();
+      expect(within(screen.getByRole("region", { name: "Factory agents" })).getByRole("link")).toBe(
+        newAgent,
+      );
+    }
+  },
+);
+
+it("does not render the creation form on a direct request from a reader", async () => {
+  render(await readDirectory({ factory: factory.id, new: "1" }));
+  expect(screen.queryByRole("link", { name: "New agent" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("textbox", { name: "Agent name" })).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: agent.name })).toBeVisible();
+});
+
 it("keeps an exact draft and factory on Cancel, then switches once on Discard", async () => {
   const user = userEvent.setup();
   const selected = { ...factory, isDefault: true };
@@ -155,7 +191,10 @@ it("keeps an exact draft and factory on Cancel, then switches once on Discard", 
     scope: { ...scope, factory: selected, canEditPrompt: true },
     factories: [selected, other],
   });
-  render(<OverlayProvider>{await readDirectory()}</OverlayProvider>);
+  const authoring = { ...query, new: "1" };
+  loaders.search = new URLSearchParams(authoring);
+  render(<OverlayProvider>{await readDirectory(authoring)}</OverlayProvider>);
+  expect(loaders.loadAgentsList).not.toHaveBeenCalled();
   const name = screen.getByRole("textbox", { name: "Agent name" });
   const prompt = screen.getByRole("textbox", { name: "Implementation prompt" });
   await user.type(name, "Release review draft");

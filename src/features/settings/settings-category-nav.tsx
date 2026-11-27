@@ -9,6 +9,7 @@ import {
   SETTINGS_CATEGORY_LINKS,
   type SettingsCategory,
 } from "@/features/settings/settings-categories";
+import { PersonalSettingsLink } from "@/features/settings/personal-settings-navigation";
 
 type SettingsCategoryNavProps = {
   activeCategory: SettingsCategory;
@@ -256,7 +257,7 @@ export function SettingsCategoryNav({
           );
         })}
       </ul>
-      <Link
+      <PersonalSettingsLink
         aria-current={activeCategory === "personal" ? "page" : undefined}
         className="settings-anchor mt-2 min-h-9 aria-[current=page]:bg-control-hover aria-[current=page]:text-foreground"
         href={`/w/${workspaceSlug}/settings?category=personal`}
@@ -264,7 +265,7 @@ export function SettingsCategoryNav({
         onPointerEnter={() => preloadSettingsCategory("personal")}
       >
         Personal
-      </Link>
+      </PersonalSettingsLink>
       <button
         aria-controls={jumpId}
         aria-expanded={jumpOpen}

@@ -46,6 +46,7 @@ export type SessionRowIslandSession = Pick<
 type SessionRowIslandProps = {
   connections: ReactNode;
   detailHref: string;
+  factoryName?: string;
   readOnly?: boolean;
   repositoryLabel: string | null;
   scope: SessionFilterKey;
@@ -69,6 +70,7 @@ function archiveOverrideFromSession(
 export function SessionRowIsland({
   connections,
   detailHref,
+  factoryName,
   readOnly = false,
   repositoryLabel,
   scope,
@@ -468,6 +470,11 @@ export function SessionRowIsland({
                 </SessionDetailLink>
               </span>
             </Tooltip>
+            {factoryName ? (
+              <span className="col-start-2 min-w-0 break-words text-xs text-muted">
+                {factoryName}
+              </span>
+            ) : null}
             {isArchived ? (
               <Status compact className="sessions-ledger-archived" value="archived" />
             ) : null}
@@ -475,7 +482,15 @@ export function SessionRowIsland({
             {/* Narrow cards: keep metadata under the title (not flush under #). Decorative;
                 the real table cells below stay available to assistive tech. */}
             <div aria-hidden="true" className="sessions-ledger-title-flow">
-              <span className="sessions-ledger-title-flow-stage">{stageName}</span>
+              <span
+                className={
+                  factoryName
+                    ? "min-w-0 break-words text-foreground"
+                    : "sessions-ledger-title-flow-stage"
+                }
+              >
+                {stageName}
+              </span>
               <span className="sessions-ledger-title-flow-separator">·</span>
               <span className="sessions-ledger-title-flow-status">
                 {

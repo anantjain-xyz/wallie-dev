@@ -137,6 +137,14 @@ export default async function SettingsPreviewPage({
     data.github.repositories = [];
     data.github.primaryProfile = null;
   }
+  if (state === "provider-blocked") {
+    data.setupHealth.codexConnection = {
+      ...data.setupHealth.codexConnection,
+      connected: false,
+      credentialType: null,
+      status: "missing",
+    };
+  }
   if (state === "missing-usage") {
     data.usage = {
       totalCostUsd: null,

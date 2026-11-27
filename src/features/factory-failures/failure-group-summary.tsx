@@ -28,12 +28,19 @@ export function failureGroupTitle(cohort: FailureCohortSummary) {
   return symptom;
 }
 
-export function FailureGroupStatus({ cohort }: { cohort: FailureCohortSummary }) {
+export function FailureGroupStatus({
+  cohort,
+  compact = false,
+}: {
+  cohort: FailureCohortSummary;
+  compact?: boolean;
+}) {
   const state = cohort.review.disposition;
+  const labelClass = compact ? "sr-only" : "type-annotation text-muted";
   return (
     <dl className="flex flex-wrap gap-x-5 gap-y-2">
       <div className="flex items-center gap-2">
-        <dt className="type-annotation text-muted">Review</dt>
+        <dt className={labelClass}>Review</dt>
         <dd>
           {cohort.partition ? (
             <Status label="Split snapshot" value="archived" />
@@ -47,7 +54,7 @@ export function FailureGroupStatus({ cohort }: { cohort: FailureCohortSummary })
         </dd>
       </div>
       <div className="flex items-center gap-2">
-        <dt className="type-annotation text-muted">Evidence</dt>
+        <dt className={labelClass}>Evidence</dt>
         <dd>
           {cohort.qualification === "qualified" ? (
             <Status label="Qualified evidence" value="complete" />
