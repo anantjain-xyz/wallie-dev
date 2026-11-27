@@ -191,6 +191,7 @@ test("a factory switch wins before its route commits and an unconfirmed draft re
   const createResponse = Promise.withResolvers<void>();
   const archiveRequest = Promise.withResolvers<void>();
   const archiveResponse = Promise.withResolvers<void>();
+  const failures: { step: string; error: unknown }[] = [];
   try {
     const workspace = await read(
       admin.rpc("create_workspace", {
@@ -312,11 +313,33 @@ test("a factory switch wins before its route commits and an unconfirmed draft re
     expect(requests).toHaveLength(2);
     expect(requests[0]).toMatchObject({ factoryId: original.id, promptMd: prompt });
     expect(requests[1]).toEqual(requests[0]);
+  } catch (error) {
+    failures.push({ step: "Draft recovery", error });
   } finally {
     createResponse.resolve();
     archiveResponse.resolve();
-    if (workspaceId) await write(admin.from("workspaces").delete().eq("id", workspaceId));
-    await write(admin.auth.admin.deleteUser(ownerId));
+    try {
+      if (workspaceId) await write(admin.from("workspaces").delete().eq("id", workspaceId));
+    } catch (error) {
+      failures.push({ step: "Workspace cleanup", error });
+    }
+    try {
+      await write(admin.auth.admin.deleteUser(ownerId));
+    } catch (error) {
+      failures.push({ step: "Auth cleanup", error });
+    }
+  }
+  if (failures.length === 1) throw failures[0].error;
+  if (failures.length > 1) {
+    const messages = failures.map(({ step, error }) => {
+      const message =
+        error && typeof error === "object" && "message" in error ? error.message : error;
+      return `${step}: ${String(message)}`;
+    });
+    throw new AggregateError(
+      failures.map(({ error }) => error),
+      messages.join("\n"),
+    );
   }
 });
 
