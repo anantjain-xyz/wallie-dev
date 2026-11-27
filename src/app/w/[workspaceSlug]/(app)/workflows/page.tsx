@@ -141,7 +141,7 @@ async function WorkflowDirectory({ params, searchParams }: Props) {
         actions={
           <>
             {selector}
-            {directory.workflows.length ? newWorkflow : null}
+            {!empty ? newWorkflow : null}
           </>
         }
         actionsRightOnDesktop

@@ -120,7 +120,10 @@ test("factory setup opens on request and keeps exact scope and drafts", async ({
     await createWorkflow.click();
     await expect(workflowDialog.getByRole("alert")).toHaveText("Enter a workflow name.");
     await expect(workflowName).toBeFocused();
+    await expect(workflowName).toHaveAttribute("aria-invalid", "true");
+    await expect(workflowName).toHaveAccessibleDescription("Enter a workflow name.");
     await workflowName.fill("Fixture graph");
+    await expect(workflowName).not.toHaveAttribute("aria-invalid", "true");
     await page.keyboard.press("Escape");
     await expect(newWorkflow).toBeFocused();
     await newWorkflow.press("Enter");
@@ -133,6 +136,16 @@ test("factory setup opens on request and keeps exact scope and drafts", async ({
     await expect(newWorkflow).toHaveCount(1);
     await page.getByRole("link", { name: "Fixture graph Edit draft", ...name }).click();
     await expect(page.getByRole("heading", { name: "Fixture graph", ...name })).toBeVisible();
+
+    for (const [directory, section, noMatch, role, action] of [
+      ["agents", "Factory agents", "No matching agents.", "link", "New agent"],
+      ["scorers", "Factory scorers", "No scorers match this search", "link", "New scorer"],
+      ["workflows", "Graph workflows", "No workflows match that name", "button", "New workflow"],
+    ] as const) {
+      await page.goto(`${workspace}/${directory}${secondary}&q=missing-fixture-name`);
+      await expect(page.getByRole("region", { name: section })).toContainText(noMatch);
+      await expect(page.getByRole(role, { name: action, ...name })).toHaveCount(1);
+    }
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${workspace}/governance${primary}`);

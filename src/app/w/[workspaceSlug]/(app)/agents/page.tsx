@@ -107,7 +107,7 @@ export default async function AgentsPage({
         actions={
           <>
             {selector}
-            {agents.length ? newAgent : null}
+            {!empty ? newAgent : null}
           </>
         }
         actionsRightOnDesktop

@@ -208,7 +208,7 @@ export default async function ScorersPage({
         actions={
           <>
             {selector}
-            {scorers.length ? newScorer : null}
+            {!empty ? newScorer : null}
           </>
         }
         actionsRightOnDesktop
