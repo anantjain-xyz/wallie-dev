@@ -10,7 +10,11 @@ import type { SettingsInitialData } from "@/features/settings/data";
 import { Section } from "@/features/settings/settings-ui";
 import { WorkspaceSettingsLoadError } from "@/features/settings/workspace-settings-load-error";
 import { WorkspaceFactoryManagement } from "@/features/settings/workspace-factory-management";
-import { workspaceSessionsPath, workspaceSettingsPath } from "@/lib/routes";
+import {
+  workspaceFactoryDefinitionPath,
+  workspaceSessionsPath,
+  workspaceSettingsPath,
+} from "@/lib/routes";
 
 type WorkspaceFactoriesSectionProps = {
   canManage: boolean;
@@ -21,11 +25,15 @@ type WorkspaceFactoriesSectionProps = {
 };
 
 async function FactoryList({
+  canManage,
   factories,
   requestedManagement,
   requestedSetup,
   workspaceSlug,
-}: Pick<WorkspaceFactoriesSectionProps, "factories" | "requestedManagement" | "requestedSetup"> & {
+}: Pick<
+  WorkspaceFactoriesSectionProps,
+  "canManage" | "factories" | "requestedManagement" | "requestedSetup"
+> & {
   workspaceSlug: string;
 }) {
   const options = await factories.catch(() => null);
@@ -45,35 +53,34 @@ async function FactoryList({
       {setup ? (
         <Section
           actions={
-            <Link
-              className="ui-button min-h-11 sm:min-h-9"
-              href={workspaceSessionsPath(workspaceSlug, { factory: setup.id })}
-            >
-              View sessions
-            </Link>
+            <>
+              {canManage ? (
+                <Link
+                  className="ui-button-primary min-h-11 sm:min-h-9"
+                  href={`${workspaceFactoryDefinitionPath(workspaceSlug, { factory: setup.id })}#factory-setup`}
+                >
+                  Configure factory
+                </Link>
+              ) : null}
+              <Link
+                className="ui-button min-h-11 sm:min-h-9"
+                href={workspaceSessionsPath(workspaceSlug, { factory: setup.id })}
+              >
+                View sessions
+              </Link>
+            </>
           }
           anchorId="factory-setup"
-          className="ui-sheet p-4 sm:p-5"
+          className="ui-sheet p-4 sm:p-5 [&>header]:mb-0"
           heading="h3"
-          tagline="Each factory needs its own repositories and pipeline to run sessions. Nothing was copied from the workspace default."
+          tagline={
+            canManage
+              ? "Assign a repository and publish a pipeline before starting sessions."
+              : "A workspace owner or admin sets up this factory."
+          }
           title={`Set up ${setup.name}`}
         >
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1">
-              <h4 className="type-label">Choose repositories</h4>
-              <p className="type-secondary text-muted">
-                Not available for additional factories. GitHub Settings adds repositories to the
-                workspace default.
-              </p>
-            </div>
-            <div className="space-y-1">
-              <h4 className="type-label">Set up pipeline</h4>
-              <p className="type-secondary text-muted">
-                Not available for additional factories. The current editor only changes the
-                workspace default’s pipeline.
-              </p>
-            </div>
-          </div>
+          {null}
         </Section>
       ) : selection ? (
         <Section
@@ -184,6 +191,7 @@ export function WorkspaceFactoriesSection({
         }
       >
         <FactoryList
+          canManage={canManage}
           factories={factories}
           requestedManagement={requestedManagement}
           requestedSetup={requestedSetup}
