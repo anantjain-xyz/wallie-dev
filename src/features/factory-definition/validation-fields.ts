@@ -10,7 +10,7 @@ const topFields = {
   scorerRevisionIds: "Scorer revisions",
   sandboxProvider: "Sandbox provider",
   operatingRulesMd: "Operating rules",
-  stages: "Workflow stages",
+  stages: "Pipeline stages",
   modelRouting: "Model routing",
 } as const;
 

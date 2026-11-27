@@ -1,10 +1,10 @@
 # Factory definition activation
 
-The default factory's active revision is the target of its highest activation number. Publication and rollback append to that history. [Session admission](factory-session-inputs.md) pins the active revision under the same workspace lock fence.
+Each factory's active revision is the target of its highest activation number. Publication and rollback append to that history. [Session admission](factory-session-inputs.md) pins the active revision under the same workspace lock fence.
 
 ## Commands
 
-`/api/workspaces/[workspaceId]/factory-definition` exposes the workspace’s default factory.
+`/api/workspaces/[workspaceId]/factory-definition` exposes the workspace’s default factory. The authenticated browser also has an explicit scope at `/api/workspaces/[workspaceId]/factories/[factoryId]/definition`. These are separate from the versioned Factory API's machine session authority.
 
 | Method and action      | Behavior                                                                                                                    |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -25,9 +25,12 @@ Settings use `/api/workspaces/[workspaceId]/factory-definition/settings` to show
 
 ## Definition editor
 
-Open **Settings → Integrations → Open definition editor** as a workspace owner or admin. Structured fields and JSON source edit the same serial definition. **Validate and preview** runs the shared compiler and compares the result with the published revision. Switching from JSON to structured mode also runs the compiler to preserve the same interpretation of references.
+Open **Factory definition** as a workspace owner or admin and select a factory. For a new non-default factory, choose an unused, connected repository and create a serial pipeline. Assignment moves the repository out of the default factory's inventory and gives it a new scope identity; it never moves a repository already used by the default factory or another factory. Creating a pipeline reserves an empty anchor in the selected factory. It does not copy default stages, grants, or credentials.
+
+**Pipeline** edits the ordered serial stages; **Workflows** are separate. Structured fields and JSON source edit the same definition. **Validate and preview** runs the shared compiler and compares the result with the published revision. Switching from JSON to structured mode also runs the compiler to preserve the same interpretation of references.
 
 - Saving writes a shared draft against the activation and draft version shown when editing began. On a conflict, reload to inspect the latest version and choose whether to apply the retained edits or discard them.
+- Browser publication uses the latest-draft compare-and-swap. It publishes the tested version for new sessions without rewriting the pipeline rows used by legacy sessions.
 - Revision history retains the exact definition for each published revision. A revision permalink or source draft link opens that immutable record. Selecting a revision compares it with the current one.
 - Use the sandbox capability check on the saved draft or selected revision when activation requires a fresh receipt. Publishing a draft or rolling back to an earlier revision affects new sessions. Existing sessions retain their admission revision.
 

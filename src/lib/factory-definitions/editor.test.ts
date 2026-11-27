@@ -49,11 +49,13 @@ const directProposal = { ...proposal, candidateKey: "d".repeat(64) };
 
 function fixture({
   pipeline = true,
+  hasStages = true,
   repository = true,
   factoryArchived = false,
   routingEvidence,
 }: {
   pipeline?: boolean;
+  hasStages?: boolean;
   repository?: boolean;
   factoryArchived?: boolean;
   routingEvidence?: "inherited" | "direct" | "none";
@@ -164,8 +166,11 @@ function fixture({
             ]);
           case "pipelines":
             expect(searchParams.get("factory_id")).toBe(`eq.${selectedFactory}`);
-            expect(searchParams.get("pipeline_stages.archived_at")).toBe("is.null");
-            expect(searchParams.get("pipeline_stages")).toBe("not.is.null");
+            if (searchParams.has("pipeline_stages")) {
+              expect(searchParams.get("pipeline_stages.archived_at")).toBe("is.null");
+              expect(searchParams.get("pipeline_stages")).toBe("not.is.null");
+              if (!hasStages) return Response.json([]);
+            }
             return Response.json(
               pipeline
                 ? [
@@ -180,6 +185,7 @@ function fixture({
             );
           case "pipeline_stages":
             expect(searchParams.get("pipeline_id")).toBe(`eq.${selectedPipeline}`);
+            if (!hasStages) return Response.json([]);
             return Response.json([
               {
                 id: selectedStage,
@@ -269,6 +275,27 @@ describe("selected factory definition editor", () => {
       });
     },
   );
+
+  it("offers a blank working pipeline without copying workspace runtime policy or live stages", async () => {
+    const { calls, client } = fixture({ hasStages: false });
+    await expect(
+      loadFactoryEditorSnapshot(client, workspace, selectedFactory),
+    ).resolves.toMatchObject({
+      setup: { pipelineAvailable: true, repositories: [{ id: selectedRepository }] },
+      baseline: {
+        source: {
+          pipeline: selectedPipeline,
+          repository: selectedRepository,
+          implementationAgent: promptRevision,
+          executionPolicy: null,
+          deliveryPolicy: null,
+          stages: [],
+        },
+      },
+    });
+    expect(calls.some(({ pathname }) => pathname.endsWith("/workspace_agent_config"))).toBe(false);
+    expect(calls.some(({ pathname }) => pathname.endsWith("/execution_policies"))).toBe(false);
+  });
 
   it.each([
     { id: fixtureId(11), factoryArchived: false },
