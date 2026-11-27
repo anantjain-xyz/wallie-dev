@@ -420,13 +420,9 @@ export function ShellHeader({
   const workflowLaunchActivationId = createFromUrl
     ? urlWorkflowActivation
     : launchOnLocation?.activationId;
+  const launchKey = JSON.stringify({ workflowLaunchActivationId, returnTo });
   const composerKey = `${viewerId}:${workspace.id}`;
-  const createUrlKey = JSON.stringify([
-    composerKey,
-    pathname,
-    creationFactoryQuery,
-    urlWorkflowActivation,
-  ]);
+  const createUrlKey = JSON.stringify([composerKey, pathname, creationFactoryQuery, launchKey]);
   const [dismissedCreateUrlKey, setDismissedCreateUrlKey] = useState<string | null>(null);
   if (!createFromUrl && dismissedCreateUrlKey) setDismissedCreateUrlKey(null);
   // Leaving the direct scope closes the dialog but keeps it mounted: drafts and
@@ -436,10 +432,7 @@ export function ShellHeader({
     creationScope !== null &&
     !shouldResumeSetup &&
     (userCreateOpen || (createFromUrl && dismissedCreateUrlKey !== createUrlKey));
-  const previewLocationKey =
-    creationFactoryQuery && !shouldResumeSetup
-      ? JSON.stringify([composerKey, pathname, creationFactoryQuery])
-      : null;
+  const previewLocationKey = creationFactoryQuery && !shouldResumeSetup ? createUrlKey : null;
   const [creationPreview, setCreationPreview] = useState<{
     locationKey: string;
     preview: SessionCreationPreview;
@@ -467,11 +460,26 @@ export function ShellHeader({
         returnTo ?? undefined,
         workflowLaunchActivationId ?? undefined,
       );
-      setDismissedCreateUrlKey(null);
+      const recoveryKey = JSON.stringify([
+        composerKey,
+        sessionsHref,
+        submittedFactoryId,
+        launchKey,
+      ]);
+      setDismissedCreateUrlKey((dismissed) => (dismissed === recoveryKey ? null : dismissed));
       startNavigation(href);
       router.push(href);
     },
-    [returnTo, router, startNavigation, workflowLaunchActivationId, workspace.slug],
+    [
+      composerKey,
+      launchKey,
+      returnTo,
+      router,
+      sessionsHref,
+      startNavigation,
+      workflowLaunchActivationId,
+      workspace.slug,
+    ],
   );
   const [mountedComposer, setMountedComposer] = useState<{
     key: string;
@@ -774,6 +782,7 @@ export function ShellHeader({
         <CreateSessionDialog
           key={composerKey}
           creationScope={mountedComposer.scope}
+          launchKey={launchKey}
           open={createOpen}
           onClose={handleCreateClose}
           onCloseAutoFocus={handleCreateCloseAutoFocus}

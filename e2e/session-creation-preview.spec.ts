@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { signIn } from "./helpers/auth";
 
@@ -157,13 +157,14 @@ test("creation from a deep link closes immediately and lets navigation win over 
   await expect(page).toHaveURL(`${workspacePath}/sessions/1`);
 });
 
-test.beforeEach(async ({ page }) => {
+async function mockRepositoryOptions(page: Page, factoryDefinitionDigest?: string) {
   await page.route(
     (url) => url.pathname.endsWith("/session-repositories"),
     (route) =>
       route.fulfill({
         json: {
           defaultGithubRepositoryId: "repo-fixture",
+          factoryDefinitionDigest,
           factoryId: new URL(route.request().url()).searchParams.get("factoryId"),
           linearIssueLinking: true,
           repositoryOptions: [{ id: "repo-fixture", fullName: "acme/wallie" }],
@@ -175,6 +176,77 @@ test.beforeEach(async ({ page }) => {
         },
       }),
   );
+}
+
+test("a newer workflow launch keeps its publication and return while an earlier request settles", async ({
+  page,
+}) => {
+  const sessions = `${workspacePath}/sessions`;
+  const board = page.getByRole("navigation", { name: "Sessions views" }).getByRole("link", {
+    name: "Board",
+  });
+  const boardHref = await board.getAttribute("href");
+  const factoryId = boardHref && new URL(boardHref, page.url()).searchParams.get("factory");
+  if (!factoryId) throw new Error("Missing the authorized Board factory.");
+  const definitionDigest = "d".repeat(64);
+  const earlier = {
+    workflowId: "00000000-0000-4000-8000-000000000011",
+    activationId: "00000000-0000-4000-8000-000000000012",
+    label: "Earlier publication",
+  };
+  const newer = {
+    ...earlier,
+    activationId: "00000000-0000-4000-8000-000000000013",
+    label: "Newer publication",
+  };
+  const launch = (activationId: string, returnTo: string) =>
+    `${sessions}?${new URLSearchParams({ factory: factoryId, create: "1", returnTo, workflowActivation: activationId })}`;
+  const origin = (q: string) =>
+    `${workspacePath}/workflows?${new URLSearchParams({ factory: factoryId, q })}#workflow-${q}`;
+  await mockRepositoryOptions(page, definitionDigest);
+  await page.route("**/workflows/intake-options", (route) =>
+    route.fulfill({ json: { definitionDigest, options: [earlier, newer] } }),
+  );
+  const responseGate = deferred();
+  const canonicalUrl = `${sessions}/1`;
+  await page.route("**/api/sessions", async (route) => {
+    expect(route.request().postDataJSON()).toMatchObject({
+      factoryId,
+      workflowSelection: { workflowId: earlier.workflowId, activationId: earlier.activationId },
+    });
+    await responseGate.promise;
+    await route.fulfill({ status: 201, json: { canonicalUrl, number: 1 } });
+  });
+
+  try {
+    await page.goto(launch(earlier.activationId, origin("earlier")));
+    const dialog = page.getByRole("dialog", { name: "Start a new session", exact: true });
+    await dialog.getByLabel("Prompt", { exact: true }).fill("Prepare the earlier release");
+    await dialog.getByRole("button", { name: "Start session", exact: true }).click();
+    const preview = page.locator("[data-session-creation]");
+    await expect(preview).toBeVisible();
+    await expect(page).toHaveURL(`${sessions}?factory=${factoryId}`);
+
+    const newerHref = launch(newer.activationId, origin("newer"));
+    await page.evaluate((href) => window.history.pushState(null, "", href), newerHref);
+    await expect(dialog.getByText(newer.label, { exact: true })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Close", exact: true })).toBeEnabled();
+    await expect(preview).toBeHidden();
+    responseGate.release();
+    await expect(page.getByText("Session #1 created.", { exact: true })).toBeVisible();
+    await expect(page).toHaveURL(newerHref);
+    await expect(dialog.getByText(newer.label, { exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page).toHaveURL(origin("newer"));
+    await page.getByRole("button", { name: "Open session" }).click();
+    await expect(page).toHaveURL(canonicalUrl);
+  } finally {
+    responseGate.release();
+  }
+});
+
+test.beforeEach(async ({ page }) => {
+  await mockRepositoryOptions(page);
   await signIn(page);
 });
 

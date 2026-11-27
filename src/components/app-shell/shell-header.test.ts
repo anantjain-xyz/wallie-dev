@@ -132,11 +132,11 @@ function mockScopedSessionOptions(definitionDigest?: string) {
   );
 }
 
-function mockWorkflowSessionOptions() {
+function mockWorkflowSessionOptions(options = [releaseWorkflow]) {
   const definitionDigest = "d".repeat(64);
   mockScopedSessionOptions(definitionDigest);
   vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-    Response.json({ definitionDigest, options: [releaseWorkflow] }),
+    Response.json({ definitionDigest, options }),
   );
 }
 
@@ -229,6 +229,19 @@ describe("ShellHeader", () => {
     expect(screen.getByRole("button", { name: "New session" })).toBeVisible();
     expect(screen.queryByText("Resume setup")).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("blocks creation on the eligible Board while workspace onboarding is incomplete", () => {
+    mocked.searchParams = new URLSearchParams({ factory: creationFactory.id, create: "1" });
+    mountShell({ onboarding: { currentStep: "repository", status: "in_progress" } });
+
+    expect(screen.getByRole("link", { name: /Resume setup/ })).toHaveAttribute(
+      "href",
+      "/w/acme-corp/onboarding",
+    );
+    expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Start a new session" })).toBeNull();
+    expect(mocked.replace).toHaveBeenCalledWith("/w/acme-corp/onboarding");
   });
 
   it("blocks the default-factory creation deep link for an unauthorized viewer", () => {
@@ -656,6 +669,83 @@ describe("ShellHeader", () => {
         key: "Escape",
       });
       expect(mocked.replace).toHaveBeenLastCalledWith(workflowOrigin, { scroll: true });
+    },
+  );
+
+  it.each(["success", "rejected", "unconfirmed"] as const)(
+    "keeps the newer workflow launch open when the previous launch settles with %s",
+    async (outcome) => {
+      const header = { viewerId: `overlapping-launches-${outcome}` };
+      const sessions = "/w/acme-corp/sessions";
+      const canonicalUrl = "/w/acme-corp/sessions/42";
+      const pending = Promise.withResolvers<{ canonicalUrl: string; number: number }>();
+      const nextWorkflow = {
+        ...releaseWorkflow,
+        activationId: "00000000-0000-4000-8000-000000000013",
+        label: "Next release workflow",
+      };
+      const nextOrigin = "/w/acme-corp/workflows?factory=factory-1&q=next#workflow-next";
+      const originalQuery = new URLSearchParams({
+        factory: creationFactory.id,
+        create: "1",
+        returnTo: workflowOrigin,
+        workflowActivation: releaseWorkflow.activationId,
+      });
+      clientMocks.createSessionFromClient.mockReset().mockReturnValueOnce(pending.promise);
+      mockWorkflowSessionOptions([releaseWorkflow, nextWorkflow]);
+      mocked.pathname = sessions;
+      mocked.searchParams = originalQuery;
+      const view = mountShell(header);
+      fireEvent.change(await screen.findByLabelText("Prompt"), {
+        target: { value: "Publish the earlier release" },
+      });
+      const submit = screen.getByRole("button", { name: "Start session" });
+      await waitFor(() => expect(submit).toBeEnabled());
+      fireEvent.click(submit);
+      expect(screen.getByRole("region", { name: "Creating session" })).toBeVisible();
+      expect(mocked.replace).toHaveBeenCalledExactlyOnceWith(
+        `${sessions}?factory=${creationFactory.id}`,
+        { scroll: false },
+      );
+
+      mocked.searchParams = new URLSearchParams({
+        factory: creationFactory.id,
+        create: "1",
+        returnTo: nextOrigin,
+        workflowActivation: nextWorkflow.activationId,
+      });
+      view.rerender(shellElement(header));
+      const nextDialog = screen.getByRole("dialog", { name: "Start a new session" });
+      expect(screen.queryByRole("region", { name: "Creating session" })).toBeNull();
+      expect(within(nextDialog).getByRole("button", { name: "Close" })).toBeEnabled();
+      expect(mocked.replace).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        if (outcome === "success") pending.resolve({ canonicalUrl, number: 42 });
+        else if (outcome === "rejected")
+          pending.reject(
+            Object.assign(new Error("Repository unavailable"), { creationRejected: true }),
+          );
+        else pending.reject(new TypeError("Failed to fetch"));
+      });
+      expect(nextDialog).toBeVisible();
+      if (outcome !== "unconfirmed") {
+        expect(await within(nextDialog).findByText(nextWorkflow.label)).toBeVisible();
+      } else {
+        expect(within(nextDialog).getByRole("button", { name: "Retry creation" })).toBeDisabled();
+      }
+      expect(mocked.push).not.toHaveBeenCalled();
+      expect(mocked.replace).toHaveBeenCalledTimes(1);
+      fireEvent.click(within(nextDialog).getByRole("button", { name: "Close" }));
+      expect(mocked.replace).toHaveBeenLastCalledWith(nextOrigin, { scroll: true });
+      if (outcome === "success") {
+        fireEvent.click(await screen.findByRole("button", { name: "Open session" }));
+        expect(mocked.push).toHaveBeenCalledExactlyOnceWith(canonicalUrl);
+      } else {
+        fireEvent.click(await screen.findByRole("button", { name: "Open draft" }));
+        expect(mocked.push).toHaveBeenCalledExactlyOnceWith(`${sessions}?${originalQuery}`);
+        expect(screen.queryByRole("dialog", { name: "Start a new session" })).toBeNull();
+      }
     },
   );
 

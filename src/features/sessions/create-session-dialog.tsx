@@ -79,6 +79,7 @@ type CreateSessionDialogProps = {
   creationFactoryId?: string;
   creationFactoryName?: string;
   creationScope?: SessionCreationScope;
+  launchKey?: string;
   onClose: (reason?: "preview") => void;
   onCloseAutoFocus?: () => void;
   onDraftReset?: () => void;
@@ -95,6 +96,7 @@ type OverrideTarget = RoutingOverrideOptions["targets"][number];
 
 type SessionCreationAttempt = {
   input: CreateSessionInput;
+  recoverDraft: () => void;
   scopeKey: string;
   snapshot: PendingSessionSnapshot;
   workflowLabel: string;
@@ -172,6 +174,7 @@ function CreateSessionDialogBody({
   creationFactoryId,
   creationFactoryName,
   creationScope,
+  launchKey,
   onClose,
   onCloseAutoFocus,
   onPreviewChange,
@@ -211,7 +214,11 @@ function CreateSessionDialogBody({
       : undefined
     : creationFactoryName;
   const workflowFactoryId = creationScope ? targetFactoryId : creationFactoryId;
-  const scopeKey = `${creationScope?.kind ?? "legacy"}:${targetFactoryId ?? ""}`;
+  const scopeKey = JSON.stringify([
+    creationScope?.kind ?? "legacy",
+    targetFactoryId,
+    launchKey ?? { workflowLaunchActivationId },
+  ]);
   const dialogContextRef = useRef({ open, scopeKey });
   useLayoutEffect(() => {
     dialogContextRef.current = { open, scopeKey };
@@ -311,7 +318,9 @@ function CreateSessionDialogBody({
   const [linearError, setLinearError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [setupHref, setSetupHref] = useState<string>();
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submittingScopeKey, setSubmittingScopeKey] = useState<string | null>(null);
+  const isSubmitting = submittingScopeKey !== null;
+  const isSubmittingHere = submittingScopeKey === scopeKey;
   const [fieldsFactoryId, setFieldsFactoryId] = useState(targetFactoryId);
   if (fieldsFactoryId !== targetFactoryId) {
     setFieldsFactoryId(targetFactoryId);
@@ -785,6 +794,7 @@ function CreateSessionDialogBody({
     }
 
     const attempt: SessionCreationAttempt = {
+      recoverDraft: () => onReopen?.(targetFactoryId),
       scopeKey,
       workflowLabel: workflow?.label ?? defaultWorkflowOption.label,
       input: {
@@ -885,7 +895,7 @@ function CreateSessionDialogBody({
     setErrorMessage(null);
     setSetupHref(undefined);
     submitInFlightRef.current = true;
-    setIsSubmitting(true);
+    setSubmittingScopeKey(attempt.scopeKey);
     showPendingPreview(attempt.snapshot);
     try {
       const result = await createSessionFromClient(attempt.input);
@@ -904,7 +914,7 @@ function CreateSessionDialogBody({
       } else {
         keepDraftWithoutAttempt(attempt);
         submitInFlightRef.current = false;
-        setIsSubmitting(false);
+        setSubmittingScopeKey(null);
       }
       if (navigateToSession) {
         startNavigation(result.canonicalUrl);
@@ -975,12 +985,14 @@ function CreateSessionDialogBody({
           setSetupHref(error.setupHref);
         }
       }
-      setIsSubmitting(false);
+      setSubmittingScopeKey(null);
       const reopen = scopeCurrent && previewVisibleRef.current;
+      const shouldOfferRecovery =
+        rejected || !dialogContextRef.current.open || (onPreviewChange && !scopeCurrent);
       previewVisibleRef.current = false;
       onPreviewChange?.(null);
       if (reopen) onReopen?.();
-      else if ((onPreviewChange || !scopeCurrent) && (rejected || !dialogContextRef.current.open)) {
+      else if ((onPreviewChange || !scopeCurrent) && shouldOfferRecovery) {
         clearRecoveryToast();
         recoveryToastRef.current = pushToast({
           title: "Session creation needs attention.",
@@ -990,7 +1002,7 @@ function CreateSessionDialogBody({
           action: {
             label: "Open draft",
             altText: "Recover the session creation draft",
-            onClick: () => onReopen?.(attempt.input.factoryId),
+            onClick: attempt.recoverDraft,
           },
         });
       }
@@ -1040,13 +1052,13 @@ function CreateSessionDialogBody({
     <Dialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen && !isSubmitting && !hasActiveAttachmentOperation) onClose();
+        if (!nextOpen && !isSubmittingHere && !hasActiveAttachmentOperation) onClose();
       }}
     >
       <DialogContent
         bodyClassName="flex min-h-0 flex-col"
         className="flex max-w-xl flex-col overflow-hidden"
-        dismissible={!isSubmitting && !hasActiveAttachmentOperation}
+        dismissible={!isSubmittingHere && !hasActiveAttachmentOperation}
         title="Start a new session"
         onCloseAutoFocus={onCloseAutoFocus}
         onOpenAutoFocus={(event) => {
@@ -1511,7 +1523,7 @@ function CreateSessionDialogBody({
           <footer className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
             <button
               type="button"
-              disabled={isSubmitting || hasActiveAttachmentOperation}
+              disabled={isSubmittingHere || hasActiveAttachmentOperation}
               onClick={() => onClose()}
               className="ui-button"
             >
@@ -1547,7 +1559,7 @@ function CreateSessionDialogBody({
             >
               <ActionButtonLabel
                 idle={unconfirmed ? "Retry creation" : "Start session"}
-                pending={isSubmitting}
+                pending={isSubmittingHere}
                 pendingLabel="Starting…"
               />
             </button>
