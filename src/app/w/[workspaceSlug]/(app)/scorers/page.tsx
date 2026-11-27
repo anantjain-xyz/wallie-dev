@@ -3,8 +3,13 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
 
-import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
-import { Status } from "@/components/ui/status";
+import {
+  PAGE_HEADER_TITLE_CLASS,
+  PageContainer,
+  PageHeader,
+  PageSection,
+} from "@/components/ui/page-shell";
+import { FactoryAuthoringFocus } from "@/features/factories/factory-authoring-focus";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { ScorerDraftGuard, ScorerDraftLink } from "@/features/factory-scorers/scorer-draft-guard";
@@ -84,162 +89,48 @@ export default async function ScorersPage({
   const libraryQuery = { ...factoryQuery, q: search || undefined };
   const draftQuery = { ...libraryQuery, after: after.data };
   const factoryLabel = scorerFactoryLabel(factory, factories);
-  const { scorers, nextAfterId } = await searchFactoryScorers(supabase, {
-    workspaceId,
-    factoryId: factory.id,
-    afterId: after.data,
-    limit: 30,
-    search,
-  });
+  const selector = <ScorerFactorySelector factories={factories} selectedValue={factory.id} />;
 
-  return (
-    <ScorerDraftGuard>
-      <PageContainer className="pt-5 sm:pt-10">
-        <PageHeader
-          actions={
-            <>
-              <ScorerFactorySelector factories={factories} selectedValue={factory.id} />
-              {canEdit ? (
-                <Link className="ui-button ui-button-primary" href="#new-scorer">
-                  New scorer
-                </Link>
-              ) : null}
-            </>
-          }
-          actionsRightOnDesktop
-          description={
-            canEdit
-              ? undefined
-              : factory.status === "archived"
-                ? `${factoryLabel} · Read only — archived factory`
-                : `${factoryLabel} · Only factory managers can publish`
-          }
-          title="Scorers"
-        />
-        <div className="space-y-8">
-          <section aria-label="Factory scorers" className="ui-sheet divide-y divide-border">
-            <Form
-              action={workspaceScorersPath(workspaceSlug)}
-              className="space-y-1.5 px-4 py-4 sm:px-5"
-              role="search"
-            >
-              <input name="factory" type="hidden" value={factory.id} />
-              {presetKey ? <input name="preset" type="hidden" value={presetKey} /> : null}
-              <label className="type-label block" htmlFor="search-scorers">
-                Search this factory’s scorers
-              </label>
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  autoComplete="off"
-                  className="ui-input min-w-0 flex-1 basis-48"
-                  defaultValue={search}
-                  id="search-scorers"
-                  key={search}
-                  maxLength={120}
-                  name="q"
-                  placeholder="Name or identifier…"
-                  type="search"
-                />
-                <button className="ui-button" type="submit">
-                  Search
-                </button>
-                {search ? (
-                  <Link
-                    className="ui-button"
-                    href={workspaceScorersPath(workspaceSlug, {
-                      ...factoryQuery,
-                      preset: presetKey,
-                    })}
-                  >
-                    Clear search
-                  </Link>
-                ) : null}
-              </div>
-            </Form>
-            {scorers.length ? (
-              <ul className="divide-y divide-border">
-                {scorers.map((scorer) => (
-                  <li className="min-w-0 px-4 py-4 sm:px-5" key={scorer.id}>
-                    <ScorerDraftLink
-                      className="break-words font-semibold text-foreground underline-offset-4 hover:text-accent hover:underline"
-                      href={workspaceScorerDetailPath(workspaceSlug, scorer.id, factoryQuery)}
-                    >
-                      {scorer.name}
-                    </ScorerDraftLink>
-                    {scorer.requirements ? (
-                      <p className="type-secondary mt-1 break-words text-muted">
-                        {scorer.requirements.evidence
-                          .map((kind) => scorerEvidenceLabels[kind])
-                          .join(", ")}
-                        {" · "}
-                        {scorer.requirements.scale === "boolean" ? "Boolean" : "Numeric"}
-                      </p>
-                    ) : null}
-                    <p className="type-annotation mt-1 break-words text-muted">{scorer.slug}</p>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="type-secondary px-4 py-5 text-muted sm:px-5">
-                {after.data
-                  ? "No scorers on this page."
-                  : search
-                    ? "No scorers match this search in the selected factory."
-                    : "No scorers in this factory yet."}
-              </p>
-            )}
-            {after.data || nextAfterId ? (
-              <div className="flex flex-wrap gap-2 px-4 py-3 sm:px-5">
-                {after.data ? (
-                  <Link
-                    className="ui-button"
-                    href={workspaceScorersPath(workspaceSlug, {
-                      ...libraryQuery,
-                      preset: presetKey,
-                    })}
-                  >
-                    First page
-                  </Link>
-                ) : null}
-                {nextAfterId ? (
-                  <Link
-                    className="ui-button"
-                    href={workspaceScorersPath(workspaceSlug, {
-                      ...libraryQuery,
-                      after: nextAfterId,
-                      preset: presetKey,
-                    })}
-                  >
-                    More scorers
-                  </Link>
-                ) : null}
-              </div>
-            ) : null}
-          </section>
-          {canEdit ? (
-            <PageSection
-              anchorId="new-scorer"
-              statusBadge={<Status label="Draft" value="not_started" />}
-              title="Draft rubric"
-            >
-              <div className="ui-sheet mb-4 space-y-3 p-4 sm:p-5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="type-label text-foreground" id="scorer-presets">
-                    Scorer presets
-                  </h3>
-                  {preset ? (
-                    <ScorerDraftLink
-                      className="type-secondary underline underline-offset-4"
-                      href={`${workspaceScorersPath(workspaceSlug, draftQuery)}#new-scorer`}
-                    >
-                      Start with a blank draft
-                    </ScorerDraftLink>
-                  ) : null}
-                </div>
-                <p className="type-secondary text-muted">
-                  Presets are editable copies. Runs missing or withholding required evidence are
-                  excluded.
-                </p>
+  if (canEdit && (preset || query.preset === "blank")) {
+    return (
+      <ScorerDraftGuard>
+        <PageContainer className="pt-5 sm:pt-10">
+          <PageHeader
+            actions={selector}
+            actionsRightOnDesktop
+            eyebrow={
+              <ScorerDraftLink
+                className="underline underline-offset-4"
+                href={`${workspaceScorersPath(workspaceSlug, draftQuery)}#new-scorer`}
+              >
+                Back to scorers
+              </ScorerDraftLink>
+            }
+            eyebrowAsPlain
+            title={
+              <h1
+                className={`${PAGE_HEADER_TITLE_CLASS} scroll-mt-24`}
+                id="new-scorer"
+                tabIndex={-1}
+              >
+                New scorer
+              </h1>
+            }
+            titleAsChild
+          />
+          <FactoryAuthoringFocus key={presetKey ?? "blank"} target="new-scorer" />
+          <PageSection
+            tagline={
+              preset ? `Editing a copy of ${preset.name} · Version ${preset.version}` : undefined
+            }
+            title="Draft rubric"
+          >
+            <details className="ui-sheet mb-4 px-4 py-3 sm:px-5" key={presetKey ?? "blank"}>
+              <summary className="type-label cursor-pointer text-foreground" id="scorer-presets">
+                Scorer presets
+              </summary>
+              <div className="mt-3 space-y-3">
+                <p className="type-secondary text-muted">Presets are editable copies.</p>
                 <ul aria-labelledby="scorer-presets" className="grid gap-2 sm:grid-cols-2">
                   {Object.values(factoryScorerPresets).map((option) => {
                     const key = factoryScorerPresetKey(option);
@@ -269,23 +160,166 @@ export default async function ScorersPage({
                   })}
                 </ul>
                 {preset ? (
-                  <p className="type-secondary text-muted">
-                    Editing a copy of {preset.name} · Version {preset.version}
-                  </p>
+                  <ScorerDraftLink
+                    className="type-secondary inline-block underline underline-offset-4"
+                    href={`${workspaceScorersPath(workspaceSlug, { ...draftQuery, preset: "blank" })}#new-scorer`}
+                  >
+                    Start with a blank draft
+                  </ScorerDraftLink>
                 ) : null}
               </div>
-              <ScorerForm
-                draft={{ kind: "create", preset }}
-                factoryId={factory.id}
-                factoryLabel={factoryLabel}
-                key={`${factory.id}:${presetKey ?? "blank"}`}
-                workspaceId={workspaceId}
-                workspaceSlug={workspaceSlug}
-              />
-            </PageSection>
+            </details>
+            <ScorerForm
+              draft={{ kind: "create", preset }}
+              factoryId={factory.id}
+              factoryLabel={factoryLabel}
+              key={`${factory.id}:${presetKey ?? "blank"}`}
+              workspaceId={workspaceId}
+              workspaceSlug={workspaceSlug}
+            />
+          </PageSection>
+        </PageContainer>
+      </ScorerDraftGuard>
+    );
+  }
+
+  const { scorers, nextAfterId } = await searchFactoryScorers(supabase, {
+    workspaceId,
+    factoryId: factory.id,
+    afterId: after.data,
+    limit: 30,
+    search,
+  });
+
+  const empty = !scorers.length && !search && !after.data;
+  const newScorer = canEdit ? (
+    <Link
+      className="ui-button ui-button-primary"
+      href={`${workspaceScorersPath(workspaceSlug, { ...draftQuery, preset: "blank" })}#new-scorer`}
+      id="new-scorer"
+    >
+      New scorer
+    </Link>
+  ) : null;
+
+  return (
+    <PageContainer className="pt-5 sm:pt-10">
+      <PageHeader
+        actions={
+          <>
+            {selector}
+            {scorers.length ? newScorer : null}
+          </>
+        }
+        actionsRightOnDesktop
+        description={
+          canEdit
+            ? undefined
+            : factory.status === "archived"
+              ? `${factoryLabel} · Read only — archived factory`
+              : `${factoryLabel} · Only factory managers can publish`
+        }
+        title="Scorers"
+      />
+      {newScorer ? <FactoryAuthoringFocus target="new-scorer" /> : null}
+      <div className="space-y-8">
+        <section aria-label="Factory scorers" className="ui-sheet divide-y divide-border">
+          {!empty && (
+            <Form
+              action={workspaceScorersPath(workspaceSlug)}
+              className="space-y-1.5 px-4 py-4 sm:px-5"
+              role="search"
+            >
+              <input name="factory" type="hidden" value={factory.id} />
+              <label className="type-label block" htmlFor="search-scorers">
+                Search this factory’s scorers
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  autoComplete="off"
+                  className="ui-input min-w-0 flex-1 basis-48"
+                  defaultValue={search}
+                  id="search-scorers"
+                  key={search}
+                  maxLength={120}
+                  name="q"
+                  placeholder="Name or identifier…"
+                  type="search"
+                />
+                <button className="ui-button" type="submit">
+                  Search
+                </button>
+                {search ? (
+                  <Link
+                    className="ui-button"
+                    href={workspaceScorersPath(workspaceSlug, factoryQuery)}
+                  >
+                    Clear search
+                  </Link>
+                ) : null}
+              </div>
+            </Form>
+          )}
+          {scorers.length ? (
+            <ul className="divide-y divide-border">
+              {scorers.map((scorer) => (
+                <li className="min-w-0 px-4 py-4 sm:px-5" key={scorer.id}>
+                  <Link
+                    className="break-words font-semibold text-foreground underline-offset-4 hover:text-accent hover:underline"
+                    href={workspaceScorerDetailPath(workspaceSlug, scorer.id, factoryQuery)}
+                  >
+                    {scorer.name}
+                  </Link>
+                  {scorer.requirements ? (
+                    <p className="type-secondary mt-1 break-words text-muted">
+                      {scorer.requirements.evidence
+                        .map((kind) => scorerEvidenceLabels[kind])
+                        .join(", ")}
+                      {" · "}
+                      {scorer.requirements.scale === "boolean" ? "Boolean" : "Numeric"}
+                    </p>
+                  ) : null}
+                  <p className="type-annotation mt-1 break-words text-muted">{scorer.slug}</p>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="space-y-3 px-4 py-5 sm:px-5">
+              <p className="type-secondary text-muted">
+                {after.data
+                  ? "No scorers on this page."
+                  : search
+                    ? "No scorers match this search in the selected factory."
+                    : "No scorers in this factory yet."}
+              </p>
+              {empty ? newScorer : null}
+            </div>
+          )}
+          {after.data || nextAfterId ? (
+            <div className="flex flex-wrap gap-2 px-4 py-3 sm:px-5">
+              {after.data ? (
+                <Link
+                  className="ui-button"
+                  href={workspaceScorersPath(workspaceSlug, libraryQuery)}
+                >
+                  First page
+                </Link>
+              ) : null}
+              {nextAfterId ? (
+                <Link
+                  className="ui-button"
+                  href={workspaceScorersPath(workspaceSlug, {
+                    ...libraryQuery,
+                    after: nextAfterId,
+                  })}
+                >
+                  More scorers
+                </Link>
+              ) : null}
+            </div>
           ) : null}
-        </div>
-      </PageContainer>
-    </ScorerDraftGuard>
+        </section>
+      </div>
+    </PageContainer>
   );
 }

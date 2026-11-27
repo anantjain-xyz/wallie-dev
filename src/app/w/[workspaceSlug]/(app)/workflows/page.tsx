@@ -7,7 +7,7 @@ import { sessionLaunchHref } from "@/components/app-shell/shell-navigation";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { FactorySelector } from "@/features/factories/factory-selector";
 import { loadWorkflowAuthoringScope } from "@/features/factory-workflows/authoring-page-data";
-import { CreateWorkflowForm } from "@/features/factory-workflows/create-workflow-form";
+import { CreateWorkflowDialog } from "@/features/factory-workflows/create-workflow-form";
 import {
   workflowDirectoryAvailability,
   workflowDirectoryEmptyMessage,
@@ -26,7 +26,6 @@ import {
   workspaceFactoryDefinitionPath,
   workspaceOnboardingPath,
   workspaceSessionsPath,
-  workspaceSettingsPath,
   workspaceWorkflowDetailPath,
   workspaceWorkflowsPath,
 } from "@/lib/routes";
@@ -63,22 +62,13 @@ async function WorkflowDirectory({ params, searchParams }: Props) {
   const [{ workspaceSlug }, query] = await Promise.all([params, searchParams]);
   const scope = await loadWorkflowAuthoringScope(workspaceSlug, query.factory);
   const { factory, factories, workspaceId, supabase, currentMember } = scope;
-  const header = (
-    <PageHeader
-      title="Workflows"
-      description="Find, edit, and publish graph workflows for a factory."
-      actionsRightOnDesktop
-      actions={
-        factories.length ? (
-          <FactorySelector
-            factories={factories}
-            selectedValue={factory?.id ?? ""}
-            resetParams={["after"]}
-          />
-        ) : undefined
-      }
+  const selector = factories.length ? (
+    <FactorySelector
+      factories={factories}
+      selectedValue={factory?.id ?? ""}
+      resetParams={["after"]}
     />
-  );
+  ) : undefined;
   const { q, after, needsReset } = parseWorkflowDirectoryQuery(query);
   if (factory && needsReset) {
     redirect(workspaceWorkflowsPath(workspaceSlug, { factory: factory.id, q: q || undefined }));
@@ -90,7 +80,7 @@ async function WorkflowDirectory({ params, searchParams }: Props) {
   if (!factory || !directory) {
     return (
       <PageContainer>
-        {header}
+        <PageHeader title="Workflows" actions={selector} actionsRightOnDesktop />
         <section className="ui-sheet space-y-3 p-5" aria-labelledby="workflow-scope">
           <h2 id="workflow-scope" className="type-section-title">
             Factory unavailable
@@ -128,50 +118,71 @@ async function WorkflowDirectory({ params, searchParams }: Props) {
     q: q || undefined,
   });
   const clearHref = workspaceWorkflowsPath(workspaceSlug, { factory: factoryId });
+  const setupHref = isWorkspaceOperator(currentMember)
+    ? workspaceFactoryDefinitionPath(workspaceSlug, { factory: factoryId })
+    : undefined;
+  const empty = !directory.workflows.length && !directory.cursorUnavailable && !q && !after;
+  const newWorkflow = (
+    <CreateWorkflowDialog
+      key={factoryId}
+      endpoint={workflowAuthoringApiPath(workspaceId, factoryId)}
+      factoryId={factoryId}
+      factoryName={factoryName}
+      workspaceSlug={workspaceSlug}
+      prerequisites={prerequisites}
+      setupHref={setupHref}
+    />
+  );
   return (
     <PageContainer>
-      {header}
+      <PageHeader
+        title="Workflows"
+        description={isDefault ? undefined : "New session still opens in the default factory."}
+        actions={
+          <>
+            {selector}
+            {directory.workflows.length ? newWorkflow : null}
+          </>
+        }
+        actionsRightOnDesktop
+      />
       <div className="grid min-w-0 gap-8">
         <section className="ui-sheet grid gap-4 p-4 sm:p-5" aria-labelledby="workflow-directory">
           <h2 id="workflow-directory" className="type-section-title">
-            Factory workflows
+            Graph workflows
           </h2>
-          {!isDefault ? (
-            <p className="type-secondary text-muted">
-              You can edit and publish workflows for {factoryName} here. New session only opens in
-              the workspace’s default factory.
-            </p>
-          ) : null}
-          <Form
-            action={workspaceWorkflowsPath(workspaceSlug)}
-            className="grid max-w-xl gap-2"
-            role="search"
-            aria-label="Factory workflows"
-          >
-            <input type="hidden" name="factory" value={factoryId} />
-            <label className="type-label" htmlFor="workflow-search">
-              Search workflow names
-            </label>
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                key={q ?? ""}
-                id="workflow-search"
-                name="q"
-                type="search"
-                className="ui-input w-auto min-w-0 flex-1"
-                maxLength={120}
-                defaultValue={q}
-              />
-              <button type="submit" className="ui-button">
-                Search
-              </button>
-              {q ? (
-                <Link className="ui-button" href={clearHref}>
-                  Clear
-                </Link>
-              ) : null}
-            </div>
-          </Form>
+          {!empty && (
+            <Form
+              action={workspaceWorkflowsPath(workspaceSlug)}
+              className="grid max-w-xl gap-2"
+              role="search"
+              aria-label="Factory workflows"
+            >
+              <input type="hidden" name="factory" value={factoryId} />
+              <label className="type-label" htmlFor="workflow-search">
+                Search workflow names
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  key={q ?? ""}
+                  id="workflow-search"
+                  name="q"
+                  type="search"
+                  className="ui-input w-auto min-w-0 flex-1"
+                  maxLength={120}
+                  defaultValue={q}
+                />
+                <button type="submit" className="ui-button">
+                  Search
+                </button>
+                {q ? (
+                  <Link className="ui-button" href={clearHref}>
+                    Clear
+                  </Link>
+                ) : null}
+              </div>
+            </Form>
+          )}
           {directory.cursorUnavailable ? (
             <p className="type-secondary text-muted">
               This page of results is no longer available.{" "}
@@ -277,9 +288,12 @@ async function WorkflowDirectory({ params, searchParams }: Props) {
               })}
             </ul>
           ) : (
-            <p className="type-secondary text-muted">
-              {workflowDirectoryEmptyMessage({ q, after })}
-            </p>
+            <div className="space-y-3">
+              <p className="type-secondary text-muted">
+                {workflowDirectoryEmptyMessage({ q, after })}
+              </p>
+              {empty ? newWorkflow : null}
+            </div>
           )}
           {(after && !directory.cursorUnavailable) || directory.nextAfterId ? (
             <nav aria-label="Workflow pagination" className="flex flex-wrap gap-2">
@@ -303,29 +317,14 @@ async function WorkflowDirectory({ params, searchParams }: Props) {
             </nav>
           ) : null}
         </section>
-        <section className="ui-sheet grid gap-4 p-4 sm:p-5" aria-labelledby="workflow-create">
-          <h2 id="workflow-create" className="type-section-title">
-            Create a workflow
-          </h2>
-          <CreateWorkflowForm
-            key={factoryId}
-            endpoint={workflowAuthoringApiPath(workspaceId, factoryId)}
-            factoryId={factoryId}
-            workspaceSlug={workspaceSlug}
-            prerequisites={prerequisites}
-            setupHref={
-              isWorkspaceOperator(currentMember)
-                ? workspaceFactoryDefinitionPath(workspaceSlug, { factory: factoryId })
-                : undefined
-            }
-          />
-        </section>
-        <Link
-          className="w-fit text-sm text-muted underline underline-offset-4"
-          href={`${workspaceSettingsPath(workspaceSlug, { category: "integrations" })}#pipeline`}
-        >
-          Open serial pipeline settings
-        </Link>
+        {setupHref ? (
+          <Link
+            className="w-fit text-sm text-muted underline underline-offset-4"
+            href={`${setupHref}#definition-field-stages`}
+          >
+            Edit serial pipeline
+          </Link>
+        ) : null}
       </div>
     </PageContainer>
   );

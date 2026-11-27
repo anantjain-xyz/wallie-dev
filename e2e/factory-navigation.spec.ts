@@ -692,6 +692,7 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     await expectFactoryOptions(page, [visibleFactory.name]);
     await expect(page.getByRole("link", { name: "Governance", exact: true })).toBeVisible();
 
+    await page.getByRole("button", { name: "New service principal", exact: true }).click();
     await page.getByRole("textbox", { name: "Principal name", exact: true }).fill("Release runner");
     await expect(page.getByRole("textbox", { name: "Identifier", exact: true })).toHaveValue(
       "release-runner",

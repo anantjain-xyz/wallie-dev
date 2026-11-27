@@ -36,6 +36,8 @@ test("an operator copies, edits, and publishes a scorer preset", async ({
     await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
     await signInViaMagicLink(page, scorers, { baseURL: fixture.app, email: fixture.ownerEmail });
     await page.getByRole("link", { name: "New scorer" }).click();
+    const showPresets = page.getByText("Scorer presets", { exact: true });
+    await showPresets.click();
     const presets = page.getByRole("list", { name: "Scorer presets" });
     for (const name of ["Correctness", "Verification", "Scope", redundantPreset]) {
       await expect(presets.getByRole("link", { name, exact: true })).toBeVisible();
@@ -61,6 +63,7 @@ test("an operator copies, edits, and publishes a scorer preset", async ({
     await page.getByRole("button", { name: "Restore preset", exact: true }).click();
     await page.getByRole("button", { name: "Keep editing" }).click();
     await expect(rubric).toHaveValue("Unsaved rubric change.");
+    await showPresets.click();
     await presets.getByRole("link", { name: "Verification", exact: true }).click();
     await page.getByRole("button", { name: "Keep editing" }).click();
     await expect(rubric).toHaveValue("Unsaved rubric change.");
@@ -81,6 +84,8 @@ test("an operator copies, edits, and publishes a scorer preset", async ({
     await expect(page.getByRole("code").filter({ hasText: customRubric })).toBeVisible();
 
     await page.goto(scorers);
+    await page.getByRole("link", { name: "New scorer" }).click();
+    await showPresets.click();
     await presets.getByRole("link", { name: redundantPreset, exact: true }).click();
     await expect(rubric).toHaveValue(original);
     await page.getByText("Advanced", { exact: true }).click();
@@ -91,6 +96,7 @@ test("an operator copies, edits, and publishes a scorer preset", async ({
     await capture(page, info, "02-scorer-preset-mobile-dark");
 
     await rubric.fill("Unpublished mobile edit.");
+    await showPresets.click();
     await page.getByRole("link", { name: "Start with a blank draft" }).click();
     await page.getByRole("button", { name: "Discard changes" }).click();
     await expect(rubric).toHaveValue("");
