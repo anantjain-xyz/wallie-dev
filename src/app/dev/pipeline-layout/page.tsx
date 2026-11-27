@@ -118,7 +118,7 @@ export default async function PipelineLayoutPreview({
       workspaceAvatarUrl={null}
     >
       {loading ? (
-        <PipelineLoadingSkeleton stageCount={data.lanes.length} />
+        <PipelineLoadingSkeleton showFactorySelector={false} stageCount={data.lanes.length} />
       ) : (
         <PipelinePageClient enableRealtime={false} initialData={previewData} initialNow={now} />
       )}

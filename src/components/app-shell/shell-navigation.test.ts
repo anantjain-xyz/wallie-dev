@@ -49,7 +49,17 @@ describe("navigation factory scope", () => {
     expect(navigation(source, "sessions", [...query]).href).toBe(
       "/w/northwind/sessions?factory=all",
     );
-    expect(navigation(source, "pipeline", [...query]).href).toBe("/w/northwind?factory=all");
+    const sourceItem = item(source);
+    const scope = shellFactoryScope({
+      factories,
+      item: sourceItem,
+      pathname: sourceItem.href,
+      query: [...query],
+      slug,
+    });
+    expect(
+      shellNavDestination({ ...item("sessions"), href: `/w/${slug}` }, slug, factories, scope).href,
+    ).toBe("/w/northwind?factory=all");
   });
 
   it("keeps an implicit default when the destination normally aggregates", () => {

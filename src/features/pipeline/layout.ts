@@ -4,7 +4,8 @@ import { FILTER_BAR_CLASS } from "@/components/ui/filter-controls";
 export const pipelineLayout = {
   page: "flex min-h-[calc(100svh-3rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col bg-sheet pipeline-wide:h-[calc(100svh-3rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] pipeline-wide:min-h-0",
   emptyPage: "mx-auto w-full max-w-[1080px] px-4 pb-24 pt-8 sm:px-8 sm:pt-10",
-  controlsArea: "shrink-0 px-4 py-3 pipeline-wide:px-8 pipeline-wide:pb-4 pipeline-wide:pt-10",
+  controlsArea: "shrink-0 px-4 pt-2 pb-1 pipeline-wide:px-8 pipeline-wide:pb-4 pipeline-wide:pt-10",
+  header: "mb-3 sm:mb-3 pipeline-wide:mb-8",
   controls: `${FILTER_BAR_CLASS} pipeline-wide:mb-5`,
   stageTabs: "shrink-0 px-4 pb-2 pipeline-wide:hidden",
   board:

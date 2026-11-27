@@ -55,14 +55,25 @@ for (const mobile of [false, true]) {
     await signIn(page, "/w/acme-corp");
     const nav = page.getByRole("navigation", { name: "Workspace navigation" });
     const drawer = page.getByRole("dialog", { name: "Workspace pages" });
+    const views = page.getByRole("navigation", { name: "Sessions views" });
+    await expect(views.locator('[aria-current="page"]')).toHaveText("Board");
     if (mobile) {
-      await page.getByRole("button", { name: "Workspace navigation: Pipeline" }).click();
-      await drawer.getByRole("link", { name: "Sessions", exact: true }).click();
+      const trigger = page.getByRole("button", { name: "Workspace navigation: Sessions" });
+      await trigger.click();
+      const sessions = drawer.getByRole("link", { name: "Sessions", exact: true });
+      await expect(sessions).toHaveAttribute("aria-current", "page");
+      await expect(sessions).toHaveAttribute("href", "/w/acme-corp");
+      await page.keyboard.press("Escape");
+      await expect(trigger).toBeFocused();
     } else {
       await expect(nav).toHaveAttribute("data-indicator-animated", "true");
-      await nav.getByRole("link", { name: "Sessions", exact: true }).click();
+      await expect(nav.getByRole("link", { name: "Sessions", exact: true })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
     }
-    await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+    await views.getByRole("link", { name: "List" }).click();
+    await expect(views.locator('[aria-current="page"]')).toHaveText("List");
     await expect
       .poll(() =>
         page.evaluate(
@@ -84,6 +95,11 @@ for (const mobile of [false, true]) {
       await page.keyboard.press("Escape");
       await expect(trigger).toBeFocused();
     } else {
+      await nav.getByRole("link", { name: "Runs", exact: true }).click();
+      await expect(nav.getByRole("link", { name: "Runs", exact: true })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
       await expect.poll(() => page.evaluate(() => window.wallieNavTransitions)).toBeGreaterThan(0);
       const active = nav.locator('[aria-current="page"]');
       await expect
@@ -115,12 +131,17 @@ test("mobile keyboard navigation reaches every destination and header action", a
   await page.setViewportSize({ width: 390, height: 844 });
   await signIn(page, "/w/acme-corp");
   const header = page.locator("[data-shell-header]");
+  const views = page.getByRole("navigation", { name: "Sessions views" });
+  await views.getByRole("link", { name: "List" }).press("Enter");
+  await expect(views.locator('[aria-current="page"]')).toHaveText("List");
+  const factoryId = await page
+    .getByRole("combobox", { name: "Factory", exact: true })
+    .getAttribute("data-value");
 
   for (const [current, destination, path] of [
-    ["Pipeline", "Sessions", "/w/acme-corp/sessions"],
-    ["Sessions", "Runs", "/w/acme-corp/runs"],
+    ["Sessions", "Runs", `/w/acme-corp/runs?factory=${factoryId}`],
     ["Runs", "Settings", "/w/acme-corp/settings"],
-    ["Settings", "Pipeline", "/w/acme-corp"],
+    ["Settings", "Sessions", "/w/acme-corp/sessions"],
   ]) {
     const trigger = header.getByRole("button", { name: `Workspace navigation: ${current}` });
     await trigger.focus();
@@ -128,6 +149,7 @@ test("mobile keyboard navigation reaches every destination and header action", a
     const drawer = page.getByRole("dialog", { name: "Workspace pages" });
     await expect(drawer).toBeVisible();
     const item = drawer.getByRole("link", { name: destination, exact: true });
+    await expect(item).toHaveAttribute("href", path);
     for (let index = 0; index < (await drawer.getByRole("link").count()) + 2; index++) {
       if (await item.evaluate((link) => link === document.activeElement)) break;
       await page.keyboard.press("Tab");
@@ -150,6 +172,8 @@ test("mobile keyboard navigation reaches every destination and header action", a
     await expect(activeTrigger).toBeFocused();
   }
 
+  await views.getByRole("link", { name: "Board" }).press("Enter");
+  await expect(views.locator('[aria-current="page"]')).toHaveText("Board");
   const create = header.getByRole("button", { name: "New session", exact: true });
   await create.focus();
   await expect(create).toBeFocused();
@@ -311,14 +335,15 @@ test("filter changes combine immediately, retain results, and preserve an in-pro
 test("both motion preferences suppress page movement", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await signIn(page, "/w/acme-corp");
-  await page.getByRole("link", { name: "Sessions", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+  const views = page.getByRole("navigation", { name: "Sessions views" });
+  await views.getByRole("link", { name: "List" }).click();
+  await expect(views.locator('[aria-current="page"]')).toHaveText("List");
   expect(await page.evaluate(() => window.wallieEntrances.length)).toBe(0);
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.evaluate(() => {
     document.documentElement.dataset.reducedMotion = "reduce";
   });
-  await page.getByRole("link", { name: "Pipeline", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Pipeline", exact: true })).toBeVisible();
+  await views.getByRole("link", { name: "Board" }).click();
+  await expect(views.locator('[aria-current="page"]')).toHaveText("Board");
   expect(await page.evaluate(() => window.wallieEntrances.length)).toBe(0);
 });

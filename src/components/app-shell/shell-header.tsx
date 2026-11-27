@@ -247,13 +247,11 @@ function CreateSessionDialog(props: CreateSessionDialogProps) {
 }
 
 export function isActiveNavItem(pathname: string, workspaceSlug: string, item: WorkspaceNavItem) {
-  const pipelineHref = workspaceBasePath(workspaceSlug);
-
-  if (item.href === pipelineHref) {
-    return pathname === pipelineHref;
-  }
-
-  return pathname === item.href || pathname.startsWith(`${item.href}/`);
+  return (
+    (item.id === "sessions" && pathname === workspaceBasePath(workspaceSlug)) ||
+    pathname === item.href ||
+    pathname.startsWith(`${item.href}/`)
+  );
 }
 
 function isShellNavIntentPointer(pointerType: string) {
@@ -327,6 +325,8 @@ export function ShellHeader({
   const locationKey = search ? `${pathname}?${search}` : pathname;
   const pipelineHref = workspaceBasePath(workspace.slug);
   const sessionsHref = workspaceSessionsPath(workspace.slug);
+  const sessionsNavItem = navItems.find((item) => item.id === "sessions");
+  const boardNavItem = sessionsNavItem && { ...sessionsNavItem, href: pipelineHref };
   const activeNavItem = navItems.find((item) => isActiveNavItem(pathname, workspace.slug, item));
   const [drawerLocation, setDrawerLocation] = useState<string | null>(null);
   const drawerOpen = drawerLocation === locationKey;
@@ -366,7 +366,7 @@ export function ShellHeader({
   // dialog stays closed outside that factory's explicit scope.
   const scope = shellFactoryScope({
     factories,
-    item: activeNavItem,
+    item: pathname === pipelineHref ? boardNavItem : activeNavItem,
     pathname,
     query: searchParams?.getAll(FACTORY_QUERY_PARAM) ?? [],
     slug: workspace.slug,
@@ -550,17 +550,10 @@ export function ShellHeader({
     });
   }
 
-  function handleNavClick(
-    event: MouseEvent<HTMLAnchorElement>,
-    item: WorkspaceNavItem,
-    mobile: boolean,
-  ) {
+  function handleNavClick(event: MouseEvent<HTMLAnchorElement>, mobile: boolean) {
     if (!isUnmodifiedPrimaryClick(event)) return;
     visibleCreationPreview?.dismiss();
     if (mobile) setDrawerLocation(null);
-    if (pathname === pipelineHref && item.id === "sessions") {
-      startInteraction("pipeline_to_sessions", "/w/[workspaceSlug]", "/w/[workspaceSlug]/sessions");
-    }
   }
 
   function navPrefetchHandlers(targetHref: string) {
@@ -580,7 +573,9 @@ export function ShellHeader({
   }
 
   function navLinkProps(item: WorkspaceNavItem, mobile = false) {
-    const { href, scopeNote } = shellNavDestination(item, workspace.slug, factories, scope);
+    const destination =
+      boardNavItem && item.id === "sessions" && pathname === pipelineHref ? boardNavItem : item;
+    const { href, scopeNote } = shellNavDestination(destination, workspace.slug, factories, scope);
     const skipPrefetch = item.id === "inbox" || item.id === "analytics" || item.id === "overview";
     return {
       href,
@@ -593,13 +588,12 @@ export function ShellHeader({
         : item !== activeNavItem && pathname === pipelineHref
           ? true
           : undefined,
-      onClick: (event: MouseEvent<HTMLAnchorElement>) => handleNavClick(event, item, mobile),
+      onClick: (event: MouseEvent<HTMLAnchorElement>) => handleNavClick(event, mobile),
       ...(skipPrefetch ? {} : navPrefetchHandlers(href)),
     };
   }
-  const pipelineItem = navItems.find((item) => item.id === "pipeline");
-  const scopedPipelineHref = pipelineItem
-    ? shellNavDestination(pipelineItem, workspace.slug, factories, scope).href
+  const scopedPipelineHref = boardNavItem
+    ? shellNavDestination(boardNavItem, workspace.slug, factories, scope).href
     : pipelineHref;
 
   function renderPrimaryAction() {

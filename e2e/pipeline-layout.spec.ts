@@ -218,7 +218,7 @@ for (const width of [320, 390, 768]) {
     await page.setViewportSize({ width, height: 844 });
     await page.goto("/dev/pipeline-layout");
     const header = page.locator("[data-shell-header]");
-    const trigger = header.getByRole("button", { name: "Workspace navigation: Pipeline" });
+    const trigger = header.getByRole("button", { name: "Workspace navigation: Sessions" });
     await expect(trigger).toBeVisible();
     await expect(trigger).toHaveAttribute("aria-expanded", "false");
 
@@ -236,8 +236,7 @@ for (const width of [320, 390, 768]) {
     const drawer = page.getByRole("dialog", { name: "Workspace pages" });
     await expect(drawer).toBeVisible();
     for (const [name, href] of [
-      ["Pipeline", "/w/proof"],
-      ["Sessions", "/w/proof/sessions"],
+      ["Sessions", "/w/proof"],
       ["Runs", "/w/proof/runs"],
       ["Settings", "/w/proof/settings"],
     ]) {
@@ -250,7 +249,8 @@ for (const width of [320, 390, 768]) {
         .toBeGreaterThanOrEqual(44);
       await destination.click({ trial: true });
     }
-    await expect(drawer.getByRole("link", { name: "Pipeline", exact: true })).toHaveAttribute(
+    await expect(drawer.getByRole("link", { name: "Pipeline", exact: true })).toHaveCount(0);
+    await expect(drawer.getByRole("link", { name: "Sessions", exact: true })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -269,7 +269,7 @@ test("compact navigation supports keyboard access and enlarged labels without cl
     content:
       'html { font-size: 200%; } [data-shell-header] button, [role="dialog"] a { font-size: 26px; }',
   });
-  const trigger = page.getByRole("button", { name: "Workspace navigation: Pipeline" });
+  const trigger = page.getByRole("button", { name: "Workspace navigation: Sessions" });
   await expect(trigger).toBeInViewport({ ratio: 1 });
   await trigger.focus();
   await trigger.press("Enter");
@@ -322,7 +322,7 @@ test("resizing an open navigation drawer restores focus to the active desktop li
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/dev/pipeline-layout");
-  const trigger = page.getByRole("button", { name: "Workspace navigation: Pipeline" });
+  const trigger = page.getByRole("button", { name: "Workspace navigation: Sessions" });
   await trigger.press("Enter");
   const drawer = page.getByRole("dialog", { name: "Workspace pages" });
   await expect
@@ -332,7 +332,7 @@ test("resizing an open navigation drawer restores focus to the active desktop li
   await expect(drawer).toBeHidden();
   await expect(
     page.getByRole("navigation", { name: "Workspace navigation" }).getByRole("link", {
-      name: "Pipeline",
+      name: "Sessions",
       exact: true,
     }),
   ).toBeFocused();

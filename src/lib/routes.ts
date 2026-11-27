@@ -5,7 +5,6 @@ export const workspaceNavSections = ["Work", "Improve", "Configure", "Platform",
 export type WorkspaceNavItem = {
   href: string;
   id:
-    | "pipeline"
     | "overview"
     | "sessions"
     | "inbox"
@@ -332,7 +331,6 @@ export function getWorkspaceNavItems(
       label: "Overview",
       section: "Work",
     },
-    { id: "pipeline", href: workspaceBasePath(workspaceSlug), label: "Pipeline", section: "Work" },
     {
       id: "sessions",
       href: workspaceSessionsPath(workspaceSlug),

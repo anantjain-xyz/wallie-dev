@@ -8,6 +8,7 @@ import {
   resolveFactorySelection,
 } from "@/features/factories/factory-selection";
 import { FactorySelector } from "@/features/factories/factory-selector";
+import { SessionsViewTitle } from "@/features/sessions/components/sessions-view-navigation";
 import { loadSessionListPageData } from "@/features/sessions/list/data";
 import { SessionsPage } from "@/features/sessions/list/sessions-page";
 import { workspaceSessionsPath } from "@/lib/routes";
@@ -45,7 +46,10 @@ export default async function SessionsRoutePage({ params, searchParams }: Sessio
             )
           }
           actionsRightOnDesktop
-          title="Sessions"
+          title={
+            <SessionsViewTitle factory="unavailable" view="list" workspaceSlug={workspaceSlug} />
+          }
+          titleAsChild
         />
         <section className="ui-sheet px-6 py-12 text-center">
           <h2 className="text-sm font-semibold text-foreground">Factory unavailable</h2>

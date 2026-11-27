@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
@@ -38,6 +38,11 @@ import {
   type StatusValue,
 } from "@/components/ui/status";
 import { withFactoryQuery } from "@/features/factories/factory-selection";
+import {
+  parseBoardStatus,
+  readBoardBrowseHistory,
+  writeBoardBrowseHistory,
+} from "@/features/pipeline/board-browse-history";
 import { pipelineLayout } from "@/features/pipeline/layout";
 import {
   createPipelineBoardState,
@@ -61,6 +66,7 @@ import {
   SessionDetailLinkPrefetchBoundary,
 } from "@/features/sessions/components/session-detail-link";
 import { SessionsZeroState } from "@/features/sessions/components/sessions-zero-state";
+import { SessionsViewTitle } from "@/features/sessions/components/sessions-view-navigation";
 import { useRealtimeRecovery } from "@/features/wallie/realtime-recovery-context";
 import { RecoveryDeferredError } from "@/features/wallie/realtime-recovery";
 import { type SessionPhaseStatus } from "@/features/sessions/types";
@@ -77,6 +83,7 @@ type PipelinePageClientProps = {
   factorySelector?: ReactNode;
   initialData: PipelineDashboardData;
   initialNow?: string;
+  initialStatus?: PipelineStatusFilter;
 };
 
 type PendingCardFocus = {
@@ -236,6 +243,7 @@ export function PipelinePageClient({
   factorySelector,
   initialData,
   initialNow,
+  initialStatus = "all",
 }: PipelinePageClientProps) {
   const openingCard = useRef<AbortController | null>(null);
   return (
@@ -247,6 +255,7 @@ export function PipelinePageClient({
           factorySelector={factorySelector}
           initialData={initialData}
           initialNow={initialNow}
+          initialStatus={initialStatus}
         />
       </PipelineCardActivation.Provider>
     </SessionDetailLinkPrefetchBoundary>
@@ -258,9 +267,13 @@ function PipelinePageContent({
   factorySelector,
   initialData,
   initialNow,
+  initialStatus = "all",
 }: PipelinePageClientProps) {
   const router = useRouter();
+  const routeSearch = useSearchParams();
   const { factoryId } = initialData;
+  const boardHref = workspaceBasePath(initialData.workspace.slug);
+  const boardFactory = factoryId ?? "all";
   const dashboardHref = withFactoryQuery(
     `/api/workspaces/${initialData.workspace.id}/pipeline-dashboard`,
     factoryId,
@@ -273,13 +286,39 @@ function PipelinePageContent({
     initialData.lanes,
     createPipelineBoardState,
   );
-  const [activeLaneKey, setActiveLaneKey] = useState(() =>
-    initialData.lanes[0] ? pipelineLaneKey(initialData.lanes[0]) : "",
-  );
+  const firstLaneKey = initialData.lanes[0] ? pipelineLaneKey(initialData.lanes[0]) : "";
+  const [activeLaneKey, setActiveLaneKey] = useState(firstLaneKey);
   const [loadingLaneKey, setLoadingLaneKey] = useState<string | null>(null);
   const [laneErrors, setLaneErrors] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(initialStatus);
+  const updateFilters = useCallback(
+    (query: string, status: StatusFilter) => {
+      setSearchQuery(query);
+      setStatusFilter(status);
+      writeBoardBrowseHistory(boardHref, boardFactory, { searchQuery: query, status });
+    },
+    [boardFactory, boardHref],
+  );
+
+  useEffect(() => {
+    const restore = () => {
+      const entry = readBoardBrowseHistory(boardHref, boardFactory);
+      if (!entry) return;
+      setSearchQuery(entry.searchQuery);
+      setStatusFilter(entry.status);
+      setActiveLaneKey(entry.laneKey ?? firstLaneKey);
+    };
+    restore();
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, [boardFactory, boardHref, firstLaneKey, routeSearch]);
+
+  function selectStage(key: string) {
+    setActiveLaneKey(key);
+    writeBoardBrowseHistory(boardHref, boardFactory, { laneKey: key });
+  }
+
   const trimmedSearchQuery = searchQuery.trim();
   const filtersActive = trimmedSearchQuery.length > 0 || statusFilter !== "all";
   const filterHref = useMemo(() => {
@@ -522,8 +561,6 @@ function PipelinePageContent({
     const focusables = cardElement
       ? Array.from(cardElement.querySelectorAll<HTMLElement>(CARD_FOCUSABLE_SELECTOR))
       : [];
-    // Prefer the recorded control; if it vanished (e.g. Review CTA after approve),
-    // fall back to the first remaining focusable on the card.
     const focusTarget = focusables[pending.focusableIndex] ?? focusables[0];
     if (focusTarget) {
       focusTarget.focus({ preventScroll: true });
@@ -933,7 +970,7 @@ function PipelinePageContent({
     const nextKey = laneKeys[nextIndex];
     if (!nextKey || nextKey === currentKey) return;
 
-    setActiveLaneKey(nextKey);
+    selectStage(nextKey);
     event.currentTarget
       .querySelector<HTMLElement>(`[data-pipeline-stage-tab="${nextKey}"]`)
       ?.focus({ preventScroll: true });
@@ -953,30 +990,26 @@ function PipelinePageContent({
   return (
     <div className={showBoard ? pipelineLayout.page : pipelineLayout.emptyPage}>
       <div className={showBoard ? pipelineLayout.controlsArea : undefined}>
-        <div
-          className={
-            showBoard && !factorySelector ? "sr-only pipeline-wide:not-sr-only" : undefined
+        <PageHeader
+          actions={factorySelector}
+          actionsRightOnDesktop
+          className={showBoard ? pipelineLayout.header : undefined}
+          title={
+            <SessionsViewTitle
+              factory={boardFactory}
+              status={statusFilter === "all" ? undefined : statusFilter}
+              view="board"
+              workspaceSlug={initialData.workspace.slug}
+            />
           }
-        >
-          <PageHeader
-            actions={factorySelector}
-            actionsRightOnDesktop
-            className={showBoard ? "mb-3 pipeline-wide:mb-8" : undefined}
-            description={
-              <span className={showBoard ? "sr-only pipeline-wide:not-sr-only" : undefined}>
-                Sessions move through these stages in order, gated by approval at each step.
-              </span>
-            }
-            title="Pipeline"
-          />
-        </div>
+          titleAsChild
+        />
 
         {showBoard ? (
           <PipelineFilters
             searchQuery={searchQuery}
             statusFilter={statusFilter}
-            setSearchQuery={setSearchQuery}
-            setStatusFilter={setStatusFilter}
+            updateFilters={updateFilters}
           />
         ) : null}
         {filterFailed ? (
@@ -1054,7 +1087,7 @@ function PipelinePageContent({
                     data-pipeline-stage-tab={key}
                     id={`pipeline-stage-tab-${key}`}
                     key={key}
-                    onClick={() => setActiveLaneKey(key)}
+                    onClick={() => selectStage(key)}
                     role="tab"
                     tabIndex={selected ? 0 : -1}
                     type="button"
@@ -1129,13 +1162,11 @@ function laneContext(lane: PipelineBoardLane, aggregateFactories?: boolean) {
 const PipelineFilters = memo(function PipelineFilters({
   searchQuery,
   statusFilter,
-  setSearchQuery,
-  setStatusFilter,
+  updateFilters,
 }: {
   searchQuery: string;
   statusFilter: StatusFilter;
-  setSearchQuery: (value: string) => void;
-  setStatusFilter: (value: StatusFilter) => void;
+  updateFilters: (query: string, status: StatusFilter) => void;
 }) {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const filtersActive = searchQuery.trim().length > 0 || statusFilter !== "all";
@@ -1143,18 +1174,19 @@ const PipelineFilters = memo(function PipelineFilters({
     <CommandBar aria-label="Pipeline filters" className={pipelineLayout.controls}>
       <FilterSearch
         ref={searchInputRef}
-        aria-label="Search pipeline sessions"
+        aria-label="Search active board"
         autoComplete="off"
         description="Search all stages by title, session number, Linear issue key (e.g. OP-353), or PR number."
         maxLength={PIPELINE_SEARCH_MAX_LENGTH}
         name="q"
-        onChange={(event) => setSearchQuery(event.target.value)}
+        onChange={(event) => updateFilters(event.target.value, statusFilter)}
+        placeholder="Search active board…"
         spellCheck={false}
         value={searchQuery}
       />
       <Select
         value={statusFilter}
-        onValueChange={(value) => setStatusFilter(value as StatusFilter)}
+        onValueChange={(value) => updateFilters(searchQuery, parseBoardStatus(value))}
       >
         <FilterSelectTrigger accessibleLabel="Filter by status">
           {STATUS_FILTER_OPTIONS.find((option) => option.key === statusFilter)?.label}
@@ -1170,8 +1202,7 @@ const PipelineFilters = memo(function PipelineFilters({
       {filtersActive ? (
         <ClearFilters
           onClick={() => {
-            setSearchQuery("");
-            setStatusFilter("all");
+            updateFilters("", "all");
             searchInputRef.current?.focus();
           }}
         />
@@ -1391,7 +1422,7 @@ function CardReferenceLine({
     parts.push(
       <a
         key="linear"
-        className="pointer-events-auto underline decoration-border underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+        className="relative z-20 underline decoration-border underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
         href={linearIssueUrl}
         rel="noreferrer"
         target="_blank"
@@ -1407,7 +1438,7 @@ function CardReferenceLine({
     parts.push(
       <a
         key={pullRequest.id}
-        className="pointer-events-auto underline decoration-border underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+        className="relative z-20 underline decoration-border underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
         href={pullRequest.pullRequestUrl!}
         rel="noreferrer"
         target="_blank"
@@ -1508,58 +1539,41 @@ export const PipelineCard = memo(function PipelineCard({
   return (
     <article
       className={cn(
-        "ui-sheet relative isolate border-border/80 p-3 transition-colors duration-150 hover:bg-control-hover",
-        awaitingReview &&
-          "border-accent/50 border-l-[3px] border-l-accent bg-accent-soft shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--accent)_18%,transparent)] hover:bg-accent-soft",
+        "ui-sheet relative isolate space-y-2 border-border/80 p-3 transition-colors duration-150 hover:bg-control-hover motion-reduce:transition-none",
         displayStatus === "rejected" && "border-l-[3px] border-l-warning/50",
         displayStatus === "failed" && "border-l-[3px] border-l-danger/50",
       )}
       data-session-id={id}
     >
-      <SessionDetailLink
-        href={sessionHref}
-        aria-label={`Open session ${title}`}
-        className="absolute inset-0 z-10 rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
-        onClick={cancelPreviousActivation}
-        onDeferredNavigation={openAfterPrefetch}
-      />
-      <div className="pointer-events-none relative z-20 space-y-2">
-        <h3 className="min-w-0 text-[13px] font-semibold leading-5 text-foreground">
+      <h3 className="min-w-0 text-[13px] font-semibold leading-5 text-foreground">
+        <SessionDetailLink
+          href={sessionHref}
+          aria-label={`${awaitingReview ? "Review" : "Open"} session ${title}`}
+          className="underline decoration-border underline-offset-2 after:absolute after:inset-0 after:z-10 after:rounded-[6px] hover:decoration-current focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-accent focus-visible:after:ring-offset-2 focus-visible:after:ring-offset-canvas"
+          onClick={cancelPreviousActivation}
+          onDeferredNavigation={openAfterPrefetch}
+        >
           <span className="line-clamp-3 break-words">{title}</span>
-        </h3>
+        </SessionDetailLink>
+      </h3>
 
-        <Status compact value={displayStatus} />
+      <Status compact value={displayStatus} />
 
-        <CardReferenceLine
-          linearIssueId={linearIssueId}
-          linearIssueUrl={linearIssueUrl}
-          number={number}
-          pullRequests={pullRequests}
-          rejectionCount={rejectionCount}
-        />
+      <CardReferenceLine
+        linearIssueId={linearIssueId}
+        linearIssueUrl={linearIssueUrl}
+        number={number}
+        pullRequests={pullRequests}
+        rejectionCount={rejectionCount}
+      />
 
-        <div className="type-annotation leading-4 text-muted">
-          {!opening && (
-            <p>
-              Updated <TimeDisplay initialNow={initialNow} value={updatedAt} variant="relative" />
-            </p>
-          )}
-          <p role="status">{opening ? "Opening session…" : ""}</p>
-        </div>
-
-        {awaitingReview ? (
-          <div className="pointer-events-auto pt-1">
-            <SessionDetailLink
-              aria-label={`Review session ${title}`}
-              className="ui-button-primary inline-flex"
-              href={sessionHref}
-              onClick={cancelPreviousActivation}
-              onDeferredNavigation={openAfterPrefetch}
-            >
-              Review
-            </SessionDetailLink>
-          </div>
-        ) : null}
+      <div className="type-annotation leading-4 text-muted">
+        {!opening && (
+          <p>
+            Updated <TimeDisplay initialNow={initialNow} value={updatedAt} variant="relative" />
+          </p>
+        )}
+        <p role="status">{opening ? "Opening session…" : ""}</p>
       </div>
     </article>
   );

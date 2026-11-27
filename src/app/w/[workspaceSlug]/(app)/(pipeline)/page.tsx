@@ -5,8 +5,10 @@ import {
 } from "@/features/factories/factory-selection";
 import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
+import { parseBoardStatus } from "@/features/pipeline/board-browse-history";
 import { loadPipelineDashboardData } from "@/features/pipeline/data";
 import { PipelinePageClient } from "@/features/pipeline/pipeline-page-client";
+import { SessionsViewNavigation } from "@/features/sessions/components/sessions-view-navigation";
 
 type WorkspaceHomePageProps = {
   params: Promise<{
@@ -15,6 +17,8 @@ type WorkspaceHomePageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
+const boardFactoryResetParams = ["status"] as const;
+
 export default async function WorkspaceHomePage({ params, searchParams }: WorkspaceHomePageProps) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
   const factories = await loadWorkspaceFactoryOptions(workspaceSlug);
@@ -22,8 +26,22 @@ export default async function WorkspaceHomePage({ params, searchParams }: Worksp
   if (selection.kind === "unavailable")
     return (
       <FactoryUnavailable
-        actions={<FactorySelector allowAll factories={factories} selectedValue="unavailable" />}
-        title="Pipeline"
+        actions={
+          <>
+            <SessionsViewNavigation
+              factory="unavailable"
+              view="board"
+              workspaceSlug={workspaceSlug}
+            />
+            <FactorySelector
+              allowAll
+              factories={factories}
+              resetParams={boardFactoryResetParams}
+              selectedValue="unavailable"
+            />
+          </>
+        }
+        title="Sessions"
         workspaceSlug={workspaceSlug}
       />
     );
@@ -38,6 +56,7 @@ export default async function WorkspaceHomePage({ params, searchParams }: Worksp
         <FactorySelector
           allowAll
           factories={factories}
+          resetParams={boardFactoryResetParams}
           selectedValue={factory ? factory.id : "all"}
         />
       }
@@ -50,6 +69,7 @@ export default async function WorkspaceHomePage({ params, searchParams }: Worksp
         showCreationOnboarding: !!factory?.isDefault && factory.status === "active",
       }}
       initialNow={initialNow}
+      initialStatus={parseBoardStatus(search.status)}
     />
   );
 }

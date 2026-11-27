@@ -83,20 +83,17 @@ test("reports fixed-seed production interaction baselines without an elapsed-tim
   });
 
   await page.goto(workspacePath);
-  await expect(
-    page.getByRole("heading", { level: 1, name: "Pipeline", exact: true }),
-  ).toBeVisible();
+  const views = page.getByRole("navigation", { name: "Sessions views" });
+  await expect(views.locator('[aria-current="page"]')).toHaveText("Board");
   await page.waitForTimeout(750);
   expect(idleDetailRequests, "Pipeline must make zero idle detail prefetches").toHaveLength(0);
 
   const pipelineToSessions = await measureClickToVisible(
     page,
-    () => page.getByRole("link", { name: "Sessions" }).first().click(),
+    () => views.getByRole("link", { name: "List" }).click(),
     async () => {
-      await expect(page).toHaveURL(`${workspacePath}/sessions`);
-      await expect(
-        page.getByRole("heading", { level: 1, name: "Sessions", exact: true }),
-      ).toBeVisible();
+      await expect(page).toHaveURL((url) => url.pathname === `${workspacePath}/sessions`);
+      await expect(views.locator('[aria-current="page"]')).toHaveText("List");
     },
   );
   await page.waitForTimeout(750);

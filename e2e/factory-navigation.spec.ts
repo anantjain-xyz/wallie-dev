@@ -457,10 +457,9 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     const factory = page.getByRole("combobox", { name: "Factory", exact: true });
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
-    await signInViaMagicLink(
-      page,
+    await signInViaMagicLink(page, sessionsPath, { baseURL: app, email: memberEmail });
+    await page.goto(
       `${sessionsPath}?factory=${defaultFactory.id}&stage=${initial.stage.slug}&q=session&sort=oldest`,
-      { baseURL: app, email: memberEmail },
     );
     await expect(defaultLink).toBeVisible();
     await expect(visibleLink).toHaveCount(0);
@@ -539,10 +538,10 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     await expect(page.getByText("Default session 1", { exact: true })).toHaveCount(0);
     await expectFactoryOptions(page, ["All factories", defaultFactory.name, visibleFactory.name]);
     await capture(page, info, "02-mobile-dark-factory-selector");
-    const trigger = page.getByRole("button", { name: "Workspace navigation: Pipeline" });
+    const trigger = page.getByRole("button", { name: "Workspace navigation: Sessions" });
     await trigger.press("Enter");
     const drawer = page.getByRole("dialog", { name: "Workspace pages" });
-    await expect(drawer.getByRole("link", { name: "Pipeline", exact: true })).toHaveAttribute(
+    await expect(drawer.getByRole("link", { name: "Sessions", exact: true })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -552,6 +551,16 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     await capture(page, info, "03-mobile-dark-navigation-drawer");
     await page.keyboard.press("Escape");
     await expect(trigger).toBeFocused();
+
+    const views = page.getByRole("navigation", { name: "Sessions views" });
+    await views.getByRole("link", { name: "List" }).click();
+    await expect(page).toHaveURL(`${sessionsPath}?factory=${visibleFactory.id}&scope=active`);
+    await expect(page.getByText("Customer tools session 1", { exact: true })).toBeVisible();
+    await expect(page.getByText("Default session 1", { exact: true })).toHaveCount(0);
+    await expect(views.getByRole("link", { name: "Board" })).toHaveAttribute(
+      "href",
+      `${workspacePath}?factory=${visibleFactory.id}`,
+    );
 
     const visibleSession = visible.sessions[0];
     if (!visibleSession) throw new Error("Missing the delegated factory session fixture.");
