@@ -218,7 +218,7 @@ async function waitForSessions(page: Page) {
 }
 
 async function waitForSession(page: Page) {
-  await expect(page).toHaveURL(sessionPath);
+  await expect(page).toHaveURL((url) => url.pathname === sessionPath);
   await expect(
     page.getByRole("heading", { level: 1, name: sessionTitle, exact: true }),
   ).toBeVisible();
