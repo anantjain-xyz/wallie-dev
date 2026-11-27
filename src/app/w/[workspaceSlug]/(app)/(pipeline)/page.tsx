@@ -9,6 +9,7 @@ import { parseBoardStatus } from "@/features/pipeline/board-browse-history";
 import { loadPipelineDashboardData } from "@/features/pipeline/data";
 import { PipelinePageClient } from "@/features/pipeline/pipeline-page-client";
 import { SessionsViewNavigation } from "@/features/sessions/components/sessions-view-navigation";
+import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
 
 type WorkspaceHomePageProps = {
   params: Promise<{
@@ -47,7 +48,10 @@ export default async function WorkspaceHomePage({ params, searchParams }: Worksp
     );
 
   const factory = selection.kind === "factory" ? selection.factory : undefined;
-  const data = await loadPipelineDashboardData(workspaceSlug, factory?.id);
+  const [data, { user }] = await Promise.all([
+    loadPipelineDashboardData(workspaceSlug, factory?.id),
+    loadAuthenticatedWorkspaceContext(workspaceSlug),
+  ]);
   const initialNow = new Date().toISOString();
 
   return (
@@ -70,6 +74,7 @@ export default async function WorkspaceHomePage({ params, searchParams }: Worksp
       }}
       initialNow={initialNow}
       initialStatus={parseBoardStatus(search.status)}
+      viewerId={user.id}
     />
   );
 }

@@ -84,6 +84,7 @@ type PipelinePageClientProps = {
   initialData: PipelineDashboardData;
   initialNow?: string;
   initialStatus?: PipelineStatusFilter;
+  viewerId?: string;
 };
 
 type PendingCardFocus = {
@@ -244,18 +245,20 @@ export function PipelinePageClient({
   initialData,
   initialNow,
   initialStatus = "all",
+  viewerId,
 }: PipelinePageClientProps) {
   const openingCard = useRef<AbortController | null>(null);
   return (
     <SessionDetailLinkPrefetchBoundary>
       <PipelineCardActivation.Provider value={openingCard}>
         <PipelinePageContent
-          key={`${initialData.workspace.id}:${initialData.factoryId ?? "all"}`}
+          key={`${initialData.workspace.id}:${initialData.factoryId ?? "all"}:${viewerId ?? ""}`}
           enableRealtime={enableRealtime}
           factorySelector={factorySelector}
           initialData={initialData}
           initialNow={initialNow}
           initialStatus={initialStatus}
+          viewerId={viewerId}
         />
       </PipelineCardActivation.Provider>
     </SessionDetailLinkPrefetchBoundary>
@@ -268,12 +271,17 @@ function PipelinePageContent({
   initialData,
   initialNow,
   initialStatus = "all",
+  viewerId,
 }: PipelinePageClientProps) {
   const router = useRouter();
   const routeSearch = useSearchParams();
   const { factoryId } = initialData;
   const boardHref = workspaceBasePath(initialData.workspace.slug);
   const boardFactory = factoryId ?? "all";
+  const historyScope = useMemo(
+    () => (viewerId ? { factory: boardFactory, pathname: boardHref, viewerId } : null),
+    [boardFactory, boardHref, viewerId],
+  );
   const dashboardHref = withFactoryQuery(
     `/api/workspaces/${initialData.workspace.id}/pipeline-dashboard`,
     factoryId,
@@ -288,6 +296,7 @@ function PipelinePageContent({
   );
   const firstLaneKey = initialData.lanes[0] ? pipelineLaneKey(initialData.lanes[0]) : "";
   const [activeLaneKey, setActiveLaneKey] = useState(firstLaneKey);
+  const preferredLaneKey = useRef<string | undefined>(undefined);
   const [loadingLaneKey, setLoadingLaneKey] = useState<string | null>(null);
   const [laneErrors, setLaneErrors] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState("");
@@ -296,27 +305,36 @@ function PipelinePageContent({
     (query: string, status: StatusFilter) => {
       setSearchQuery(query);
       setStatusFilter(status);
-      writeBoardBrowseHistory(boardHref, boardFactory, { searchQuery: query, status });
+      if (historyScope) writeBoardBrowseHistory(historyScope, { searchQuery: query, status });
     },
-    [boardFactory, boardHref],
+    [historyScope],
   );
 
   useEffect(() => {
+    if (!historyScope) return;
     const restore = () => {
-      const entry = readBoardBrowseHistory(boardHref, boardFactory);
+      const entry = readBoardBrowseHistory(historyScope);
       if (!entry) return;
       setSearchQuery(entry.searchQuery);
       setStatusFilter(entry.status);
+      preferredLaneKey.current = entry.laneKey;
       setActiveLaneKey(entry.laneKey ?? firstLaneKey);
     };
     restore();
     window.addEventListener("popstate", restore);
-    return () => window.removeEventListener("popstate", restore);
-  }, [boardFactory, boardHref, firstLaneKey, routeSearch]);
+    window.addEventListener("pageshow", restore);
+    return () => {
+      window.removeEventListener("popstate", restore);
+      window.removeEventListener("pageshow", restore);
+    };
+  }, [firstLaneKey, historyScope, routeSearch]);
 
   function selectStage(key: string) {
     setActiveLaneKey(key);
-    writeBoardBrowseHistory(boardHref, boardFactory, { laneKey: key });
+    if (historyScope) {
+      preferredLaneKey.current = key;
+      writeBoardBrowseHistory(historyScope, { laneKey: key });
+    }
   }
 
   const trimmedSearchQuery = searchQuery.trim();
@@ -440,9 +458,10 @@ function PipelinePageContent({
         }
         const match = nextBoard.lanes.find((lane) => lane.totalCount > 0);
         if (!previous && match) {
+          const preferred = preferredLaneKey.current;
           setActiveLaneKey((key) => {
             return nextBoard.lanes.some(
-              (lane) => pipelineLaneKey(lane) === key && lane.totalCount > 0,
+              (lane) => pipelineLaneKey(lane) === key && (lane.totalCount > 0 || key === preferred),
             )
               ? key
               : pipelineLaneKey(match);

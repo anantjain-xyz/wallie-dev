@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { signIn } from "./helpers/auth";
+import { signIn, signInViaMagicLink } from "./helpers/auth";
 
 const boardPath = "/w/acme-corp";
 const listPath = `${boardPath}/sessions`;
@@ -189,6 +189,75 @@ test("compact Board keeps stage arrow keys, a single primary link, and native mo
   await expect(page).toHaveURL(`${listPath}/5`);
   await page.goBack();
   await expect(stageTabs.last()).toHaveAttribute("aria-selected", "true");
+});
+
+test("Back keeps the saved Board stage even if another stage has the only match", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page, boardPath);
+  await status(page).click();
+  await page.getByRole("option", { name: "Awaiting review", exact: true }).click();
+  const search = page.getByRole("searchbox", { name: "Search active board" });
+  await search.fill("Google Workspace");
+  const plan = page.getByRole("tab", { name: "Plan, 1 matching session" });
+  const build = page.getByRole("tab", { name: "Build, 0 matching sessions" });
+  await expect(plan).toHaveAttribute("aria-selected", "true");
+  await plan.press("ArrowRight");
+  await expect(build).toBeFocused();
+  await expect(build).toHaveAttribute("aria-selected", "true");
+
+  await views(page).getByRole("link", { name: "List" }).click();
+  await expect(currentView(page)).toHaveText("List");
+  await page.goBack();
+  await expect(search).toHaveValue("Google Workspace");
+  await expect(build).toHaveAttribute("aria-selected", "true");
+});
+
+test("another account cannot recover the previous Board search in the same tab", async ({
+  page,
+  baseURL,
+}) => {
+  const previousSearch = "synthetic board search before switching accounts";
+  await signIn(page, boardPath);
+  await status(page).click();
+  await page.getByRole("option", { name: "Awaiting review", exact: true }).click();
+  const search = page.getByRole("searchbox", { name: "Search active board" });
+  await search.fill(previousSearch);
+  await expect(page.getByText("0 matching sessions", { exact: true })).toBeVisible();
+  const saved = await page.evaluate(() => ({
+    length: history.length,
+    state: JSON.stringify(history.state),
+  }));
+
+  await page.getByRole("button", { name: /^Account:/ }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
+  await expect(page).toHaveURL((url) => url.pathname === "/login");
+  await signInViaMagicLink(page, listPath, { baseURL, email: "wallie@example.com" });
+  await expect(page.getByRole("button", { name: "Account: wallie@example.com" })).toBeVisible();
+  const distance = (await page.evaluate(() => history.length)) - saved.length;
+  expect(distance).toBeGreaterThan(0);
+
+  const queries: (string | null)[] = [];
+  page.on("request", (request) => {
+    const { pathname, searchParams } = new URL(request.url());
+    if (pathname.endsWith("/pipeline-dashboard")) queries.push(searchParams.get("q"));
+  });
+  const loadedFilter = page.waitForResponse((response) => {
+    const { pathname, searchParams } = new URL(response.url());
+    return (
+      pathname.endsWith("/pipeline-dashboard") &&
+      searchParams.get("status") === "awaiting_review" &&
+      response.ok()
+    );
+  });
+  await page.evaluate((steps) => history.go(-steps), distance);
+  await expect(page).toHaveURL(`${boardPath}?status=awaiting_review`);
+  await expect(page.getByRole("button", { name: "Account: wallie@example.com" })).toBeVisible();
+  await loadedFilter;
+  await expect(search).toHaveValue("");
+  expect(queries.filter((query) => query !== null)).toEqual([]);
+  expect(saved.state).not.toContain(previousSearch);
 });
 
 test("Inbox still opens the exact review and Runs remains a separate attempt route", async ({
