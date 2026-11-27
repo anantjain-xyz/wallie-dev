@@ -291,6 +291,14 @@ test("workspace factory creation preserves the default and lands in the returned
     await capture(page, info, "08-canonical-setup-mobile");
     await page.goBack();
     await expect(setupHeading).toBeVisible();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(configure).toHaveAttribute("href", definitionPath);
+    await capture(page, info, "09-desktop-new-factory-setup");
+    await configure.click();
+    await expect(page).toHaveURL((url) => url.pathname + url.search + url.hash === definitionPath);
+    await expect(page.getByRole("heading", { name: "Setup", exact: true })).toBeVisible();
+    await page.goBack();
+    await page.setViewportSize({ width: 390, height: 844 });
     await viewSessions.press("Enter");
     await expect(picker).toHaveAttribute("data-value", factory.id);
     await expect(page.getByText("No sessions in this factory yet.")).toBeVisible();
