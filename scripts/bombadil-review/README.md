@@ -19,8 +19,9 @@ BOMBADIL="$tool/bombadil" CHROME=chromium bash scripts/bombadil-review/run.sh
 ```
 
 The launcher uses the Wallie source at `HEAD` and takes a few minutes after
-the Supabase images are cached. It warms the Sessions list before the bounded
-40-second browser trace. Use `approve`, `reject`, or `negative` as an argument
+the Supabase images are cached. It warms Sessions and waits for the exact review
+before starting the worker's decision wait and the bounded 40-second browser trace.
+Use `approve`, `reject`, or `negative` as an argument
 to run just one case. The negative control deliberately expects two new Build runs
 instead of one. Running `negative` alone preserves Bombadil's exit code 2; `all`
 expects that code and the named property violation. A run without an accepted exact review and

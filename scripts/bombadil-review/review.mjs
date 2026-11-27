@@ -141,7 +141,7 @@ async function run(name) {
   const worker = start(
     ["node_modules/vitest/vitest.mjs", "run", "--config", join(source, "vitest.config.ts")],
     { ...env, WALLIE_REVIEW_WORKER_DIR: scenarioPath },
-    125_000,
+    365_000,
   );
   let context;
   let privateValues = [];
@@ -237,6 +237,7 @@ async function run(name) {
       },
       { timeout: 45_000 },
     );
+    await writeFile(join(scenarioPath, "browser-ready"), "");
     const trace = join(results, `${name}.bin`);
     const testStart = performance.now();
     const traceSeconds = 40;

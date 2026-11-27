@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { it, vi } from "vitest";
@@ -84,6 +84,10 @@ it("processes the exact job produced by the local browser review", async () => {
     );
     await writeFile(join(root, "ready.json"), JSON.stringify({ number: session.number }));
 
+    await vi.waitFor(() => access(join(root, "browser-ready")), {
+      timeout: 240_000,
+      interval: 200,
+    });
     const jobId = await vi.waitFor(
       async () => {
         const job = await checked(
@@ -97,11 +101,11 @@ it("processes the exact job produced by the local browser review", async () => {
         assert(job, "No browser decision enqueued a job for the fixture entry.");
         return job.id;
       },
-      { timeout: 95_000, interval: 200 },
+      { timeout: 50_000, interval: 200 },
     );
     await processJob(jobId);
     assert.equal(transport.runnerStarts, 2);
   } finally {
     for (const sandbox of transport?.sandboxes ?? []) await sandbox.stop();
   }
-}, 120_000);
+}, 360_000);
