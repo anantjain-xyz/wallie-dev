@@ -125,7 +125,7 @@ export function ServiceCredentialsPanel({
   const usable = active?.status === "ready" && active.id !== bindingId ? active : null;
   const validSecret = eligibleSecrets?.some((secret) => secret.id === secretId) ? secretId : "";
   const busy = loading || pending !== null;
-  const settingsHref = `${workspaceSettingsPath(workspaceSlug)}#runtime`;
+  const settingsHref = `${workspaceSettingsPath(workspaceSlug)}#workspace-secrets`;
   const revokeLabel = availableBinding ? "Revoke available binding" : "Revoke binding";
 
   return (

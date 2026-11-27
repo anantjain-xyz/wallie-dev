@@ -11,12 +11,14 @@ vi.mock("@/features/settings/islands/integration-islands", () => ({
   RepositoryIntegrationIsland: () => <p>Repository integration island</p>,
   RuntimeIntegrationIsland: () => <p>Runtime integration island</p>,
   VercelIntegrationIsland: () => <p>Sandbox integration island</p>,
+  WorkspaceSecretsIntegrationIsland: () => <p>Workspace secrets island</p>,
 }));
 vi.mock("@/features/settings/islands/pipeline-island", () => ({
   PipelineIsland: () => <p>Pipeline island</p>,
 }));
 vi.mock("@/features/settings/islands/advanced-islands", () => ({
   MaintenanceIsland: () => <p>Maintenance island</p>,
+  RunHistoryIsland: () => <p>Run history island</p>,
   VerifySetupIsland: () => <p>Verify setup island</p>,
 }));
 vi.mock("@/features/settings/islands/workspace-islands", () => ({
@@ -126,6 +128,7 @@ describe("Settings server shell", () => {
     expect(html).toContain("Sandbox integration island");
     expect(html).toContain("Runtime integration island");
     expect(html).toContain("Verify setup island");
+    expect(html).toContain("Workspace secrets island");
     expect(html).not.toContain("Workspace identity island");
   });
 
@@ -150,7 +153,7 @@ describe("Settings server shell", () => {
         settingsCategory("workspace", true, { [key]: rejected(label) }),
       );
       expect(html).toContain('id="members"');
-      expect(html).toContain(">Members<");
+      expect(html).toContain(">Team access<");
       expect(html.replaceAll(/<!--.*?-->/g, "")).toContain(`Could not load ${label}.`);
       for (const text of healthy) expect(html).toContain(text);
       if (key === "workspaceInvitations") expect(html).not.toContain("No pending invitations.");
@@ -167,7 +170,7 @@ describe("Settings server shell", () => {
       const chunk = await reader.read();
       const html = new TextDecoder().decode(chunk.value);
       expect(html).toContain('id="members"');
-      expect(html).toContain(">Members<");
+      expect(html).toContain(">Team access<");
       expect(html.replaceAll(/<!--.*?-->/g, "")).toContain("Loading active members…");
     } finally {
       setup.resolve(await settingsCategory("workspace").props.setupData);
@@ -190,7 +193,7 @@ describe("Settings server shell", () => {
     expect(html).toContain(">3<");
     expect(html).toContain('id="maintenance"');
     expect(html).toContain(">Maintenance<");
-    expect(html).toContain(">Run history<");
+    expect(html).toContain(">Retention and exports<");
     expect(html).toContain("Recover stalled work and refresh linked Linear and GitHub state.");
     expect(html).toContain("Configured request caps are read-only.");
     expect(html).toContain("3 requests per minute per workspace member");
@@ -208,7 +211,7 @@ describe("Settings server shell", () => {
     expect(html).toContain("Runs started");
     expect(html).not.toContain('id="maintenance"');
     expect(html).not.toContain(">Maintenance<");
-    expect(html).not.toContain(">Run history<");
+    expect(html).not.toContain(">Retention and exports<");
     expect(html).not.toContain("Recover stalled work and refresh linked Linear and GitHub state.");
     expect(html).not.toContain("Maintenance island");
   });
@@ -226,6 +229,7 @@ describe("Settings server shell", () => {
       }),
     );
     expect(empty).toContain("No runs have started yet.");
+    expect(empty).not.toContain("Runs started");
     const partial = await renderStream(
       settingsCategory("advanced", false, {
         usage: Promise.resolve({
@@ -248,6 +252,33 @@ describe("Settings server shell", () => {
     expect(html).toContain("Edit profile");
     expect(html).not.toContain("Pending invitations");
     expect(html).not.toContain("Invite member");
+  });
+
+  it("groups team invitations ahead of separate profile and connected client tasks", async () => {
+    const html = await renderStream(
+      settingsCategory("workspace", true, {
+        personalConnections: <p>Personal connected clients</p>,
+      }),
+    );
+
+    expect(html.indexOf('id="members"')).toBeGreaterThanOrEqual(0);
+    expect(html.indexOf('id="members"')).toBeLessThan(html.indexOf("Pending invitations"));
+    expect(html.indexOf("Pending invitations")).toBeLessThan(html.indexOf('id="profile"'));
+    expect(html.indexOf('id="profile"')).toBeLessThan(html.indexOf("Personal connected clients"));
+    expect(html).toContain("Open your provider access");
+  });
+
+  it("keeps GitHub and selected factory connectors available if integration details fail", async () => {
+    const html = await renderStream(
+      settingsCategory("integrations", true, {
+        connectorSettings: <p>Selected factory connectors</p>,
+        setupData: rejected("settings details"),
+      }),
+    );
+
+    expect(html).toContain("GitHub integration island");
+    expect(html).toContain("Selected factory connectors");
+    expect(html.replaceAll(/<!--.*?-->/gu, "")).toContain("Integration details unavailable");
   });
 
   it("uses geometry-stable section loading and error states", () => {

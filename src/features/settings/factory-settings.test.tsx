@@ -163,7 +163,8 @@ it("saves two sections edited in the same tab and publishes their combined draft
   fireEvent.change(repairs(), { target: { value: "8" } });
 
   fireEvent.click(screen.getByRole("button", { name: "Save agent draft" }));
-  expect(await screen.findByText(secondDraft.digest.slice(0, 12))).toBeInTheDocument();
+  const revisedDraft = await screen.findByText(secondDraft.digest);
+  expect(revisedDraft.closest("details")).not.toHaveAttribute("open");
   expect(repairs()).toHaveValue(8);
   expect(screen.getByRole("button", { name: "Publish draft" })).toBeDisabled();
 
@@ -179,7 +180,7 @@ it("saves two sections edited in the same tab and publishes their combined draft
     expectedDraftId: secondDraft.id,
     patch: { kind: "execution-policy", requirements: { maxRepairAttempts: 8 } },
   });
-  expect(await screen.findByText(acceptedDraft.digest.slice(0, 12))).toBeInTheDocument();
+  expect(await screen.findByText(acceptedDraft.digest)).toBeInTheDocument();
   await waitFor(() => expect(screen.getByRole("button", { name: "Publish draft" })).toBeEnabled());
 
   fireEvent.click(screen.getByRole("button", { name: "Publish draft" }));
@@ -259,7 +260,7 @@ it("preserves two dirty sections on reload and saves only against the version ea
 
   snapshot = newer;
   fireEvent.click(screen.getByRole("button", { name: "Reload configuration" }));
-  expect(await screen.findByText(secondDraft.digest.slice(0, 12))).toBeInTheDocument();
+  expect(await screen.findByText(secondDraft.digest)).toBeInTheDocument();
   expect(model).toHaveValue("gpt-local");
   expect(repairs).toHaveValue(8);
   expect(screen.getAllByRole("button", { name: /Discard .* edits/ })).toHaveLength(2);
@@ -281,7 +282,7 @@ it("preserves two dirty sections on reload and saves only against the version ea
   expect(repairs).toHaveValue(8);
   fireEvent.change(model, { target: { value: "gpt-reapplied" } });
   fireEvent.click(screen.getByRole("button", { name: "Save agent draft" }));
-  expect(await screen.findByText(acceptedDraft.digest.slice(0, 12))).toBeInTheDocument();
+  expect(await screen.findByText(acceptedDraft.digest)).toBeInTheDocument();
   expect(commands[1]).toMatchObject({
     action: "save",
     expectedActivationNumber: 1,

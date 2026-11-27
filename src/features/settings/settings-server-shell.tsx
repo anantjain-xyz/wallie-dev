@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Suspense, type ReactNode } from "react";
 
 import { AdvancedRateLimits } from "@/features/settings/advanced-rate-limits";
@@ -13,30 +14,38 @@ import {
   FactorySettingsPanel,
   FactorySettingsProvider,
 } from "@/features/settings/factory-settings";
-import { MaintenanceIsland, VerifySetupIsland } from "@/features/settings/islands/advanced-islands";
+import {
+  MaintenanceIsland,
+  RunHistoryIsland,
+  VerifySetupIsland,
+} from "@/features/settings/islands/advanced-islands";
 import {
   GithubIntegrationIsland,
   LinearIntegrationIsland,
   RepositoryIntegrationIsland,
   RuntimeIntegrationIsland,
   VercelIntegrationIsland,
+  WorkspaceSecretsIntegrationIsland,
 } from "@/features/settings/islands/integration-islands";
 import { PipelineIsland } from "@/features/settings/islands/pipeline-island";
 import {
   DangerActionsIsland,
   WorkspaceIdentityIsland,
 } from "@/features/settings/islands/workspace-islands";
-import { RunHistoryControls } from "@/features/settings/run-history-controls";
 import { SettingsCategoryNav } from "@/features/settings/settings-category-nav";
 import type { SettingsCategory } from "@/features/settings/settings-categories";
 import { Section, UsageSummary } from "@/features/settings/settings-ui";
-import { WorkspaceMemberSettings } from "@/features/settings/workspace-member-settings";
-import { workspaceFactoryDefinitionPath } from "@/lib/routes";
+import {
+  WorkspaceMemberSettings,
+  WorkspacePersonalProfile,
+} from "@/features/settings/workspace-member-settings";
+import { workspaceFactoryDefinitionPath, workspaceSettingsPath } from "@/lib/routes";
 
 type SettingsServerShellProps = {
   automationPreview?: ReactNode;
   category: SettingsCategory;
   connectorSettings?: ReactNode;
+  defaultFactoryName?: Promise<string | undefined>;
   initialData: SettingsInitialData;
   personalConnections?: ReactNode;
   searchState: { codexStatus: string | null; githubStatus: string | null };
@@ -91,9 +100,9 @@ export function SettingsSectionFallback({
       className={`${minHeight} rounded-[6px] border border-border bg-sheet p-5`}
       role="status"
     >
-      <div className="h-5 w-40 animate-pulse rounded bg-control-hover" />
-      <div className="mt-4 h-4 w-full max-w-xl animate-pulse rounded bg-control-hover" />
-      <div className="mt-8 h-20 animate-pulse rounded bg-control-hover" />
+      <div className="h-5 w-40 animate-pulse rounded bg-control-hover motion-reduce:animate-none" />
+      <div className="mt-4 h-4 w-full max-w-xl animate-pulse rounded bg-control-hover motion-reduce:animate-none" />
+      <div className="mt-8 h-20 animate-pulse rounded bg-control-hover motion-reduce:animate-none" />
     </section>
   );
 }
@@ -116,54 +125,96 @@ export function SettingsSectionError({
   );
 }
 
-async function IntegrationDetails({
-  initialData,
-  searchState,
-  setupData,
-}: Pick<SettingsServerShellProps, "initialData" | "searchState" | "setupData">) {
+async function WorkspaceConnectionDetails({ initialData, setupData }: SettingsServerShellProps) {
   const setup = await settle(setupData);
   if (!setup.ok) {
     return <SettingsSectionError label="Integration details" minHeight="min-h-96" />;
   }
   const data = completeSettingsData(initialData, setup.value);
   return (
-    <FactorySettingsProvider
-      canManage={data.canManage}
-      key={data.workspace.id}
-      workspaceId={data.workspace.id}
-    >
-      <FactorySettingsPanel
-        editorHref={
-          data.canManage ? workspaceFactoryDefinitionPath(data.workspace.slug) : undefined
-        }
-      />
+    <>
       <RepositoryIntegrationIsland initialData={data} />
-      <PipelineIsland data={data} />
       <LinearIntegrationIsland initialData={data} />
       <VercelIntegrationIsland initialData={data} />
-      <RuntimeIntegrationIsland codexStatus={searchState.codexStatus} initialData={data} />
-      <VerifySetupIsland initialData={data} />
-    </FactorySettingsProvider>
+      <WorkspaceSecretsIntegrationIsland initialData={data} />
+    </>
+  );
+}
+
+async function IntegrationDetails({
+  defaultFactoryName,
+  initialData,
+  searchState,
+  setupData,
+}: SettingsServerShellProps) {
+  const setup = await settle(setupData);
+  if (!setup.ok) {
+    return <SettingsSectionError label="Factory configuration and setup checks" />;
+  }
+  const data = completeSettingsData(initialData, setup.value);
+  const factoryName = await defaultFactoryName;
+  return (
+    <>
+      <Section
+        anchorId="factory-configuration"
+        tagline={`${factoryName ? `${factoryName} is the workspace default.` : "These settings are for the workspace default."}${data.canManage ? " Changes saved to a draft apply to new sessions only after you publish." : ""}`}
+        title="Default factory configuration"
+      >
+        <FactorySettingsPanel
+          editorHref={
+            data.canManage ? workspaceFactoryDefinitionPath(data.workspace.slug) : undefined
+          }
+        />
+      </Section>
+      <PipelineIsland data={data} factoryName={factoryName} />
+      <RuntimeIntegrationIsland
+        codexStatus={searchState.codexStatus}
+        defaultFactoryName={factoryName}
+        initialData={data}
+      />
+      <VerifySetupIsland defaultFactoryName={factoryName} initialData={data} />
+    </>
   );
 }
 
 function IntegrationsCategory(props: SettingsServerShellProps) {
+  const { canManage, github, workspace } = props.initialData;
   return (
-    <div className="space-y-16">
-      <GithubIntegrationIsland
-        canManage={props.initialData.canManage}
-        github={props.initialData.github}
-        githubStatus={props.searchState.githubStatus}
-        workspaceId={props.initialData.workspace.id}
-      />
-      {props.connectorSettings}
-      {props.automationPreview}
-      <Suspense
-        fallback={<SettingsSectionFallback label="integration details" minHeight="min-h-96" />}
-      >
-        <IntegrationDetails {...props} />
-      </Suspense>
-    </div>
+    <FactorySettingsProvider canManage={canManage} key={workspace.id} workspaceId={workspace.id}>
+      <div className="space-y-10 sm:space-y-12">
+        <Section
+          title="Workspace connections"
+          tagline={`These settings apply to ${workspace.name}.`}
+        >
+          <div className="space-y-6 sm:space-y-8">
+            <GithubIntegrationIsland
+              canManage={canManage}
+              github={github}
+              githubStatus={props.searchState.githubStatus}
+              workspaceId={workspace.id}
+            />
+            <Suspense
+              fallback={
+                <SettingsSectionFallback label="integration details" minHeight="min-h-96" />
+              }
+            >
+              <WorkspaceConnectionDetails {...props} />
+            </Suspense>
+          </div>
+        </Section>
+        <div className="space-y-4">
+          {props.connectorSettings}
+          {props.automationPreview}
+        </div>
+        <Suspense
+          fallback={
+            <SettingsSectionFallback label="default factory configuration and setup checks" />
+          }
+        >
+          <IntegrationDetails {...props} />
+        </Suspense>
+      </div>
+    </FactorySettingsProvider>
   );
 }
 
@@ -202,7 +253,7 @@ async function AdvancedDetails({ initialData, setupData }: SettingsServerShellPr
 
 function AdvancedCategory(props: SettingsServerShellProps) {
   return (
-    <div className="space-y-16">
+    <div className="space-y-10 sm:space-y-12">
       <Suspense fallback={<SettingsSectionFallback label="usage" />}>
         <UsageSection usage={props.usage} />
       </Suspense>
@@ -210,10 +261,10 @@ function AdvancedCategory(props: SettingsServerShellProps) {
         <>
           <Section
             anchorId="run-history"
-            tagline="Manage how long Wallie keeps run content and request private exports."
-            title="Run history"
+            tagline="Set how long this workspace keeps run content, or request a private export. Shorter limits can permanently remove older content and expire affected exports."
+            title="Retention and exports"
           >
-            <RunHistoryControls workspaceId={props.initialData.workspace.id} />
+            <RunHistoryIsland workspaceId={props.initialData.workspace.id} />
           </Section>
           <Section
             anchorId="maintenance"
@@ -236,26 +287,36 @@ function AdvancedCategory(props: SettingsServerShellProps) {
 }
 
 function WorkspaceCategory(props: SettingsServerShellProps) {
+  const providerHref = `${workspaceSettingsPath(props.initialData.workspace.slug, { category: "integrations" })}#provider-access`;
   return (
-    <div className="space-y-16">
+    <div className="space-y-10 sm:space-y-12">
       <WorkspaceIdentityIsland initialData={props.initialData} />
       <WorkspaceMemberSettings
         initialData={props.initialData}
         invitations={props.workspaceInvitations}
-        profile={props.workspaceProfile}
         setup={props.setupData}
       />
-      {props.personalConnections && (
-        <Suspense
-          fallback={
-            <div id="connected-clients">
-              <SettingsSectionFallback label="connected clients" />
-            </div>
-          }
-        >
-          {props.personalConnections}
-        </Suspense>
-      )}
+      <Section
+        title="Personal settings"
+        tagline="These settings belong to your account, not the whole workspace."
+      >
+        <div className="space-y-6">
+          {props.workspaceProfile ? (
+            <WorkspacePersonalProfile profile={props.workspaceProfile} />
+          ) : null}
+          {props.personalConnections ? (
+            <Suspense fallback={<SettingsSectionFallback label="connected clients" />}>
+              {props.personalConnections}
+            </Suspense>
+          ) : null}
+          <p className="type-secondary text-muted">
+            Looking for credentials that let you run agents?{" "}
+            <Link className="font-medium text-accent underline" href={providerHref}>
+              Open your provider access
+            </Link>
+          </p>
+        </div>
+      </Section>
       <DangerActionsIsland initialData={props.initialData} />
     </div>
   );
@@ -275,20 +336,17 @@ function ActiveCategory(props: SettingsServerShellProps) {
 export function SettingsServerShell(props: SettingsServerShellProps) {
   return (
     <div className="min-h-full">
-      <div className="mx-auto max-w-[1080px] px-4 pb-24 pt-8 sm:px-8 sm:pt-10">
-        <header className="mb-8 sm:mb-10">
+      <div className="mx-auto max-w-[1080px] px-4 pb-24 pt-6 sm:px-8 sm:pt-10">
+        <header className="mb-4 sm:mb-8">
           <h1 className="type-page-title">Settings</h1>
-          <p className="type-body mt-2 max-w-2xl text-muted">
-            Manage workspace identity, members, integrations, pipeline, and encrypted secrets.
-          </p>
         </header>
-        <div className="grid grid-cols-1 items-start gap-10 lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-12">
+        <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-12">
           <SettingsCategoryNav
             activeCategory={props.category}
             canManage={props.initialData.canManage}
             workspaceSlug={props.initialData.workspace.slug}
           />
-          <div className="min-w-0">
+          <div className="min-w-0" id="settings-sections">
             <ActiveCategory {...props} />
           </div>
         </div>

@@ -223,7 +223,7 @@ describe("GitHubConnectionPanel", () => {
     expect(markup).toContain("GITHUB_WEBHOOK_SECRET");
   });
 
-  it("omits the onboarding-only continue hint when rendered in settings", () => {
+  it("shows separate install and delivery blockers before technical details in settings", () => {
     const github = {
       installation: null,
       missingAppKeys: ["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY"],
@@ -241,7 +241,11 @@ describe("GitHubConnectionPanel", () => {
       }),
     );
 
-    expect(markup).toContain("the install button turns on");
+    expect(markup.replaceAll(/<!--.*?-->/gu, "")).toContain(
+      "GitHub App installation is blocked by missing server configuration.",
+    );
+    expect(markup).toContain("GitHub delivery updates are off until webhooks are configured.");
+    expect(markup).toMatch(/<details>.*GITHUB_WEBHOOK_SECRET.*<\/details>/u);
     expect(markup).not.toContain("cannot finish this step or continue");
   });
 });

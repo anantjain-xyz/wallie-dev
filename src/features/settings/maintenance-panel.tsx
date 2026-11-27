@@ -98,8 +98,8 @@ export function MaintenancePanel({
         This pass runs only in{" "}
         <strong className="font-medium text-foreground">{workspaceName}</strong>. It can retry
         stalled jobs, mark jobs as failed, stop their sandboxes, and archive sessions linked to
-        closed Linear issues. GitHub verification runs in batches. The scheduled worker handles
-        orphaned sandboxes separately.
+        closed Linear issues. It also verifies linked GitHub pull requests in batches. The scheduled
+        worker handles orphaned sandboxes separately.
       </p>
       <button
         type="button"
@@ -119,53 +119,61 @@ export function MaintenancePanel({
       </button>
       <InlineActionMessage message={message} />
       {result ? (
-        <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {result.cleanup ? (
-            <>
-              <SummaryCell
-                label="Stalled runs marked failed"
-                value={result.cleanup.stalledRunIds.length}
-              />
-              <SummaryCell
-                label="Jobs queued for retry"
-                value={result.cleanup.retriedJobIds.length}
-              />
-              <SummaryCell
-                label="Jobs marked failed"
-                value={result.cleanup.terminalErroredJobIds.length}
-              />
-              <SummaryCell
-                label="Stalled-run sandboxes stopped"
-                value={result.cleanup.stoppedSandboxIds.length}
-              />
-            </>
-          ) : null}
-          {result.reconciliation ? (
-            <>
-              <SummaryCell
-                label="Linear-linked sessions checked"
-                value={result.reconciliation.checked}
-              />
-              <SummaryCell
-                label="Linear-linked sessions archived"
-                value={result.reconciliation.canceled}
-              />
-            </>
-          ) : null}
-          {result.githubVerification ? (
-            <>
-              <SummaryCell
-                label="GitHub checks attempted"
-                value={result.githubVerification.checked}
-              />
-              <SummaryCell
-                label="GitHub checks refreshed"
-                value={result.githubVerification.refreshed}
-              />
-              <SummaryCell label="GitHub checks failed" value={result.githubVerification.failed} />
-            </>
-          ) : null}
-        </dl>
+        <details className="type-secondary text-muted">
+          <summary className="w-fit cursor-pointer hover:text-foreground">
+            Maintenance results
+          </summary>
+          <dl className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {result.cleanup ? (
+              <>
+                <SummaryCell
+                  label="Stalled runs marked failed"
+                  value={result.cleanup.stalledRunIds.length}
+                />
+                <SummaryCell
+                  label="Jobs queued for retry"
+                  value={result.cleanup.retriedJobIds.length}
+                />
+                <SummaryCell
+                  label="Jobs marked failed"
+                  value={result.cleanup.terminalErroredJobIds.length}
+                />
+                <SummaryCell
+                  label="Stalled-run sandboxes stopped"
+                  value={result.cleanup.stoppedSandboxIds.length}
+                />
+              </>
+            ) : null}
+            {result.reconciliation ? (
+              <>
+                <SummaryCell
+                  label="Linear-linked sessions checked"
+                  value={result.reconciliation.checked}
+                />
+                <SummaryCell
+                  label="Linear-linked sessions archived"
+                  value={result.reconciliation.canceled}
+                />
+              </>
+            ) : null}
+            {result.githubVerification ? (
+              <>
+                <SummaryCell
+                  label="GitHub checks attempted"
+                  value={result.githubVerification.checked}
+                />
+                <SummaryCell
+                  label="GitHub checks refreshed"
+                  value={result.githubVerification.refreshed}
+                />
+                <SummaryCell
+                  label="GitHub checks failed"
+                  value={result.githubVerification.failed}
+                />
+              </>
+            ) : null}
+          </dl>
+        </details>
       ) : null}
     </div>
   );

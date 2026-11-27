@@ -16,7 +16,7 @@ import {
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { useCandidateTests } from "@/features/factory-definition/use-candidate-tests";
-import { InlineActionMessage, Section } from "@/features/settings/settings-ui";
+import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { readResponseJson } from "@/features/settings/use-api-action";
 import {
   factorySettingsResponseSchema,
@@ -274,11 +274,7 @@ export function FactorySettingsPanel({ editorHref }: { editorHref?: string }) {
   const published = snapshot?.published;
   const needsTest = Boolean(draft) && !canPublish;
   return (
-    <Section
-      anchorId="factory-configuration"
-      title="Factory configuration"
-      tagline="Save changes to a shared draft. Publishing sets the configuration for new sessions."
-    >
+    <>
       {phase === "loading" ? (
         <p className="text-[13px] text-muted" role="status">
           Loading factory configuration…
@@ -289,23 +285,11 @@ export function FactorySettingsPanel({ editorHref }: { editorHref?: string }) {
             <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[13px]" role="status">
               <p>
                 <span className="font-semibold">Published</span>{" "}
-                {published ? (
-                  <>
-                    #{snapshot.activationNumber} ·{" "}
-                    <code title={published.digest}>{published.digest.slice(0, 12)}</code>
-                  </>
-                ) : (
-                  "No version published"
-                )}
+                {published ? `#${snapshot.activationNumber}` : "No version published"}
               </p>
               {canManage ? (
                 <p>
-                  <span className="font-semibold">Draft</span>{" "}
-                  {draft ? (
-                    <code title={draft.digest}>{draft.digest.slice(0, 12)}</code>
-                  ) : (
-                    "No saved draft"
-                  )}
+                  <span className="font-semibold">Draft</span> {draft ? "Saved" : "No saved draft"}
                 </p>
               ) : null}
               {Object.keys(dirtySections).length ? (
@@ -350,9 +334,24 @@ export function FactorySettingsPanel({ editorHref }: { editorHref?: string }) {
               </button>
             ) : null}
           </div>
+          {published || (canManage && draft) ? (
+            <details className="type-secondary text-muted">
+              <summary className="w-fit cursor-pointer">Revision details</summary>
+              {published ? (
+                <p className="mt-2 [overflow-wrap:anywhere]">
+                  Published digest: <code>{published.digest}</code>
+                </p>
+              ) : null}
+              {canManage && draft ? (
+                <p className="mt-1 [overflow-wrap:anywhere]">
+                  Draft digest: <code>{draft.digest}</code>
+                </p>
+              ) : null}
+            </details>
+          ) : null}
         </div>
       )}
-    </Section>
+    </>
   );
 }
 

@@ -261,6 +261,22 @@ function LinearDiscoveryHealth({
   discovery: NonNullable<ConnectorDeliveryPage["linearDiscovery"]>;
 }) {
   const { status, lastFailureAt, lastFailureReason, nextScanAt, retryAt } = discovery;
+  if (status === "scheduled" && !lastFailureReason && !retryAt) {
+    return (
+      <details className="type-secondary text-muted">
+        <summary className="w-fit cursor-pointer hover:text-foreground">
+          Linear discovery scheduled
+        </summary>
+        {nextScanAt ? (
+          <p className="mt-2">
+            Next scan <Timestamp value={nextScanAt} />
+          </p>
+        ) : (
+          <p className="mt-2">Wallie is waiting for the next scan.</p>
+        )}
+      </details>
+    );
+  }
   return (
     <div className="space-y-1 rounded-md border border-border px-3 py-2 text-sm text-muted">
       <p>
@@ -307,12 +323,12 @@ function DeliveryRow({
   ]
     .filter(Boolean)
     .join(" · ");
-  const isFailure = row.status === "failed" || row.status === "denied";
+  const isFailure = row.status === "failed" || row.status === "denied" || row.status === "blocked";
   return (
     <li className="flex flex-wrap items-start justify-between gap-3 px-3 py-3">
       <div className="min-w-0 space-y-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <p className="text-sm font-medium text-foreground">{title}</p>
+          <p className="text-sm font-medium text-foreground [overflow-wrap:anywhere]">{title}</p>
           <span
             className={`rounded border px-1.5 py-0.5 text-xs ${isFailure ? "border-danger/20 bg-danger-soft text-danger" : "border-border text-muted"}`}
           >
@@ -327,18 +343,23 @@ function DeliveryRow({
         {row.uncertain && row.reason !== "uncertain" ? (
           <p className="text-sm text-muted">Wallie checks the provider before any further send.</p>
         ) : null}
-        <p className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted">
-          <span>
-            Recorded <Timestamp value={row.recordedAt} />
-          </span>
-          {row.nextAttemptAt ? (
+        {row.nextAttemptAt ? (
+          <p className="text-xs text-muted">
+            Next attempt <Timestamp value={row.nextAttemptAt} />
+          </p>
+        ) : null}
+        <details className="text-xs text-muted">
+          <summary className="w-fit cursor-pointer hover:text-foreground">Delivery details</summary>
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
             <span>
-              Next attempt <Timestamp value={row.nextAttemptAt} />
+              Recorded <Timestamp value={row.recordedAt} />
             </span>
-          ) : null}
-          {row.attempts ? <span>Attempts {row.attempts}</span> : null}
-          {row.observationAttempts ? <span>Provider checks {row.observationAttempts}</span> : null}
-        </p>
+            {row.attempts ? <span>Attempts {row.attempts}</span> : null}
+            {row.observationAttempts ? (
+              <span>Provider checks {row.observationAttempts}</span>
+            ) : null}
+          </div>
+        </details>
         {row.sessionNumber ? (
           <Link
             className="text-xs font-medium text-accent hover:underline"

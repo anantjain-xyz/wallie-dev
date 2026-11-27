@@ -221,9 +221,9 @@ function ExecutionPolicyControls({
     >
       <div className="max-w-2xl space-y-2">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <h3 className="text-[15px] font-semibold text-foreground" id={`${descriptionId}-title`}>
+          <h4 className="text-[15px] font-semibold text-foreground" id={`${descriptionId}-title`}>
             Execution policy
-          </h3>
+          </h4>
           <span className="text-xs text-muted">
             {!factory &&
               (policy

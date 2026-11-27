@@ -27,18 +27,32 @@ export function preloadPipelineEditor() {
   void loadPipelineEditor();
 }
 
-export function PipelineIsland({ data }: { data: SettingsPageData }) {
+export function PipelineIsland({
+  data,
+  factoryName,
+}: {
+  data: SettingsPageData;
+  factoryName?: string;
+}) {
   const [pipelineDirty, setPipelineDirty] = useState(false);
   const factory = useFactorySettings();
   const pipelineId = factory?.snapshot?.pipeline.id ?? data.pipeline?.id;
+  const scope = factory?.snapshot
+    ? data.canManage
+      ? `Draft for ${factoryName ?? "the default factory"}. `
+      : `Published pipeline for ${factoryName ?? "the default factory"}. `
+    : factory?.phase === "legacy"
+      ? "Live workspace pipeline. "
+      : "";
 
   return (
     <Section
       anchorId="pipeline"
+      heading="h3"
       statusBadge={
         pipelineDirty ? <Status label="Unsaved changes" value="needs_attention" /> : null
       }
-      tagline="Each stage runs, then awaits approval. Archiving affects future sessions; existing sessions keep their stages."
+      tagline={`${scope}Each stage runs, then awaits approval. Archiving affects future sessions; existing sessions keep their stages.`}
       title="Pipeline"
     >
       <PipelineEditor
@@ -73,8 +87,8 @@ export function PipelineEditorFallback() {
       className="min-h-72 rounded-[6px] border border-border bg-sheet p-5"
       role="status"
     >
-      <div className="h-5 w-48 animate-pulse rounded bg-control-hover" />
-      <div className="mt-6 h-40 animate-pulse rounded bg-control-hover" />
+      <div className="h-5 w-48 animate-pulse rounded bg-control-hover motion-reduce:animate-none" />
+      <div className="mt-6 h-40 animate-pulse rounded bg-control-hover motion-reduce:animate-none" />
     </div>
   );
 }

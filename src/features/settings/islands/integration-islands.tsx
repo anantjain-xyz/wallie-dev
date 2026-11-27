@@ -17,6 +17,7 @@ import {
 } from "@/features/settings/sandbox-provider-section";
 import { useIslandFeedback } from "@/features/settings/islands/island-feedback";
 import type { FlashMessage } from "@/features/settings/settings-types";
+import { Section } from "@/features/settings/settings-ui";
 import {
   updateAgentConfigInSettingsData,
   updateClaudeCodeConnectionInSettingsData,
@@ -32,6 +33,7 @@ import {
   dispatchSettingsEvent,
   registerSettingsDataReplayConsumer,
   replaySettingsDataChanges,
+  subscribeToSettingsSandboxChanges,
   SETTINGS_GITHUB_CHANGED,
   SETTINGS_PIPELINE_CHANGED,
   SETTINGS_SANDBOX_CHANGED,
@@ -83,22 +85,20 @@ export function GithubIntegrationIsland({
   const { feedback, setMessage } = useIslandFeedback(initialMessage);
 
   return (
-    <>
-      {feedback}
-      <GitHubInstallSection
-        canManage={canManage}
-        github={github}
-        onGithubChange={(nextGithub) => {
-          setGithub(nextGithub);
-          dispatchSettingsEvent(SETTINGS_GITHUB_CHANGED, nextGithub);
-          dispatchSettingsDataChanged(workspaceId, (current: SettingsPageData) =>
-            updateGithubInSettingsData(current, nextGithub),
-          );
-        }}
-        setFlashMessage={setMessage}
-        workspaceId={workspaceId}
-      />
-    </>
+    <GitHubInstallSection
+      canManage={canManage}
+      feedback={feedback}
+      github={github}
+      onGithubChange={(nextGithub) => {
+        setGithub(nextGithub);
+        dispatchSettingsEvent(SETTINGS_GITHUB_CHANGED, nextGithub);
+        dispatchSettingsDataChanged(workspaceId, (current: SettingsPageData) =>
+          updateGithubInSettingsData(current, nextGithub),
+        );
+      }}
+      setFlashMessage={setMessage}
+      workspaceId={workspaceId}
+    />
   );
 }
 
@@ -130,6 +130,7 @@ export function RepositoryIntegrationIsland({ initialData }: { initialData: Sett
 
 export function VercelIntegrationIsland({ initialData }: { initialData: SettingsPageData }) {
   const [data, setData] = useState(initialData);
+  const workspaceId = data.workspace.id;
   const { feedback, setMessage } = useIslandFeedback();
   return (
     <>
@@ -138,25 +139,19 @@ export function VercelIntegrationIsland({ initialData }: { initialData: Settings
         canManage={data.canManage}
         onSettingsChange={(settings) => {
           setData((current) => applySandboxSettingsToData(current, settings));
-          dispatchSettingsEvent(SETTINGS_SANDBOX_CHANGED, settings);
-          dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
+          dispatchSettingsEvent<SandboxChangedDetail>(SETTINGS_SANDBOX_CHANGED, {
+            settings,
+            workspaceId,
+          });
+          dispatchSettingsDataChanged(workspaceId, (current: SettingsPageData) =>
             applySandboxSettingsToData(current, settings),
           );
         }}
         setFlashMessage={setMessage}
         settings={data.sandboxSettings}
         vercelConnection={data.vercelSandboxConnection}
-        workspaceId={data.workspace.id}
+        workspaceId={workspaceId}
       />
-      {data.canManage ? (
-        <FactorySettingsForm section="sandboxProvider">
-          {(revision) =>
-            revision ? (
-              <FactorySandboxProviderSettings revision={revision} settings={data.sandboxSettings} />
-            ) : null
-          }
-        </FactorySettingsForm>
-      ) : null}
     </>
   );
 }
@@ -227,11 +222,9 @@ export function LinearIntegrationIsland({ initialData }: { initialData: Settings
   );
 }
 
-export function RuntimeIntegrationIsland({
-  codexStatus,
+export function WorkspaceSecretsIntegrationIsland({
   initialData,
 }: {
-  codexStatus: string | null;
   initialData: SettingsPageData;
 }) {
   const [secrets, setSecrets] = useState(initialData.workspaceSecrets);
@@ -240,16 +233,7 @@ export function RuntimeIntegrationIsland({
     broadcastSecrets.current = true;
     setSecrets(update);
   };
-  const [sandboxData, setSandboxData] = useState(initialData);
   const { feedback, setMessage } = useIslandFeedback();
-  useEffect(() => {
-    const handleSandboxChange = (event: Event) =>
-      setSandboxData((current) =>
-        applySandboxSettingsToData(current, (event as CustomEvent<SandboxChangedDetail>).detail),
-      );
-    window.addEventListener(SETTINGS_SANDBOX_CHANGED, handleSandboxChange);
-    return () => window.removeEventListener(SETTINGS_SANDBOX_CHANGED, handleSandboxChange);
-  }, []);
   useEffect(() => {
     const handleSecretsChange = (event: Event) =>
       setSecrets((event as CustomEvent<SecretsChangedDetail>).detail);
@@ -266,35 +250,70 @@ export function RuntimeIntegrationIsland({
   }, [initialData.workspace.id, secrets]);
 
   return (
+    <Section
+      anchorId="workspace-secrets"
+      heading="h3"
+      tagline={`Secrets stored here belong to ${initialData.workspace.name}. Wallie encrypts secret values and shows previews only.`}
+      title="Workspace secrets"
+    >
+      {feedback}
+      <WorkspaceSecretsPanel
+        canManage={initialData.canManage}
+        isLoadingSecrets={false}
+        secrets={secrets}
+        setFlashMessage={setMessage}
+        setSecrets={updateSecrets}
+        workspaceId={initialData.workspace.id}
+      />
+    </Section>
+  );
+}
+
+export function RuntimeIntegrationIsland({
+  codexStatus,
+  defaultFactoryName,
+  initialData,
+}: {
+  codexStatus: string | null;
+  defaultFactoryName?: string;
+  initialData: SettingsPageData;
+}) {
+  const [sandboxData, setSandboxData] = useState(initialData);
+  const { feedback, setMessage } = useIslandFeedback();
+  useEffect(
+    () =>
+      subscribeToSettingsSandboxChanges(initialData, (settings) =>
+        setSandboxData((current) => applySandboxSettingsToData(current, settings)),
+      ),
+    [initialData],
+  );
+
+  return (
     <>
       {feedback}
       <AgentConfigSection
         anchorId="runtime"
         canManage={initialData.canManage}
         codexConnectFlash={codexStatus}
+        defaultFactoryName={defaultFactoryName}
         extraContent={
           <>
+            {initialData.canManage ? (
+              <FactorySettingsForm section="sandboxProvider">
+                {(revision) =>
+                  revision ? (
+                    <FactorySandboxProviderSettings
+                      revision={revision}
+                      settings={sandboxData.sandboxSettings}
+                    />
+                  ) : null
+                }
+              </FactorySettingsForm>
+            ) : null}
             <ExecutionPolicySection
               canManage={initialData.canManage}
               workspaceId={initialData.workspace.id}
             />
-            <div className="space-y-4 border-t border-border pt-6">
-              <div className="min-w-0">
-                <h3 className="text-[14px] font-semibold text-foreground">Workspace secrets</h3>
-                <p className="mt-1 text-xs leading-5 text-muted">
-                  Secret values never come back to the client. Wallie stores encrypted values and
-                  returns preview-only rows.
-                </p>
-              </div>
-              <WorkspaceSecretsPanel
-                canManage={initialData.canManage}
-                isLoadingSecrets={false}
-                secrets={secrets}
-                setFlashMessage={setMessage}
-                setSecrets={updateSecrets}
-                workspaceId={initialData.workspace.id}
-              />
-            </div>
           </>
         }
         initialAgentConfig={initialData.agentConfig}
@@ -372,8 +391,7 @@ export function RuntimeIntegrationIsland({
           sandboxData.setupHealth.vercelSandboxConnection.connected
         }
         setFlashMessage={setMessage}
-        tagline="Manage agents, provider access, and secrets."
-        title="Agent"
+        title="Agent runtime"
         workspaceId={initialData.workspace.id}
       />
     </>

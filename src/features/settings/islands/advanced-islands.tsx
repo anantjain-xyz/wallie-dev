@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 
 import type { SettingsPageData } from "@/features/settings/data";
@@ -13,7 +14,26 @@ import {
 import { MaintenancePanel } from "@/features/settings/maintenance-panel";
 import { VerifySetupSection } from "@/features/settings/verify-setup-section";
 
-export function VerifySetupIsland({ initialData }: { initialData: SettingsPageData }) {
+export const RunHistoryIsland = dynamic(
+  () =>
+    import("@/features/settings/run-history-controls").then((module) => module.RunHistoryControls),
+  {
+    ssr: false,
+    loading: () => (
+      <p aria-busy="true" className="ui-sheet px-4 py-3 type-body text-muted" role="status">
+        Loading retention and exports…
+      </p>
+    ),
+  },
+);
+
+export function VerifySetupIsland({
+  defaultFactoryName,
+  initialData,
+}: {
+  defaultFactoryName?: string;
+  initialData: SettingsPageData;
+}) {
   const [data, setData] = useState(() => replaySettingsDataChanges(initialData, "verify-setup"));
   const { feedback, setMessage } = useIslandFeedback();
   useEffect(() => {
@@ -31,7 +51,12 @@ export function VerifySetupIsland({ initialData }: { initialData: SettingsPageDa
   return (
     <>
       {feedback}
-      <VerifySetupSection data={data} setData={setData} setFlashMessage={setMessage} />
+      <VerifySetupSection
+        data={data}
+        defaultFactoryName={defaultFactoryName}
+        setData={setData}
+        setFlashMessage={setMessage}
+      />
     </>
   );
 }

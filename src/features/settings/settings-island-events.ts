@@ -16,15 +16,23 @@ export type SettingsDataChangedDetail = {
   update: SettingsDataUpdate;
   workspaceId: string;
 };
+export type SandboxChangedDetail = {
+  settings: SandboxSettingsResponse;
+  workspaceId: string;
+};
 
-export type SettingsDataReplayConsumer = "repository" | "verify-setup";
+export type SettingsDataReplayConsumer = "repository" | "runtime-sandbox" | "verify-setup";
 
 type SettingsDataChangeRecord = {
   pendingConsumers: Set<SettingsDataReplayConsumer>;
   update: SettingsDataUpdate;
 };
 
-const SETTINGS_DATA_REPLAY_CONSUMERS: SettingsDataReplayConsumer[] = ["repository", "verify-setup"];
+const SETTINGS_DATA_REPLAY_CONSUMERS: SettingsDataReplayConsumer[] = [
+  "repository",
+  "runtime-sandbox",
+  "verify-setup",
+];
 const activeSettingsDataConsumers = new Map<string, Set<SettingsDataReplayConsumer>>();
 const settingsDataChangeHistory = new Map<string, SettingsDataChangeRecord[]>();
 
@@ -82,7 +90,29 @@ export function registerSettingsDataReplayConsumer(
   };
 }
 
+export function subscribeToSettingsSandboxChanges(
+  initialData: SettingsPageData,
+  onChange: (settings: SandboxSettingsResponse) => void,
+) {
+  const handleChange = (event: Event) => {
+    const { settings, workspaceId } = (event as CustomEvent<SandboxChangedDetail>).detail;
+    if (workspaceId === initialData.workspace.id) onChange(settings);
+  };
+  window.addEventListener(SETTINGS_SANDBOX_CHANGED, handleChange);
+
+  const pending = replaySettingsDataChanges(initialData, "runtime-sandbox").sandboxSettings;
+  if (pending !== initialData.sandboxSettings) onChange(pending);
+  const unregister = registerSettingsDataReplayConsumer(
+    initialData.workspace.id,
+    "runtime-sandbox",
+  );
+
+  return () => {
+    unregister();
+    window.removeEventListener(SETTINGS_SANDBOX_CHANGED, handleChange);
+  };
+}
+
 export type GithubChangedDetail = SettingsPageData["github"];
 export type PipelineChangedDetail = NonNullable<SettingsPageData["pipeline"]>;
-export type SandboxChangedDetail = SandboxSettingsResponse;
 export type SecretsChangedDetail = WorkspaceSecretPreview[];

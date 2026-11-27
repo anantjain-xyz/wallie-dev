@@ -18,6 +18,13 @@ vi.mock("./sandbox-capability-section", () => ({ SandboxCapabilitySection: mock.
 vi.mock("@/features/onboarding/runtime-readiness", () => ({
   buildVerifyChecklist: () => [
     {
+      id: "github",
+      label: "GitHub connected",
+      detail: "Connected to fixture-org.",
+      passed: true,
+      step: "github",
+    },
+    {
       id: "linear",
       label: "Linear configured",
       detail: "Set an API key.",
@@ -72,6 +79,8 @@ it.each([
 
   expect(screen.getByRole("heading", { name: "Workspace readiness" })).toBeVisible();
   expect(screen.getByText("Workspace sandbox capability")).toBeVisible();
+  expect(screen.getByText("Passing checks (1)")).toBeVisible();
+  expect(screen.getByText("GitHub connected")).not.toBeVisible();
   expect(screen.getByText("Stale")).toBeVisible();
   expect(screen.getByRole("heading", { name: heading })).toBeVisible();
   expect(screen.getByText(/fixture-org\/demo · E2B/u)).toBeVisible();

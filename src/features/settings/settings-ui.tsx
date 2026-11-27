@@ -1,6 +1,8 @@
-import { PageSection } from "@/components/ui/page-shell";
+import type { ReactNode } from "react";
+
 import type { WorkspaceUsageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
+import { cn } from "@/lib/utils";
 
 export const dateFormatter = new Intl.DateTimeFormat(undefined, {
   day: "numeric",
@@ -11,9 +13,52 @@ export const dateFormatter = new Intl.DateTimeFormat(undefined, {
 export const interactiveLinkClass =
   "font-semibold text-foreground transition-colors duration-150 hover:text-accent focus-visible:rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30";
 
-// Re-export the shared PageSection under the legacy "Section" name so the
-// settings sub-components keep importing from this module unchanged.
-export const Section = PageSection;
+export function Section({
+  actions,
+  anchorId,
+  children,
+  className,
+  heading: Heading = "h2",
+  statusBadge,
+  tagline,
+  title,
+}: {
+  actions?: ReactNode;
+  anchorId?: string;
+  children: ReactNode;
+  className?: string;
+  heading?: "h2" | "h3";
+  statusBadge?: ReactNode;
+  tagline?: ReactNode;
+  title: string;
+}) {
+  return (
+    <section className={cn("min-w-0 scroll-mt-4", className)} id={anchorId}>
+      <header className="settings-section-header mb-4">
+        <div className="min-w-0 space-y-1">
+          <Heading
+            className={cn(
+              "text-pretty break-words focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+              Heading === "h2" ? "type-section-title" : "type-body font-semibold text-foreground",
+            )}
+            data-settings-heading={anchorId ? "" : undefined}
+            tabIndex={anchorId ? -1 : undefined}
+          >
+            {title}
+          </Heading>
+          {tagline ? <p className="type-secondary break-words text-muted">{tagline}</p> : null}
+        </div>
+        {statusBadge || actions ? (
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            {statusBadge}
+            {actions}
+          </div>
+        ) : null}
+      </header>
+      {children}
+    </section>
+  );
+}
 
 export function toneClass(kind: FlashMessage["kind"]) {
   switch (kind) {
@@ -94,6 +139,7 @@ function metricNote(
 
 export function UsageSummary({ usage }: { usage: WorkspaceUsageData }) {
   const empty = usage.totalRuns === 0 && !usage.tokensUnavailable && !usage.costUnavailable;
+  if (empty) return <p className="type-body text-muted">No runs have started yet.</p>;
   const input =
     usage.totalInputTokens === null
       ? "Unavailable"
@@ -107,38 +153,35 @@ export function UsageSummary({ usage }: { usage: WorkspaceUsageData }) {
       ? "Unavailable"
       : `${usdCost.format(usage.totalCostUsd)}${usage.costUnavailable ? "+" : ""}`;
   return (
-    <div>
-      {empty ? <p className="mb-2 text-sm text-muted">No runs have started yet.</p> : null}
-      <div className="grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-[6px] border border-border bg-sheet sm:grid-cols-4 sm:divide-y-0">
-        <UsageCell label="Runs started" value={runCount.format(usage.totalRuns)} />
-        <UsageCell
-          label="Input tokens"
-          note={metricNote(
-            usage.tokensUnavailable,
-            usage.hasEstimatedTokens,
-            usage.totalInputTokens !== null,
-          )}
-          value={input}
-        />
-        <UsageCell
-          label="Output tokens"
-          note={metricNote(
-            usage.tokensUnavailable,
-            usage.hasEstimatedTokens,
-            usage.totalOutputTokens !== null,
-          )}
-          value={output}
-        />
-        <UsageCell
-          label="Run cost (USD)"
-          note={metricNote(
-            usage.costUnavailable,
-            usage.hasEstimatedCost,
-            usage.totalCostUsd !== null,
-          )}
-          value={cost}
-        />
-      </div>
+    <div className="grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-[6px] border border-border bg-sheet sm:grid-cols-4 sm:divide-y-0">
+      <UsageCell label="Runs started" value={runCount.format(usage.totalRuns)} />
+      <UsageCell
+        label="Input tokens"
+        note={metricNote(
+          usage.tokensUnavailable,
+          usage.hasEstimatedTokens,
+          usage.totalInputTokens !== null,
+        )}
+        value={input}
+      />
+      <UsageCell
+        label="Output tokens"
+        note={metricNote(
+          usage.tokensUnavailable,
+          usage.hasEstimatedTokens,
+          usage.totalOutputTokens !== null,
+        )}
+        value={output}
+      />
+      <UsageCell
+        label="Run cost (USD)"
+        note={metricNote(
+          usage.costUnavailable,
+          usage.hasEstimatedCost,
+          usage.totalCostUsd !== null,
+        )}
+        value={cost}
+      />
     </div>
   );
 }
