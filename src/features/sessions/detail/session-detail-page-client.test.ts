@@ -148,6 +148,7 @@ function makeSessionDetailData(): SessionReviewData {
 function renderDetail(
   overrides: {
     activity?: ReactNode;
+    browseReturn?: Parameters<typeof SessionDetailPageClient>[0]["browseReturn"];
     canReview?: boolean;
     data?: SessionReviewData;
     initialFormattedArtifact?: ReactNode | null;
@@ -157,6 +158,7 @@ function renderDetail(
   return renderToStaticMarkup(
     createElement(SessionDetailPageClient, {
       activity: overrides.activity ?? null,
+      browseReturn: overrides.browseReturn,
       canReview: overrides.canReview ?? true,
       initialData: overrides.data ?? makeSessionDetailData(),
       initialFormattedArtifact: overrides.initialFormattedArtifact ?? null,
@@ -1379,14 +1381,26 @@ describe("SessionDetailPageClient", () => {
     expect(html).not.toContain('idle="Archive"');
   });
 
-  it("folds the session number into the breadcrumb instead of an orphaned row", () => {
-    const document = new DOMParser().parseFromString(renderDetail(), "text/html");
-    const breadcrumb = document.querySelector('nav[aria-label="Breadcrumb"]');
-    const backLink = breadcrumb?.querySelector("a");
-    expect(backLink?.getAttribute("href")).toBe("/w/acme/sessions");
-    expect(backLink?.querySelector('[aria-hidden="true"]')?.textContent?.trim()).toBe("←");
-    expect(breadcrumb?.textContent?.trim()).toMatch(/Sessions\s*\/\s*#7$/);
-  });
+  it.each([
+    ["Sessions", "/w/acme/sessions", undefined],
+    [
+      "Inbox",
+      "/w/acme/inbox?factory=all&scope=archived",
+      { href: "/w/acme/inbox?factory=all&scope=archived", label: "Inbox" },
+    ],
+  ] as const)(
+    "renders %s as a breadcrumb link with a decorative arrow and the current session",
+    (label, href, browseReturn) => {
+      const document = new DOMParser().parseFromString(renderDetail({ browseReturn }), "text/html");
+      const breadcrumb = document.querySelector('nav[aria-label="Breadcrumb"]');
+      const backLink = breadcrumb?.querySelector("a");
+      expect(backLink?.getAttribute("href")).toBe(href);
+      expect(backLink?.textContent).toBe(label);
+      expect(backLink?.querySelector('svg[aria-hidden="true"] path')).toBeTruthy();
+      expect(breadcrumb?.querySelector('[aria-current="page"]')?.textContent).toBe("#7");
+      expect(breadcrumb?.querySelector(':scope > [aria-hidden="true"]')?.textContent).toBe("/");
+    },
+  );
 
   it("keeps creator and creation time in the compact session header", () => {
     const data = makeSessionDetailData();

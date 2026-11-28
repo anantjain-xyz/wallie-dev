@@ -9,6 +9,7 @@ import {
   workspaceLocationForRoute,
   type WorkspaceRoute,
 } from "@/components/app-shell/workspace-location";
+import { BackLink } from "@/components/ui/back-link";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { FactorySelector } from "@/features/factories/factory-selector";
 import { workspaceAutomationPreviewPath, workspaceSessionsPath } from "@/lib/routes";
@@ -55,16 +56,16 @@ export function WorkspaceScopeRequired({
             ? "Select a factory to open this view."
             : "You don’t have access to a factory for this view. Ask a workspace admin for access."}
         </p>
-        {unavailable ? (
+        {unavailable && automations ? (
+          <BackLink className="ui-button mt-2" href={workspaceAutomationPreviewPath(workspaceSlug)}>
+            Back to automations
+          </BackLink>
+        ) : unavailable ? (
           <Link
             className="ui-button mt-2"
-            href={
-              automations
-                ? workspaceAutomationPreviewPath(workspaceSlug)
-                : workspaceSessionsPath(workspaceSlug, { factory: "all" })
-            }
+            href={workspaceSessionsPath(workspaceSlug, { factory: "all" })}
           >
-            {automations ? "Back to automations" : "View accessible sessions"}
+            View accessible sessions
           </Link>
         ) : null}
       </section>

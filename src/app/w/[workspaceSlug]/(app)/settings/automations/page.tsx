@@ -10,6 +10,7 @@ import {
 import { WorkspaceScopeHandoff } from "@/components/app-shell/workspace-scope-context";
 import { WorkspaceScopeRequired } from "@/components/app-shell/workspace-scope-required";
 import { loadWorkspaceRouteScope } from "@/components/app-shell/workspace-scope.server";
+import { BackLink } from "@/components/ui/back-link";
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
 import { AutomationAdmissionPanel } from "@/features/factory-automations/automation-admission-panel";
 import {
@@ -117,9 +118,9 @@ function UnavailableSelection({ href }: { href: string }) {
           <p className="text-sm text-muted">
             This selection is unavailable. Choose a factory or rule you can manage.
           </p>
-          <Link className="ui-button" href={href}>
+          <BackLink className="ui-button" href={href}>
             Back to automations
-          </Link>
+          </BackLink>
         </div>
       </PageSection>
     </PageContainer>

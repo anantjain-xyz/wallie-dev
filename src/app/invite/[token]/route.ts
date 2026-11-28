@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { ARROW_LEFT_PATH } from "@/components/shared/icons/arrow-left-icon";
 import { loginPath, workspaceBasePath } from "@/lib/routes";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
@@ -120,7 +121,8 @@ function invitationErrorResponse({ errorCode, token }: { errorCode?: string; tok
       h1 { margin: 0 0 8px; font-size: 1.75rem; line-height: 1.25; letter-spacing: -0.025em; font-weight: 600; text-wrap: balance; }
       p { margin: 0; color: var(--muted); font-size: 0.875rem; line-height: 1.6; }
       .actions { display: grid; justify-items: start; gap: 4px; margin-top: 16px; }
-      a { display: inline-flex; align-items: center; min-height: 44px; color: var(--muted); font-size: 0.875rem; text-underline-offset: 3px; }
+      a { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; color: var(--muted); font-size: 0.875rem; text-underline-offset: 3px; }
+      a svg { width: 16px; height: 16px; flex-shrink: 0; }
       a:hover { color: var(--ink); }
       form { margin: 0; }
       button { min-height: 44px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: var(--accent-ink); cursor: pointer; font: inherit; font-size: 0.875rem; font-weight: 600; padding: 8px 12px; }
@@ -143,7 +145,12 @@ function invitationErrorResponse({ errorCode, token }: { errorCode?: string; tok
           </form>`
               : ""
           }
-          <a href="/">Back to Wallie</a>
+          <a href="/">
+            <svg aria-hidden="true" viewBox="0 0 16 16" fill="none">
+              <path d="${ARROW_LEFT_PATH}" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span>Back to Wallie</span>
+          </a>
         </div>
       </section>
     </main>

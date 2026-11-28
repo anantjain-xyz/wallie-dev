@@ -102,10 +102,11 @@ export default async function ScorerDetailPage({
           description={`${factoryLabel} · ${scorer.slug}${factory.status === "archived" ? " · Read only — archived factory" : !canEdit ? " · Only factory managers can publish" : ""}`}
           eyebrow={
             <ScorerDraftLink
+              back
               className="hover:text-foreground"
               href={workspaceScorersPath(workspaceSlug, factoryQuery)}
             >
-              ← Scorers
+              Scorers
             </ScorerDraftLink>
           }
           eyebrowAsPlain

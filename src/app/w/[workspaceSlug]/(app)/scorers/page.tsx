@@ -108,6 +108,7 @@ async function ScorersPage({
             actionsRightOnDesktop
             eyebrow={
               <ScorerDraftLink
+                back
                 className="underline underline-offset-4"
                 href={`${workspaceScorersPath(workspaceSlug, draftQuery)}#new-scorer`}
               >

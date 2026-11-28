@@ -36,7 +36,7 @@ type PageHeaderProps = {
   eyebrow?: ReactNode;
   /**
    * When true, eyebrow renders without uppercase/tracking treatment. Useful when
-   * the eyebrow is a "← Back" link that should read naturally.
+   * the eyebrow is a back link that should read naturally.
    */
   eyebrowAsPlain?: boolean;
   title: ReactNode;

@@ -11,6 +11,7 @@ import {
   AlertDialogContent,
   AlertDialogFooter,
 } from "@/components/ui/alert-dialog";
+import { BackLink } from "@/components/ui/back-link";
 import {
   FactoryEditorRequestError,
   type EditorDiagnostic,
@@ -744,12 +745,12 @@ export function WorkflowEditor({
   return (
     <div className="mx-auto grid w-full min-w-0 max-w-6xl gap-5 px-4 py-6 sm:px-6">
       <header className="grid gap-3 border-b border-border pb-4">
-        <Link
+        <BackLink
           className="w-fit text-sm text-muted underline underline-offset-4"
           href={workspaceWorkflowsPath(workspaceSlug, { factory: factoryId })}
         >
           All workflows
-        </Link>
+        </BackLink>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h1 ref={editorTitle} tabIndex={-1} className="type-page-title wrap-anywhere">

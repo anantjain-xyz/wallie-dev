@@ -85,7 +85,7 @@ describe("Runs list", () => {
       />,
     );
     expect(screen.getByRole("heading", { name: "Runs", level: 1 })).toBeVisible();
-    expect(screen.queryByRole("link", { name: "← Sessions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Sessions" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "View sessions" })).toHaveAttribute(
       "href",
       `/w/acme/sessions?factory=${FACTORY_ID}`,

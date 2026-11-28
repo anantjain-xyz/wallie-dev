@@ -3,6 +3,7 @@ import Form from "next/form";
 import Link from "next/link";
 
 import { TimeDisplay } from "@/components/shared/time-display";
+import { BackLink } from "@/components/ui/back-link";
 import {
   MetadataItem,
   MetadataList,
@@ -181,18 +182,18 @@ export function MemoryPageView({
         {!detail && !list ? (
           <div className="ui-sheet space-y-3 p-4 sm:p-5">
             <p className="type-secondary text-muted">The requested memory is unavailable.</p>
-            <Link className="ui-button" href={listPath}>
+            <BackLink className="ui-button" href={listPath}>
               Back to memory
-            </Link>
+            </BackLink>
           </div>
         ) : detail ? (
           <>
             <PageSection
               title={detail.memory.title ?? "Forgotten memory"}
               actions={
-                <Link className="ui-button" href={listPath}>
+                <BackLink className="ui-button" href={listPath}>
                   All memory
-                </Link>
+                </BackLink>
               }
             >
               <div className="ui-sheet min-w-0 space-y-4 p-4 sm:p-5">
@@ -498,9 +499,9 @@ export function MemoryPageView({
                       ) : list.proposalAvailability === "access-required" ? (
                         <p>
                           Factory manager access is required to open this proposal.{" "}
-                          <Link className="underline underline-offset-4" href={listPath}>
+                          <BackLink className="underline underline-offset-4" href={listPath}>
                             Back to memory
-                          </Link>
+                          </BackLink>
                         </p>
                       ) : (
                         <p>This proposal is unavailable or was already imported. {browseRuns}</p>

@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { scopeFactoryIndex } from "@/components/app-shell/workspace-factory-page.server";
+import { BackLink } from "@/components/ui/back-link";
 import { PAGE_HEADER_TITLE_CLASS, PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { FactoryAuthoringFocus } from "@/features/factories/factory-authoring-focus";
 import {
@@ -60,12 +61,12 @@ async function AgentsPage({
             actionsRightOnDesktop
             description="Creates an unpublished prompt revision."
             eyebrow={
-              <Link
+              <BackLink
                 className="underline underline-offset-4"
                 href={`${workspaceAgentsPath(workspaceSlug, { ...directoryQuery, after })}#new-agent`}
               >
                 Back to agents
-              </Link>
+              </BackLink>
             }
             eyebrowAsPlain
             title={

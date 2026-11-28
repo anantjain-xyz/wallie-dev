@@ -17,6 +17,7 @@ export default async function NotFoundPage() {
           notFound
           description="Check which account you’re signed in with, or ask the person who shared the link for an invitation or an updated link."
           returnHref="/recovery"
+          returnIsBack={false}
           returnLabel="Get help"
           actions={
             <form action="/auth/signout" method="post">

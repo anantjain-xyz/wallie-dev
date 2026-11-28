@@ -5,6 +5,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 
+import { BackLink } from "@/components/ui/back-link";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { BenchmarkComparisonExports } from "@/features/factory-benchmarks/benchmark-comparison-exports";
 import { BenchmarkComparisonFrontier } from "@/features/factory-benchmarks/benchmark-comparison-frontier";
@@ -231,15 +232,15 @@ export default async function BenchmarkComparisonPage({
         title="Comparison results"
         description={`${comparison.suite.name} · Revision ${comparison.suite.revisionNumber}`}
         eyebrow={
-          <Link
+          <BackLink
             className="hover:text-foreground"
             href={workspaceBenchmarkSuitePath(workspaceSlug, suiteId, {
               factory: factory.id,
               revision: comparison.suite.revisionId,
             })}
           >
-            ← Benchmark suite
-          </Link>
+            Benchmark suite
+          </BackLink>
         }
         eyebrowAsPlain
         actionsRightOnDesktop

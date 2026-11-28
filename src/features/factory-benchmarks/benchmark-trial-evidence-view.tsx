@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import Link from "next/link";
 
+import { BackLink } from "@/components/ui/back-link";
 import {
   MetadataItem,
   MetadataList,
@@ -115,9 +115,9 @@ export function BenchmarkTrialEvidenceView({
       : "No accepted output.";
   const transcriptEndpoint = `${endpoint}/transcript`;
   const backLink = (
-    <Link className="hover:text-foreground" href={comparisonHref} prefetch={false}>
-      <span aria-hidden="true">← </span>Back to trial results
-    </Link>
+    <BackLink className="hover:text-foreground" href={comparisonHref} prefetch={false}>
+      Back to trial results
+    </BackLink>
   );
 
   return (

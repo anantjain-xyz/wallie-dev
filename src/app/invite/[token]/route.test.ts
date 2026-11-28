@@ -120,6 +120,8 @@ describe("GET /invite/[token]", () => {
     expect(html).not.toContain("new@example.com");
     expect(html).not.toContain("wrong@example.com");
     expect(html).toContain('href="/"');
+    expect(html).toContain('<svg aria-hidden="true" viewBox="0 0 16 16"');
+    expect(html).toContain("<span>Back to Wallie</span>");
   });
   it.each([
     ["expired", 410, "Ask the person who invited you to send a new link."],
