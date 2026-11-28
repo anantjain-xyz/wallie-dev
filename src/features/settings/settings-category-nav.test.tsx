@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -12,7 +12,7 @@ import {
   resolveSettingsHashRoute,
   SettingsCategoryNav,
 } from "@/features/settings/settings-category-nav";
-import { SETTINGS_CATEGORY_LINKS } from "@/features/settings/settings-categories";
+import type { SettingsCategory } from "@/features/settings/settings-categories";
 import {
   PersonalSettingsNavigation,
   useBlockPersonalSettings,
@@ -115,24 +115,46 @@ function FactoryEditorGuard({ busy, dirty }: { busy: boolean; dirty: boolean }) 
   return null;
 }
 
+function NavWithSections({
+  category,
+  canManage = true,
+  sections,
+  hidden = false,
+}: {
+  category: SettingsCategory;
+  canManage?: boolean;
+  sections: readonly string[];
+  hidden?: boolean;
+}) {
+  return (
+    <>
+      <SettingsCategoryNav activeCategory={category} canManage={canManage} workspaceSlug="acme" />
+      <div hidden={hidden} id="settings-sections">
+        {sections.map((id) => (
+          <section id={id} key={id} />
+        ))}
+      </div>
+    </>
+  );
+}
+
 describe("SettingsCategoryNav hash routing", () => {
-  it("groups workspace operations separately from Personal settings", () => {
-    expect(SETTINGS_CATEGORY_LINKS.map((category) => category.id)).toEqual([
-      "integrations",
-      "workspace",
-      "advanced",
-      "personal",
-    ]);
-    const { getByRole } = render(
+  it("keeps the labeled navigation and four peer categories without a visible caption", () => {
+    const { getByRole, queryByText } = render(
       <SettingsCategoryNav activeCategory="advanced" canManage workspaceSlug="acme" />,
     );
-    expect(getByRole("list", { name: "Workspace settings" })).toHaveTextContent(
+    const nav = within(getByRole("navigation", { name: "Settings categories" }));
+    expect(queryByText("Workspace settings", { exact: true })).not.toBeInTheDocument();
+    expect(nav.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "Integrations",
+      "Workspace",
       "Usage & retention",
-    );
-    expect(getByRole("list", { name: "Workspace settings" })).not.toHaveTextContent("Personal");
-    expect(getByRole("link", { name: /^Personal$/ })).toHaveAttribute(
-      "href",
-      "/w/acme/settings?category=personal",
+      "Personal",
+    ]);
+    expect(nav.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual(
+      ["integrations", "workspace", "advanced", "personal"].map(
+        (category) => `/w/acme/settings?category=${category}`,
+      ),
     );
   });
 
@@ -240,25 +262,8 @@ describe("SettingsCategoryNav hash routing", () => {
 
   it("keeps links in one desktop submenu that opens on demand on mobile", () => {
     searchParams = new URLSearchParams("category=integrations");
-    const { getByRole } = render(
-      <SettingsCategoryNav activeCategory="integrations" canManage workspaceSlug="acme" />,
-    );
+    const { getByRole } = render(<NavWithSections category="integrations" sections={["github"]} />);
 
-    const links = [
-      ["GitHub", "#github"],
-      ["Repositories", "#repository"],
-      ["Factory connectors", "#connector-resources"],
-      ["Default factory", "#factory-configuration"],
-      ["Pipeline", "#pipeline"],
-      ["Linear", "#linear"],
-      ["Sandbox connections", "#sandbox"],
-      ["Workspace secrets", "#workspace-secrets"],
-      ["Agent runtime", "#runtime"],
-      ["Verify setup", "#verify"],
-    ];
-    for (const [name, href] of links) {
-      expect(getByRole("link", { name })).toHaveAttribute("href", href);
-    }
     const submenu = getByRole("link", { name: "GitHub" }).closest("ul");
     const jump = getByRole("button", { name: "Jump to a section" });
     expect(submenu).toHaveClass("hidden", "lg:block", "border-l");
@@ -269,12 +274,10 @@ describe("SettingsCategoryNav hash routing", () => {
     expect(submenu).not.toHaveClass("hidden");
   });
 
-  it("highlights only the active subsection, not its parent category", async () => {
+  it("distinguishes the current location from its parent category", async () => {
     searchParams = new URLSearchParams("category=workspace");
     window.history.replaceState(null, "", "/w/acme/settings?category=workspace#workspace");
-    const { container } = render(
-      <SettingsCategoryNav activeCategory="workspace" canManage workspaceSlug="acme" />,
-    );
+    const { container } = render(<NavWithSections category="workspace" sections={["workspace"]} />);
 
     const category = container.querySelector('a[href="/w/acme/settings?category=workspace"]');
     const subsection = container.querySelector('a[href="#workspace"]');
@@ -289,48 +292,118 @@ describe("SettingsCategoryNav hash routing", () => {
 
   it.each([
     {
-      category: "workspace" as const,
+      category: "integrations" as const,
+      parent: "Integrations",
       links: [
-        ["General", "#workspace"],
-        ["Members", "#members"],
-        ["OAuth clients", "#oauth-clients"],
-        ["OAuth connections", "#workspace-oauth-connections"],
-        ["Danger zone", "#danger-zone"],
+        ["GitHub", "github"],
+        ["Repositories", "repository"],
+        ["Linear", "linear"],
+        ["Sandbox connections", "sandbox"],
+        ["Workspace secrets", "workspace-secrets"],
+        ["Factory connectors", "connector-resources"],
+        ["Default factory", "factory-configuration"],
+        ["Pipeline", "pipeline"],
+        ["Agent runtime", "runtime"],
+        ["Verify setup", "verify"],
+      ],
+    },
+    {
+      category: "workspace" as const,
+      parent: "Workspace",
+      links: [
+        ["General", "workspace"],
+        ["Factories", "factories"],
+        ["Members", "members"],
+        ["OAuth clients", "oauth-clients"],
+        ["OAuth connections", "workspace-oauth-connections"],
+        ["Danger zone", "danger-zone"],
       ],
     },
     {
       category: "advanced" as const,
+      parent: "Usage & retention",
       links: [
-        ["Usage", "#usage"],
-        ["Retention and exports", "#run-history"],
-        ["Maintenance", "#maintenance"],
-        ["Rate limits", "#rate-limits"],
+        ["Usage", "usage"],
+        ["Retention and exports", "run-history"],
+        ["Maintenance", "maintenance"],
+        ["Rate limits", "rate-limits"],
       ],
     },
     {
       category: "personal" as const,
+      parent: "Personal",
       links: [
-        ["Profile", "#profile"],
-        ["Provider access", "#provider-access"],
-        ["Connected clients", "#connected-clients"],
+        ["Profile", "profile"],
+        ["Provider access", "provider-access"],
+        ["Connected clients", "connected-clients"],
       ],
     },
-  ])("renders the $category section links as a submenu", ({ category, links }) => {
+  ])("nests only the $category outline inside its active parent", ({ category, parent, links }) => {
     searchParams = new URLSearchParams(`category=${category}`);
     const { getByRole } = render(
-      <SettingsCategoryNav activeCategory={category} canManage workspaceSlug="acme" />,
+      <NavWithSections category={category} sections={links.map(([, id]) => id)} />,
+    );
+    const nav = within(getByRole("navigation", { name: "Settings categories" }));
+    const activeLink = nav.getByRole("link", { name: parent });
+    expect(activeLink).toHaveAttribute("aria-current", "page");
+    const item = activeLink.closest("li")!;
+    const submenu = within(item).getByRole("list");
+    expect(submenu.parentElement?.closest("li")).toBe(item);
+    expect(nav.getAllByRole("list")).toHaveLength(2);
+    expect(within(item).getByRole("button", { name: "Jump to a section" })).toHaveAttribute(
+      "aria-controls",
+      submenu.id,
     );
 
-    for (const [name, href] of links) {
-      expect(getByRole("link", { name })).toHaveAttribute("href", href);
+    const children = within(submenu).getAllByRole("link");
+    expect(children.map((link) => link.textContent)).toEqual(links.map(([name]) => name));
+    expect(children.map((link) => link.getAttribute("href"))).toEqual(
+      links.map(([, id]) => `#${id}`),
+    );
+    for (const sibling of item.parentElement!.children) {
+      if (sibling !== item) expect(sibling.querySelector("ul")).toBeNull();
     }
+  });
+
+  it("omits an empty outline and tracks sections as they mount, hide, and disappear", async () => {
+    searchParams = new URLSearchParams("category=personal");
+    const { getByRole, rerender } = render(<NavWithSections category="personal" sections={[]} />);
+    const nav = within(getByRole("navigation", { name: "Settings categories" }));
+    const jump = () => nav.queryByRole("button", { name: "Jump to a section" });
+
+    expect(jump()).not.toBeInTheDocument();
+    expect(nav.getAllByRole("list")).toHaveLength(1);
+
+    rerender(<NavWithSections category="personal" sections={["profile", "unexpected"]} />);
+    const profile = await nav.findByRole("link", { name: "Profile" });
+    expect(profile).toHaveAttribute("href", "#profile");
+    expect(nav.queryByRole("link", { name: "Provider access" })).not.toBeInTheDocument();
+    expect(jump()).toBeInTheDocument();
+
+    rerender(<NavWithSections category="personal" hidden sections={["profile"]} />);
+    await waitFor(() => expect(jump()).not.toBeInTheDocument());
+
+    rerender(<NavWithSections category="personal" sections={["connected-clients"]} />);
+    await expect(nav.findByRole("link", { name: "Connected clients" })).resolves.toHaveAttribute(
+      "href",
+      "#connected-clients",
+    );
+    expect(profile).not.toBeInTheDocument();
+
+    rerender(<NavWithSections category="personal" sections={[]} />);
+    await waitFor(() => expect(nav.getAllByRole("list")).toHaveLength(1));
   });
 
   it("retargets legacy personal links and hides workspace OAuth actions from members", () => {
     searchParams = new URLSearchParams("category=workspace");
-    const { queryByRole } = render(
-      <SettingsCategoryNav activeCategory="workspace" canManage={false} workspaceSlug="acme" />,
+    const { getByRole, queryByRole } = render(
+      <NavWithSections
+        canManage={false}
+        category="workspace"
+        sections={["factories", "oauth-clients", "workspace-oauth-connections"]}
+      />,
     );
+    expect(getByRole("link", { name: "Factories" })).toHaveAttribute("href", "#factories");
     expect(queryByRole("link", { name: "OAuth clients" })).toBeNull();
     expect(queryByRole("link", { name: "OAuth connections" })).toBeNull();
     expect(queryByRole("link", { name: "Connected clients" })).toBeNull();
@@ -350,10 +423,15 @@ describe("SettingsCategoryNav hash routing", () => {
 
   it("hides retention and maintenance links for ordinary members", () => {
     searchParams = new URLSearchParams("category=advanced");
-    const { queryByRole } = render(
-      <SettingsCategoryNav activeCategory="advanced" canManage={false} workspaceSlug="acme" />,
+    const { getByRole, queryByRole } = render(
+      <NavWithSections
+        canManage={false}
+        category="advanced"
+        sections={["usage", "run-history", "maintenance"]}
+      />,
     );
 
+    expect(getByRole("link", { name: "Usage" })).toHaveAttribute("href", "#usage");
     expect(queryByRole("link", { name: "Maintenance" })).toBeNull();
     expect(queryByRole("link", { name: "Retention and exports" })).toBeNull();
   });
@@ -387,14 +465,18 @@ describe("SettingsCategoryNav hash routing", () => {
     const target = document.createElement("section");
     target.id = "maintenance";
     target.scrollIntoView = vi.fn();
-    document.body.appendChild(target);
+    await act(async () => {
+      document.body.appendChild(target);
+    });
 
     await waitFor(() => expect(target.scrollIntoView).toHaveBeenCalledWith({ block: "start" }));
     expect(document.querySelector('a[href="#maintenance"]')).toHaveAttribute(
       "aria-current",
       "location",
     );
-    target.remove();
+    await act(async () => {
+      target.remove();
+    });
   });
 
   it("focuses and scrolls to the real heading when a suspended section mounts", async () => {
@@ -406,11 +488,15 @@ describe("SettingsCategoryNav hash routing", () => {
     target.id = "pipeline";
     target.scrollIntoView = vi.fn();
     target.innerHTML = '<h3 data-settings-heading tabindex="-1">Pipeline</h3>';
-    document.body.appendChild(target);
+    await act(async () => {
+      document.body.appendChild(target);
+    });
 
     await waitFor(() => expect(target.scrollIntoView).toHaveBeenCalledWith({ block: "start" }));
     expect(target.querySelector("h3")).toHaveFocus();
-    target.remove();
+    await act(async () => {
+      target.remove();
+    });
   });
 
   it("routes hash-only Open actions to the matching category", async () => {

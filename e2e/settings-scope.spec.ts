@@ -80,10 +80,17 @@ test("legacy URLs keep their scope and mobile jump links focus the destination",
     "GitHub installation failed.",
   );
 
-  const jump = page.getByRole("button", { name: "Jump to a section" });
-  const link = page.getByRole("link", { name: "Factory connectors" });
+  const rail = page.getByRole("navigation", { name: "Settings categories" });
+  const parent = rail.getByRole("link", { name: "Integrations", exact: true });
+  const category = parent.locator("..");
+  const jump = category.getByRole("button", { name: "Jump to a section" });
+  const link = category.getByRole("link", { name: "Factory connectors" });
+  await expect(parent).toHaveAttribute("aria-current", "page");
   await expect(link).toBeHidden();
-  await jump.press("Enter");
+  await parent.focus();
+  await page.keyboard.press("Tab");
+  await expect(jump).toBeFocused();
+  await page.keyboard.press("Enter");
   await expect(jump).toHaveAttribute("aria-expanded", "true");
   await link.press("Enter");
   await expect(page.getByRole("heading", { name: "Connector resources" })).toBeFocused();
@@ -94,6 +101,26 @@ test("legacy URLs keep their scope and mobile jump links focus the destination",
   await expect(jump).toHaveAttribute("aria-expanded", "false");
   await page.keyboard.press("Tab");
   await expect(page.getByRole("combobox", { name: "Factory", exact: true })).toBeFocused();
+});
+
+test("an unavailable section is not linked from the outline", async ({ page }) => {
+  await page.goto("/dev/settings?state=error");
+  await expect(
+    page.getByRole("heading", { name: "Integration details unavailable" }),
+  ).toBeVisible();
+  const outline = page
+    .getByRole("navigation", { name: "Settings categories" })
+    .getByRole("link", { name: "Integrations", exact: true })
+    .locator("..")
+    .getByRole("list");
+  await expect(outline.getByRole("link", { name: "GitHub" })).toHaveAttribute("href", "#github");
+  await expect(outline.getByRole("link", { name: "Agent runtime" })).toHaveCount(0);
+
+  await page.getByRole("link", { name: "Restore fixture setup data" }).click();
+  await expect(outline.getByRole("link", { name: "Agent runtime" })).toHaveAttribute(
+    "href",
+    "#runtime",
+  );
 });
 
 test("both the canonical secrets destination and legacy alias focus Workspace secrets", async ({
