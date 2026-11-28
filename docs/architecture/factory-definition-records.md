@@ -2,7 +2,7 @@
 
 Each workspace gets one default factory during workspace creation. The migration provisions a default factory for each existing workspace. A default factory can exist before any definition is active.
 
-Factories now carry a workspace-unique name/slug, explicit membership and an archived lifecycle. Existing sessions, pipelines and repositories are backfilled into the default factory; see [Factory scope and membership](factory-scope-and-membership.md) for access resolution, lifecycle and audited commands.
+Factories have a display name, a workspace-unique slug, explicit membership and an archived lifecycle. Existing sessions, pipelines and repositories are backfilled into the default factory; see [Factory scope and membership](factory-scope-and-membership.md) for access resolution, lifecycle and audited commands.
 
 | Record     | What it records                                                                                                                                                            |
 | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

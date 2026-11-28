@@ -1,4 +1,5 @@
 export const SETTINGS_CATEGORIES = ["integrations", "workspace", "advanced", "personal"] as const;
+export const FACTORY_ROW_ANCHOR_PREFIX = "factory-row-";
 
 export type SettingsCategory = (typeof SETTINGS_CATEGORIES)[number];
 

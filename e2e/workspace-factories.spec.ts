@@ -8,7 +8,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 
 import { signInViaMagicLink } from "./helpers/auth";
-import { selectDropdownOption } from "./helpers/select";
+import { openDropdownListbox, selectDropdownOption } from "./helpers/select";
 
 function localOrigin(value: string | undefined) {
   const url = value ? new URL(value) : null;
@@ -217,30 +217,35 @@ test("workspace factory creation preserves the default and lands in the returned
     await newFactory.press("Enter");
     const dialog = page.getByRole("dialog", { name: "New factory" });
     await expect(dialog).toHaveAccessibleDescription(/Northwind Studio/);
-    const name = dialog.getByRole("textbox", { name: "Factory name" });
-    const address = dialog.getByRole("textbox", { name: "Address" });
+    const name = dialog.getByRole("textbox", { name: "Display name" });
+    const slugInput = dialog.getByRole("textbox", { name: "Factory slug" });
     await expect(name).toBeFocused();
     await name.fill("Discard me");
-    await expect(address).toHaveValue("discard-me");
+    await expect(slugInput).toHaveValue("discard-me");
     await page.keyboard.press("Escape");
     await expect(newFactory).toBeFocused();
     await newFactory.press("Enter");
     await expect(name).toHaveValue("");
     await name.fill("Payments + Billing");
-    await expect(address).toHaveValue("payments-billing");
-    await address.fill(defaultFactory.slug);
-    await name.fill("Payments Lab");
-    await expect(address).toHaveValue(defaultFactory.slug);
+    await expect(slugInput).toHaveValue("payments-billing");
     const create = dialog.getByRole("button", { name: "Create factory" });
+    await slugInput.fill("Payments--Ops");
     await create.press("Enter");
-    await expect(dialog.getByRole("alert")).toContainText("That address is already used");
-    await expect(address).toHaveAccessibleDescription(/That address is already used/);
-    await expect(address).toBeFocused();
-    await expect(address).toHaveValue(defaultFactory.slug);
+    await expect(slugInput).toBeFocused();
+    await expect(slugInput).toHaveValue("Payments--Ops");
+    await expect(dialog.getByRole("alert")).toContainText("Use lowercase letters");
+    await slugInput.fill(defaultFactory.slug);
+    await name.fill("Payments Lab");
+    await expect(slugInput).toHaveValue(defaultFactory.slug);
+    await create.press("Enter");
+    await expect(dialog.getByRole("alert")).toContainText("That factory slug is already reserved");
+    await expect(slugInput).toHaveAccessibleDescription(/That factory slug is already reserved/);
+    await expect(slugInput).toBeFocused();
+    await expect(slugInput).toHaveValue(defaultFactory.slug);
     await expect(name).toHaveValue("Payments Lab");
-    await capture(page, info, "04-mobile-address-collision");
+    await capture(page, info, "04-mobile-slug-collision");
 
-    await address.fill("payments-ops");
+    await slugInput.fill("payments-ops");
     const created = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === factoryApi && response.request().method() === "POST",
@@ -361,7 +366,7 @@ test("workspace factory creation preserves the default and lands in the returned
       expect(committedStatus).toBe(201);
       await expect(error).toContainText("confirm creation", { timeout: 3000 });
       await expect(name).toHaveValue("Support Ops");
-      await expect(address).toHaveValue("support-ops");
+      await expect(slugInput).toHaveValue("support-ops");
       await expect(create).toHaveCount(0);
       await capture(page, info, "07-mobile-check-factories");
 
@@ -482,7 +487,7 @@ test("factory management changes only the selected factory and leaves workspace 
     const defaultFactory = await read(
       admin
         .from("factories")
-        .select("id,name")
+        .select("id,name,slug,is_default,status")
         .eq("workspace_id", workspace.id)
         .eq("is_default", true)
         .single(),
@@ -548,38 +553,130 @@ test("factory management changes only the selected factory and leaves workspace 
       .throwOnError();
 
     const directory = page.getByRole("list", { name: "Factories", exact: true });
-    const panel = page.locator("#factory-management");
+    const rows = directory.locator(":scope > li");
+    const panel = directory.locator('li > [role="region"]:not([hidden])');
+    const manage = (name: string) =>
+      rows.getByRole("button", { name: `Manage ${name}`, exact: true });
+    const close = (name: string) =>
+      rows.getByRole("button", { name: `Close ${name}`, exact: true });
+    const activePay = close("Payments Lab");
+    const displayName = panel.getByRole("textbox", { name: "Display name" });
+    const factorySlug = panel.getByRole("textbox", { name: "Factory slug" });
+    const saveName = panel.getByRole("button", { name: "Save name" });
+    const saveSlug = panel.getByRole("button", { name: "Save slug" });
+    const factoryApi = `/api/workspaces/${workspace.id}/factories`;
     const paymentApi = `/api/workspaces/${workspace.id}/factories/${payments.id}`;
+    const defaultApi = `${factoryApi}/${defaultFactory.id}`;
+    const readDefault = () =>
+      read(
+        admin
+          .from("factories")
+          .select("id,name,slug,is_default,status")
+          .eq("workspace_id", workspace.id)
+          .eq("is_default", true)
+          .single(),
+      );
     await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
     await page.setViewportSize({ width: 1440, height: 900 });
     await signInViaMagicLink(page, `${settings}#factories`, { baseURL: base, email: owner.email });
-    await expect(directory.getByRole("listitem")).toHaveCount(3);
+    await expect(rows).toHaveCount(3);
     await capture(page, info, "01-directory-desktop");
-    await directory.getByRole("link", { name: `Manage ${defaultFactory.name}` }).press("Enter");
-    await expect(panel.getByRole("heading", { name: defaultFactory.name })).toBeFocused();
+    const defaultTrigger = manage(defaultFactory.name);
+    await expect(defaultTrigger).toHaveAttribute("aria-expanded", "false");
+    await defaultTrigger.press("Enter");
+    const defaultClose = close(defaultFactory.name);
+    await expect(defaultClose).toBeFocused();
+    await expect(defaultClose).toHaveAttribute("aria-expanded", "true");
+    await expect(defaultClose).toHaveAttribute(
+      "aria-controls",
+      `factory-management-${defaultFactory.id}`,
+    );
+    await expect(rows.first().getByRole("region", { name: defaultFactory.name })).toBeVisible();
+    await expect(saveName).toBeEnabled();
     await expect(panel.getByRole("button", { name: "Archive factory" })).toHaveCount(0);
     await expect(panel.getByText("The workspace default cannot be archived.")).toBeVisible();
-    expect(
-      (
-        await page.request.patch(`/api/workspaces/${workspace.id}/factories/${defaultFactory.id}`, {
-          data: { action: "archive" },
-        })
-      ).status(),
-    ).toBe(422);
-    await panel.getByRole("link", { name: "Close factory management" }).press("Enter");
+    await displayName.fill("Studio Operations");
+    await saveName.click();
+    await expect(close("Studio Operations")).toBeVisible();
+    expect(await readDefault()).toEqual({ ...defaultFactory, name: "Studio Operations" });
+    await expect(factorySlug).toHaveValue(defaultFactory.slug);
+    await expect(factorySlug).toHaveAccessibleDescription(
+      /factory list API.*Links use the factory ID/,
+    );
+    await capture(page, info, "02-default-expanded-desktop");
+    expect((await page.request.patch(defaultApi, { data: { action: "archive" } })).status()).toBe(
+      422,
+    );
+
+    const v1Factories = `/api/v1/workspaces/${workspace.id}/factories`;
+    const v1Default = `${v1Factories}/${defaultFactory.id}/sessions`;
+    expect((await page.request.get(v1Default)).status()).toBe(401);
+    await factorySlug.fill("studio");
+    await saveSlug.click();
+    await expect(rows.first().getByText("studio", { exact: true })).toBeVisible();
+    expect(await readDefault()).toEqual({
+      ...defaultFactory,
+      name: "Studio Operations",
+      slug: "studio",
+    });
+    const scope = await page.request.get(factoryApi);
+    expect(scope.ok()).toBe(true);
+    expect((await scope.json()).factories).toContainEqual(
+      expect.objectContaining({ factoryId: defaultFactory.id, isDefault: true, slug: "studio" }),
+    );
+    expect((await page.request.get(v1Default)).status()).toBe(401);
+    expect((await page.request.get(`${v1Factories}/studio/sessions`)).status()).toBe(400);
+    const oldSlug = await page.request.post(factoryApi, {
+      data: { name: "Other factory", slug: defaultFactory.slug },
+    });
+    expect(oldSlug.status()).toBe(409);
+    expect(await oldSlug.json()).toMatchObject({ code: "factory_slug_taken" });
+
+    const sessionsPage = await page.context().newPage();
+    const sessionsPath = `/w/${slug}/sessions`;
+    for (const path of [sessionsPath, `${sessionsPath}?factory=${defaultFactory.id}`]) {
+      await sessionsPage.goto(path);
+      await expect(
+        sessionsPage.getByRole("combobox", { name: "Factory", exact: true }),
+      ).toHaveAttribute("data-value", defaultFactory.id);
+    }
+    await sessionsPage.close();
+
+    const managePayments = manage("Payments Lab");
+    await displayName.fill("Unsaved name");
+    const discardPrompt = page.waitForEvent("dialog").then(async (dialog) => {
+      const message = dialog.message();
+      await dialog.dismiss();
+      return message;
+    });
+    await managePayments.click();
+    expect(await discardPrompt).toBe("Discard unsaved changes to this factory?");
+    await expect(displayName).toHaveValue("Unsaved name");
+    await expect(close("Studio Operations")).toHaveAttribute("aria-expanded", "true");
+    page.once("dialog", (dialog) => dialog.accept());
+    await managePayments.press("Enter");
+    await expect(activePay).toBeFocused();
+    await expect(rows.nth(1).getByRole("region", { name: "Payments Lab" })).toBeVisible();
+    await expect(panel).toHaveCount(1);
+    await expect(panel.getByRole("textbox", { name: "Display name" })).toHaveValue("Payments Lab");
+    await activePay.press("Enter");
     await expect(panel).toHaveCount(0);
-    await expect(page.getByRole("heading", { name: "Factories", exact: true })).toBeFocused();
+    await expect(managePayments).toBeFocused();
+    await manage("Studio Operations").click();
+    await expect(displayName).toHaveValue("Studio Operations");
+    await close("Studio Operations").click();
+    await expect(manage("Studio Operations")).toBeFocused();
 
     await page.context().clearCookies();
     await signInViaMagicLink(page, managePath(payments.id.toUpperCase()), {
       baseURL: base,
       email: operator.email,
     });
-    await expect(panel.getByRole("heading", { name: "Payments Lab" })).toBeVisible();
+    await expect(activePay).toBeFocused();
+    await expect(rows.nth(1).getByRole("region", { name: "Payments Lab" })).toBeVisible();
     await expect(panel.getByRole("button", { name: "Archive factory" })).toBeVisible();
-    const managePayments = directory.getByRole("link", { name: "Manage Payments Lab" });
-    await expect(managePayments).toHaveAttribute("aria-current", "location");
-    await expect(directory.locator('[aria-current="location"]')).toHaveCount(1);
+    await expect(activePay).toHaveAttribute("aria-expanded", "true");
+    await expect(directory.locator('button[aria-expanded="true"]')).toHaveCount(1);
 
     const chunks = readdirSync(".next/static/chunks")
       .filter(
@@ -589,18 +686,36 @@ test("factory management changes only the selected factory and leaves workspace 
       )
       .map((file) => `**/_next/static/chunks/${file}`);
     expect(chunks.length).toBeGreaterThan(0);
-    for (const chunk of chunks) await page.route(chunk, (route) => route.abort());
+    let failDownloads!: () => void;
+    const downloads = new Promise<void>((resolve) => (failDownloads = resolve));
+    const requestedChunks: string[] = [];
+    for (const chunk of chunks) {
+      await page.route(chunk, async (route) => {
+        requestedChunks.push(route.request().url());
+        await downloads;
+        await route.abort();
+      });
+    }
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${settings}#factories`);
-    await managePayments.click();
+    await expect(rows).toHaveCount(3);
+    expect(requestedChunks).toEqual([]);
+    try {
+      await managePayments.click();
+      await expect(panel.getByRole("status")).toHaveText("Loading factory management…");
+    } finally {
+      failDownloads();
+    }
     await expect(panel.getByRole("alert")).toHaveText("Could not load factory management.");
-    await expect(directory.getByRole("listitem")).toHaveCount(3);
-    await expect(managePayments).toHaveAttribute("aria-current", "location");
+    expect(requestedChunks.length).toBeGreaterThan(0);
+    await expect(rows).toHaveCount(3);
+    await expect(activePay).toHaveAttribute("aria-expanded", "true");
     await directory.evaluate((element) => element.scrollIntoView({ block: "start" }));
     await capture(page, info, "05-management-load-failure-mobile");
-    await panel.getByRole("link", { name: "Close factory management" }).click();
+    await activePay.click();
     await expect(panel).toHaveCount(0);
     await expect(directory).toBeVisible();
+    await expect(managePayments).toBeFocused();
     await managePayments.click();
     await expect(panel.getByRole("alert")).toHaveText("Could not load factory management.");
     for (const chunk of chunks) await page.unroute(chunk);
@@ -610,7 +725,7 @@ test("factory management changes only the selected factory and leaves workspace 
     );
     await panel.getByRole("button", { name: "Reload Settings" }).click();
     expect(new URL((await reloaded).url()).searchParams.get("manageFactory")).toBe(payments.id);
-    await expect(panel.getByRole("textbox", { name: "Factory name" })).toHaveValue("Payments Lab");
+    await expect(displayName).toHaveValue("Payments Lab");
 
     await page.context().clearCookies();
     await page.setViewportSize({ width: 320, height: 760 });
@@ -618,37 +733,84 @@ test("factory management changes only the selected factory and leaves workspace 
       baseURL: base,
       email: manager.email,
     });
-    await expect(directory.getByRole("link", { name: "Manage Support Lab" })).toHaveCount(0);
-    await expect(
-      directory.getByRole("link", { name: `Manage ${defaultFactory.name}` }),
-    ).toHaveCount(0);
-    await expect(managePayments).toHaveAttribute("href", managePath(payments.id));
+    await expect(manage("Support Lab")).toHaveCount(0);
+    await expect(manage("Studio Operations")).toHaveCount(0);
     await managePayments.press("Enter");
-    await expect(panel.getByRole("heading", { name: "Payments Lab" })).toBeFocused();
+    await expect(activePay).toBeFocused();
+    await expect(page).toHaveURL(
+      (url) => url.pathname + url.search + url.hash === managePath(payments.id),
+    );
     const memberSelect = panel.getByRole("combobox", { name: "Workspace member" });
     const roleSelect = panel.getByRole("combobox", { name: "Factory role" });
     const saveAccess = panel.getByRole("button", { name: "Save access" });
-    const rename = panel.getByRole("textbox", { name: "Factory name" });
+    const accessFields = () =>
+      memberSelect.evaluate((input: HTMLInputElement) => {
+        if (!input.form) throw new Error("Missing factory access form.");
+        const fields = new FormData(input.form);
+        return {
+          memberId: fields.get("memberId"),
+          role: fields.get("role"),
+          valid: input.form.checkValidity(),
+        };
+      });
     expect(
       await memberSelect.evaluate((field) => field.getBoundingClientRect().width),
     ).toBeGreaterThan(180);
-    await expect(memberSelect.getByRole("option", { name: /Alex Reed|Sam Quinn/ })).toHaveCount(0);
-    await memberSelect.selectOption(manager.memberId);
-    await expect(roleSelect.locator('option[value="member"]')).toBeDisabled();
+    const workspaceOptions = page.getByRole("listbox", { name: "Workspace members" });
+    async function chooseMember(query: string) {
+      await memberSelect.fill(query);
+      await expect(workspaceOptions.getByRole("option")).toHaveCount(1);
+      await memberSelect.press("ArrowDown");
+      await memberSelect.press("Enter");
+      await expect(memberSelect).toHaveValue(new RegExp(query, "i"));
+    }
+    await memberSelect.click();
+    await expect(workspaceOptions.getByRole("option", { name: /Alex Reed|Sam Quinn/ })).toHaveCount(
+      0,
+    );
+    await chooseMember("Mika Lane");
+    const roles = await openDropdownListbox(roleSelect);
+    await expect(roles.getByRole("option", { name: "Member", exact: true })).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expect(roleSelect).toBeFocused();
     await expect(
       panel.getByRole("button", { name: /Remove factory access for Mika Lane/ }),
     ).toHaveCount(0);
-    await memberSelect.selectOption(member.memberId);
+    await memberSelect.fill("Unlisted member");
+    await expect(page.getByText("No matching members.")).toBeVisible();
+    expect(await accessFields()).toEqual({ memberId: "", role: "member", valid: false });
+    await memberSelect.press("Enter");
+    await expect(saveAccess).toBeDisabled();
+    await chooseMember("Jo Rivera");
+    expect(await accessFields()).toEqual({
+      memberId: member.memberId,
+      role: "member",
+      valid: true,
+    });
+    await page.route(
+      `**${paymentApi}/members`,
+      (route) => route.fulfill({ json: { error: "The member changed. Try again." }, status: 409 }),
+      { times: 1 },
+    );
+    await saveAccess.click();
+    await expect(panel.getByRole("alert")).toHaveText("The member changed. Try again.");
+    expect(await accessFields()).toEqual({
+      memberId: member.memberId,
+      role: "member",
+      valid: true,
+    });
     await saveAccess.click();
     const memberRow = panel.getByRole("listitem").filter({ hasText: "Jo Rivera" });
     await expect(memberRow.getByText("Member", { exact: true })).toBeVisible();
-    await memberSelect.selectOption(member.memberId);
-    await roleSelect.selectOption("manager");
+    await expect(memberSelect).toBeFocused();
+    await expect(memberSelect).toHaveValue("");
+    await expect(memberSelect).toHaveAttribute("aria-expanded", "false");
+    await chooseMember("Jo Rivera");
+    await selectDropdownOption(roleSelect, "manager");
     await saveAccess.click();
     await expect(memberRow.getByText("Manager", { exact: true })).toBeVisible();
 
-    const saveName = panel.getByRole("button", { name: "Save name" });
-    await rename.fill("Payments Operations");
+    await displayName.fill("Payments Operations");
     await panel.scrollIntoViewIfNeeded();
     await capture(page, info, "06-rename-draft-mobile");
     await admin
@@ -663,17 +825,17 @@ test("factory management changes only the selected factory and leaves workspace 
     await expect(panel.getByRole("alert")).toHaveText(
       "The factory name changed. Reload and try again.",
     );
-    await expect(rename).toHaveValue("Payments Operations");
+    await expect(displayName).toHaveValue("Payments Operations");
     await expect(saveName).toHaveCount(0);
     await panel.scrollIntoViewIfNeeded();
     await capture(page, info, "07-rename-conflict-mobile");
     await panel.getByRole("button", { name: "Discard draft and reload" }).click();
-    await expect(panel.getByRole("heading", { name: "Payments Studio" })).toBeVisible();
-    await expect(rename).toHaveValue("Payments Studio");
-    await expect(saveName).toBeDisabled();
-    await rename.fill("Payments Operations");
+    await expect(close("Payments Studio")).toBeVisible();
+    await expect(displayName).toHaveValue("Payments Studio");
+    await expect(saveName).toBeEnabled();
+    await displayName.fill("Payments Operations");
     await saveName.click();
-    await expect(panel.getByRole("heading", { name: "Payments Operations" })).toBeVisible();
+    await expect(close("Payments Operations")).toBeVisible();
     await expect(
       directory.getByRole("listitem").filter({ hasText: "Payments Operations" }),
     ).toContainText("payments");
@@ -686,6 +848,32 @@ test("factory management changes only the selected factory and leaves workspace 
         })
       ).status(),
     ).toBe(409);
+
+    await factorySlug.fill("default");
+    await saveSlug.click();
+    await expect(panel.getByRole("alert")).toContainText("already reserved");
+    await expect(factorySlug).toHaveValue("default");
+    await expect(factorySlug).toBeFocused();
+    await factorySlug.fill("payments-operations");
+    await admin
+      .rpc("set_factory_slug", {
+        ...operatorArgs,
+        p_expected_slug: "payments",
+        p_factory_id: payments.id,
+        p_slug: "payments-team",
+      })
+      .throwOnError();
+    await saveSlug.click();
+    await expect(panel.getByRole("alert")).toHaveText(
+      "The factory slug changed. Reload and try again.",
+    );
+    await expect(factorySlug).toHaveValue("payments-operations");
+    await panel.getByRole("button", { name: "Discard draft and reload" }).click();
+    await expect(factorySlug).toHaveValue("payments-team");
+    await factorySlug.fill("payments-operations");
+    await saveSlug.click();
+    await expect(rows.getByText("payments-operations", { exact: true })).toBeVisible();
+    await expect(displayName).toHaveValue("Payments Operations");
 
     const remove = memberRow.getByRole("button", { name: /Remove factory access for Jo Rivera/ });
     await remove.press("Enter");
@@ -725,7 +913,8 @@ test("factory management changes only the selected factory and leaves workspace 
     await expect(restore).toBeVisible();
     await expect(restore).toBeFocused();
     await expect(memberSelect).toHaveCount(0);
-    await expect(rename).toHaveCount(0);
+    await expect(displayName).toHaveCount(0);
+    await expect(factorySlug).toHaveCount(0);
     expect(
       (
         await page.request.post(`${paymentApi}/members`, {
@@ -736,11 +925,28 @@ test("factory management changes only the selected factory and leaves workspace 
     await restore.press("Enter");
     const restoration = page.getByRole("alertdialog", { name: "Restore Payments Operations?" });
     await restoration.getByRole("button", { name: "Restore factory" }).click();
-    await expect(rename).toHaveValue("Payments Operations");
+    await expect(displayName).toHaveValue("Payments Operations");
+    await expect(factorySlug).toHaveValue("payments-operations");
     await expect(archive).toBeFocused();
     await expect(panel.getByRole("listitem").filter({ hasText: "Mika Lane" })).toBeVisible();
     await page.setViewportSize({ width: 390, height: 844 });
     await capture(page, info, "04-restored-mobile");
+    await page.reload();
+    await expect(memberSelect).toBeVisible();
+    await page.getByRole("button", { name: "Switch to dark mode", exact: true }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await memberSelect.evaluate((element) => element.scrollIntoView({ block: "center" }));
+    await memberSelect.fill("Jo Rivera");
+    await expect(workspaceOptions.getByRole("option", { name: /Jo Rivera/ })).toBeVisible();
+    await capture(page, info, "08-member-search-dark-mobile");
+    await memberSelect.press("ArrowDown");
+    await memberSelect.press("Enter");
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await directory.evaluate((element) => element.scrollIntoView({ block: "start" }));
+    await openDropdownListbox(roleSelect);
+    await capture(page, info, "09-factory-role-dark-desktop");
+    await page.keyboard.press("Escape");
+    await memberSelect.fill("");
 
     await admin
       .rpc("grant_factory_membership", {
@@ -753,11 +959,9 @@ test("factory management changes only the selected factory and leaves workspace 
     await page.context().clearCookies();
     await signInViaMagicLink(page, managePath(payments.id), { baseURL: base, email: member.email });
     await expect(directory.getByText("Payments Operations", { exact: true })).toBeVisible();
-    await expect(directory.getByRole("link", { name: "Manage Payments Operations" })).toHaveCount(
-      0,
-    );
+    await expect(manage("Payments Operations")).toHaveCount(0);
     await expect(
-      panel.getByRole("heading", { name: "Factory management unavailable" }),
+      page.getByRole("heading", { name: "Factory management unavailable" }),
     ).toBeVisible();
     await expect(panel.getByRole("combobox")).toHaveCount(0);
     expect(
@@ -771,6 +975,10 @@ test("factory management changes only the selected factory and leaves workspace 
         })
       ).status(),
     ).toBe(403);
+    const deniedSlug = await page.request.patch(paymentApi, {
+      data: { action: "set-slug", expectedSlug: "payments-operations", slug: "denied" },
+    });
+    expect(deniedSlug.status()).toBe(403);
   } catch (error) {
     workflowFailed = true;
     throw error;

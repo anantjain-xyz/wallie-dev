@@ -22,7 +22,6 @@ vi.mock("@/features/factories/factory-options-data", () => ({
   loadWorkspaceFactoryOptions: mocks.options,
 }));
 vi.mock("@/features/settings/islands/factory-management-island", () => ({
-  FactoryManagementCloseLink: () => <a href="#factories">Close</a>,
   WorkspaceFactoryManagementIsland: mocks.panel,
 }));
 vi.mock("@/features/settings/workspace-settings-load-error", () => ({
@@ -106,7 +105,6 @@ describe("factory management membership reads", () => {
       mockMembershipReads(table);
       const html = await renderManagement();
       expect(html).toContain("Could not load factory management.");
-      expect(html).toContain("Close");
       expect(mocks.panel).not.toHaveBeenCalled();
     },
   );

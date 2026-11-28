@@ -37,45 +37,45 @@ afterEach(() => {
 });
 
 describe("New factory dialog", () => {
-  it("suggests a canonical address, respects edits, and returns focus on cancel", async () => {
+  it("suggests a canonical slug, respects edits, and returns focus on cancel", async () => {
     const { user, trigger } = setup();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     trigger.focus();
     await user.keyboard("{Enter}");
     const dialog = await screen.findByRole("dialog", { name: "New factory" });
-    const name = within(dialog).getByRole("textbox", { name: "Factory name" });
-    const address = within(dialog).getByRole("textbox", { name: "Address" });
+    const name = within(dialog).getByRole("textbox", { name: "Display name" });
+    const slugInput = within(dialog).getByRole("textbox", { name: "Factory slug" });
     expect(dialog).toHaveAccessibleDescription(/Northwind/);
     expect(name).toHaveFocus();
     await user.type(name, "Billing + Payments");
-    expect(address).toHaveValue("billing-payments");
-    await user.clear(address);
-    await user.type(address, "billing-team");
+    expect(slugInput).toHaveValue("billing-payments");
+    await user.clear(slugInput);
+    await user.type(slugInput, "billing-team");
     await user.type(name, " Internal");
-    expect(address).toHaveValue("billing-team");
+    expect(slugInput).toHaveValue("billing-team");
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(trigger).toHaveFocus());
     await user.click(trigger);
-    expect(screen.getByRole("textbox", { name: "Factory name" })).toHaveValue("");
-    expect(screen.getByRole("textbox", { name: "Address" })).toHaveValue("");
+    expect(screen.getByRole("textbox", { name: "Display name" })).toHaveValue("");
+    expect(screen.getByRole("textbox", { name: "Factory slug" })).toHaveValue("");
   });
 
-  it("validates the edited address instead of silently replacing it", async () => {
+  it("validates the edited slug instead of silently replacing it", async () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
     const { user, trigger } = setup();
     await user.click(trigger);
-    await user.type(await screen.findByRole("textbox", { name: "Factory name" }), "Payments");
-    const address = screen.getByRole("textbox", { name: "Address" });
-    await user.clear(address);
-    await user.type(address, "Payments--Team");
+    await user.type(await screen.findByRole("textbox", { name: "Display name" }), "Payments");
+    const slugInput = screen.getByRole("textbox", { name: "Factory slug" });
+    await user.clear(slugInput);
+    await user.type(slugInput, "Payments--Team");
     await user.click(screen.getByRole("button", { name: "Create factory" }));
     expect(within(screen.getByRole("dialog")).getByRole("alert")).toHaveTextContent(
       "Use lowercase letters",
     );
-    expect(address).toHaveValue("Payments--Team");
-    expect(address).toHaveAttribute("aria-invalid", "true");
-    expect(address).toHaveFocus();
+    expect(slugInput).toHaveValue("Payments--Team");
+    expect(slugInput).toHaveAttribute("aria-invalid", "true");
+    expect(slugInput).toHaveFocus();
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -88,8 +88,8 @@ describe("New factory dialog", () => {
     vi.stubGlobal("fetch", fetch);
     const { user, trigger } = setup();
     await user.click(trigger);
-    const name = await screen.findByRole("textbox", { name: "Factory name" });
-    const address = screen.getByRole("textbox", { name: "Address" });
+    const name = await screen.findByRole("textbox", { name: "Display name" });
+    const slugInput = screen.getByRole("textbox", { name: "Factory slug" });
     await user.type(name, "Default");
     await user.click(screen.getByRole("button", { name: "Create factory" }));
     expect(screen.getByRole("button", { name: "Creating…" })).toBeDisabled();
@@ -101,16 +101,16 @@ describe("New factory dialog", () => {
 
     await act(async () => finish(Response.json({ code: FACTORY_SLUG_TAKEN }, { status: 409 })));
     expect(within(screen.getByRole("dialog")).getByRole("alert")).toHaveTextContent(
-      "That address is already used",
+      "That factory slug is already reserved",
     );
-    expect(address).toHaveValue("default");
-    expect(address).toHaveFocus();
+    expect(slugInput).toHaveValue("default");
+    expect(slugInput).toHaveFocus();
     expect(name).toHaveValue("Default");
     expect(push).not.toHaveBeenCalled();
     expect(refresh).not.toHaveBeenCalled();
 
-    await user.clear(address);
-    await user.type(address, "internal");
+    await user.clear(slugInput);
+    await user.type(slugInput, "internal");
     await user.click(screen.getByRole("button", { name: "Create factory" }));
     expect(JSON.parse(fetch.mock.calls[1]?.[1].body)).toEqual({
       name: "Default",
@@ -142,13 +142,13 @@ describe("New factory dialog", () => {
     const { user, trigger } = setup();
     await user.click(trigger);
     const dialog = within(await screen.findByRole("dialog"));
-    const name = dialog.getByRole("textbox", { name: "Factory name" });
-    const address = dialog.getByRole("textbox", { name: "Address" });
+    const name = dialog.getByRole("textbox", { name: "Display name" });
+    const slugInput = dialog.getByRole("textbox", { name: "Factory slug" });
     await user.type(name, "Support Ops");
     await user.click(dialog.getByRole("button", { name: "Create factory" }));
     expect(dialog.getByRole("alert")).toHaveTextContent("Couldn’t confirm creation");
     expect(name).toHaveValue("Support Ops");
-    expect(address).toHaveValue("support-ops");
+    expect(slugInput).toHaveValue("support-ops");
     expect(dialog.queryByRole("button", { name: "Create factory" })).not.toBeInTheDocument();
 
     await user.click(dialog.getByRole("button", { name: "Check factories" }));

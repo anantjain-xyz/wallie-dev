@@ -1,14 +1,9 @@
 import "server-only";
 
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
-import {
-  FactoryManagementCloseLink,
-  WorkspaceFactoryManagementIsland,
-} from "@/features/settings/islands/factory-management-island";
-import { Section } from "@/features/settings/settings-ui";
+import { WorkspaceFactoryManagementIsland } from "@/features/settings/islands/factory-management-island";
 import { WorkspaceSettingsLoadError } from "@/features/settings/workspace-settings-load-error";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
-import { workspaceSettingsPath } from "@/lib/routes";
 import type { Tables } from "@/lib/supabase/database.types";
 
 export type FactoryManagementMember = {
@@ -46,22 +41,12 @@ export async function WorkspaceFactoryManagement({
     loadAuthenticatedWorkspaceContext(workspaceSlug),
     loadWorkspaceFactoryOptions(workspaceSlug),
   ]);
-  const close = (
-    <FactoryManagementCloseLink
-      href={`${workspaceSettingsPath(workspaceSlug, { category: "workspace" })}#factories`}
-    />
-  );
   const factory = options.find(({ canManage, id }) => canManage && id === factoryId);
   if (!factory) {
     return (
-      <Section
-        actions={close}
-        anchorId="factory-management"
-        heading="h3"
-        title="Factory management unavailable"
-      >
-        <p className="type-secondary text-muted">You need manager access to this factory.</p>
-      </Section>
+      <p className="type-secondary text-muted" role="status">
+        Factory management unavailable. You need manager access to this factory.
+      </p>
     );
   }
 
@@ -96,11 +81,7 @@ export async function WorkspaceFactoryManagement({
     ),
   ]).catch(() => null);
   if (!membership) {
-    return (
-      <Section actions={close} anchorId="factory-management" heading="h3" title={factory.name}>
-        <WorkspaceSettingsLoadError label="factory management" />
-      </Section>
-    );
+    return <WorkspaceSettingsLoadError label="factory management" />;
   }
 
   const [grants, workspaceMembers] = membership;
@@ -118,19 +99,11 @@ export async function WorkspaceFactoryManagement({
     }))
     .sort((left, right) => left.label.localeCompare(right.label));
   return (
-    <Section
-      actions={close}
-      anchorId="factory-management"
-      className="ui-sheet p-4 sm:p-5"
-      heading="h3"
-      title={factory.name}
-    >
-      <WorkspaceFactoryManagementIsland
-        key={factory.id}
-        factory={factory}
-        members={members}
-        workspaceId={workspace.id}
-      />
-    </Section>
+    <WorkspaceFactoryManagementIsland
+      key={factory.id}
+      factory={factory}
+      members={members}
+      workspaceId={workspace.id}
+    />
   );
 }

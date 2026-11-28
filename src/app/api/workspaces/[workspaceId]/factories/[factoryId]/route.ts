@@ -1,11 +1,17 @@
 import { z } from "zod";
 
 import {
+  FACTORY_SLUG_CHANGED,
+  FACTORY_SLUG_TAKEN,
+  FACTORY_SLUG_TAKEN_MESSAGE,
+} from "@/lib/factories/contracts";
+import {
   archiveAdditionalFactory,
   factoryErrorStatus,
   factoryManagementCommandSchema,
   renameFactory,
   restoreFactory,
+  setFactorySlug,
 } from "@/lib/factories/scope";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
@@ -30,7 +36,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
   const command = factoryManagementCommandSchema.safeParse(await request.json().catch(() => null));
   if (!command.success) {
-    return errorResponse("Use a rename, archive, or restore command.", 400);
+    return errorResponse("Use a rename, set-slug, archive, or restore command.", 400);
   }
 
   try {
@@ -60,11 +66,39 @@ export async function PATCH(request: Request, { params }: RouteContext) {
           },
           { headers },
         );
+      case "set-slug":
+        return Response.json(
+          {
+            factory: await setFactorySlug(admin, {
+              ...input,
+              expectedSlug: command.data.expectedSlug,
+              slug: command.data.slug,
+            }),
+          },
+          { headers },
+        );
     }
   } catch (error) {
     const code = (error as { code?: string } | null)?.code;
     const action = command.data.action;
     const status = factoryErrorStatus(code);
+    if (action === "set-slug") {
+      if (code === "23505" || code === "PT409") {
+        return Response.json(
+          code === "23505"
+            ? { code: FACTORY_SLUG_TAKEN, error: FACTORY_SLUG_TAKEN_MESSAGE }
+            : {
+                code: FACTORY_SLUG_CHANGED,
+                error: "The factory slug changed. Reload and try again.",
+              },
+          { status, headers },
+        );
+      }
+      if (code === "P0011") {
+        return errorResponse("Restore the factory before editing its slug.", status);
+      }
+      return errorResponse("Could not save the factory slug.", status);
+    }
     if (code === "PT409" && action === "rename") {
       return errorResponse("The factory name changed. Reload and try again.", status);
     }

@@ -3,7 +3,11 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
-import { FACTORY_NAME_MAX_LENGTH, factoryNameSchema } from "@/lib/factories/contracts";
+import {
+  FACTORY_NAME_MAX_LENGTH,
+  factoryNameSchema,
+  factorySlugSchema,
+} from "@/lib/factories/contracts";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
 type Client = SupabaseClient<Database>;
@@ -19,6 +23,13 @@ export const factoryManagementCommandSchema = z.discriminatedUnion("action", [
       action: z.literal("rename"),
       expectedName: z.string().min(1).max(FACTORY_NAME_MAX_LENGTH),
       name: factoryNameSchema,
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("set-slug"),
+      expectedSlug: factorySlugSchema,
+      slug: factorySlugSchema,
     })
     .strict(),
 ]);
@@ -158,6 +169,29 @@ export async function renameFactory(
     })
     .single();
   if (error || !data) throw error ?? new Error("Factory rename returned no record.");
+  return mapFactoryRecord(data);
+}
+
+export async function setFactorySlug(
+  admin: Client,
+  input: {
+    workspaceId: string;
+    factoryId: string;
+    actorUserId: string;
+    expectedSlug: string;
+    slug: string;
+  },
+): Promise<FactoryRecord> {
+  const { data, error } = await admin
+    .rpc("set_factory_slug", {
+      p_workspace_id: input.workspaceId,
+      p_factory_id: input.factoryId,
+      p_actor_user_id: input.actorUserId,
+      p_expected_slug: input.expectedSlug,
+      p_slug: input.slug,
+    })
+    .single();
+  if (error || !data) throw error ?? new Error("Factory slug update returned no record.");
   return mapFactoryRecord(data);
 }
 

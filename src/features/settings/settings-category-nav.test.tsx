@@ -65,6 +65,12 @@ beforeEach(() => {
 });
 
 describe("resolveSettingsHashRoute", () => {
+  it("resolves a closed factory row in Workspace Settings", () => {
+    const anchor = "factory-row-00000000-0000-4000-8000-000000000001";
+    expect(resolveSettingsHashRoute(`#${anchor}`)).toEqual({ anchor, category: "workspace" });
+    expect(resolveSettingsHashRoute("#factory-row-invalid")).toBeNull();
+  });
+
   it("maps legacy aliases to their current category and anchor", () => {
     expect(resolveSettingsHashRoute("#coding-agent")).toEqual({
       anchor: "runtime",

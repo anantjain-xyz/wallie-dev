@@ -146,7 +146,7 @@ describe("factory scope route", () => {
     expect(response.status).toBe(409);
     expect(await response.json()).toEqual({
       code: "factory_slug_taken",
-      error: "That factory slug is already used in this workspace.",
+      error: "That factory slug is already reserved in this workspace. Choose another.",
     });
   });
 });

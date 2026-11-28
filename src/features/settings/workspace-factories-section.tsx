@@ -7,6 +7,11 @@ import {
 } from "@/features/factories/factory-selection";
 import { CreateFactoryDialog } from "@/features/settings/create-factory-dialog";
 import type { SettingsInitialData } from "@/features/settings/data";
+import {
+  FactoryManagementNavigation,
+  FactoryManagementToggle,
+} from "@/features/settings/islands/factory-management-navigation";
+import { FACTORY_ROW_ANCHOR_PREFIX } from "@/features/settings/settings-categories";
 import { Section } from "@/features/settings/settings-ui";
 import { WorkspaceSettingsLoadError } from "@/features/settings/workspace-settings-load-error";
 import { WorkspaceFactoryManagement } from "@/features/settings/workspace-factory-management";
@@ -47,6 +52,9 @@ async function FactoryList({
           requestedSetup,
         );
   const setup = selection?.kind === "factory" ? selection.factory : null;
+  const managementId = options.find(
+    ({ canManage, id }) => canManage && id === requestedManagement,
+  )?.id;
 
   return (
     <div className="space-y-4">
@@ -94,65 +102,108 @@ async function FactoryList({
           </p>
         </Section>
       ) : null}
-      {options.length > 0 ? (
-        <ul aria-label="Factories" className="ui-sheet divide-y divide-border">
-          {options.map((factory) => (
-            <li
-              className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3"
-              key={factory.id}
+      {requestedManagement && !managementId ? (
+        <Section
+          actions={
+            <Link
+              className="ui-button min-h-11 sm:min-h-9"
+              href={`${workspaceSettingsPath(workspaceSlug, { category: "workspace", factory: setup?.id })}#factories`}
+              prefetch={false}
             >
-              <div className="min-w-0">
-                <p className="type-body font-medium [overflow-wrap:anywhere]">{factory.name}</p>
-                <code className="type-code text-muted [overflow-wrap:anywhere]" translate="no">
-                  {factory.slug}
-                </code>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {factory.isDefault ? (
-                  <span className="rounded border border-border px-2 py-0.5 type-label text-muted">
-                    Default
-                  </span>
-                ) : null}
-                {factory.status === "archived" ? (
-                  <span className="rounded border border-border px-2 py-0.5 type-label text-muted">
-                    Archived
-                  </span>
-                ) : null}
-                {factory.canManage ? (
-                  <Link
-                    aria-current={requestedManagement === factory.id ? "location" : undefined}
-                    aria-label={`Manage ${factory.name}`}
-                    className="ui-button min-h-11 sm:min-h-9"
-                    href={`${workspaceSettingsPath(workspaceSlug, { category: "workspace", manageFactory: factory.id })}#factory-management`}
-                    prefetch={false}
-                    scroll={false}
+              Close
+            </Link>
+          }
+          anchorId="factory-management"
+          heading="h3"
+          title="Factory management unavailable"
+        >
+          <p className="type-secondary text-muted">You need manager access to this factory.</p>
+        </Section>
+      ) : null}
+      {options.length > 0 ? (
+        <FactoryManagementNavigation>
+          <ul aria-label="Factories" className="ui-sheet divide-y divide-border">
+            {options.map((factory) => {
+              const open = managementId === factory.id;
+              const panelId = `factory-management-${factory.id}`;
+              const nameId = `factory-name-${factory.id}`;
+              return (
+                <li className="min-w-0" key={factory.id}>
+                  <div
+                    className="grid scroll-mt-4 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3"
+                    id={open ? "factory-management" : `${FACTORY_ROW_ANCHOR_PREFIX}${factory.id}`}
                   >
-                    Manage
-                  </Link>
-                ) : null}
-              </div>
-            </li>
-          ))}
-        </ul>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <p className="type-body font-medium [overflow-wrap:anywhere]" id={nameId}>
+                          {factory.name}
+                        </p>
+                        {factory.isDefault ? (
+                          <span className="rounded border border-border px-2 py-0.5 type-label text-muted">
+                            Default
+                          </span>
+                        ) : null}
+                        {factory.status === "archived" ? (
+                          <span className="rounded border border-border px-2 py-0.5 type-label text-muted">
+                            Archived
+                          </span>
+                        ) : null}
+                      </div>
+                      {factory.slug ? (
+                        <>
+                          <span className="sr-only">Factory slug: </span>
+                          <code
+                            className="type-code text-muted [overflow-wrap:anywhere]"
+                            translate="no"
+                          >
+                            {factory.slug}
+                          </code>
+                        </>
+                      ) : null}
+                    </div>
+                    {factory.canManage ? (
+                      <FactoryManagementToggle
+                        factoryId={factory.id}
+                        factoryName={factory.name}
+                        open={open}
+                        panelId={panelId}
+                      />
+                    ) : null}
+                  </div>
+                  {factory.canManage ? (
+                    <div
+                      aria-labelledby={nameId}
+                      className="border-t border-border px-4 py-4 sm:py-5"
+                      hidden={!open}
+                      id={panelId}
+                      role="region"
+                    >
+                      {open ? (
+                        <Suspense
+                          fallback={
+                            <p className="type-secondary text-muted" role="status">
+                              Loading factory management…
+                            </p>
+                          }
+                        >
+                          <WorkspaceFactoryManagement
+                            factoryId={factory.id}
+                            workspaceSlug={workspaceSlug}
+                          />
+                        </Suspense>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </FactoryManagementNavigation>
       ) : (
         <p className="ui-sheet px-4 py-3 type-secondary text-muted">
           No factories are available to your account.
         </p>
       )}
-      {requestedManagement ? (
-        <Suspense
-          fallback={
-            <p className="type-secondary text-muted" role="status">
-              Loading factory management…
-            </p>
-          }
-        >
-          <WorkspaceFactoryManagement
-            factoryId={requestedManagement}
-            workspaceSlug={workspaceSlug}
-          />
-        </Suspense>
-      ) : null}
     </div>
   );
 }
