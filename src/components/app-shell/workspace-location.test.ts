@@ -53,9 +53,10 @@ describe("workspace location contract", () => {
     ["/analytics", "insights", "Analytics", false],
     ["/improvements/proposal", "insights", "Failures", true],
     ["/benchmarks/suite/comparisons/comparison/trials/trial", "insights", "Benchmarks", true],
-    ["/settings/factory-definition", "factory", "Configuration", false],
-    ["/settings/automations", "factory", "Configuration", false],
-    ["/memory", "factory", "Knowledge", false],
+    ["/settings/factory-definition", "factory", undefined, false],
+    ["/settings/automations", "factory", undefined, false],
+    ["/context", "factory", undefined, false],
+    ["/memory", "factory", undefined, false],
     ["/settings", "settings", undefined, false],
   ])("keeps the legacy address %s in its new section", (suffix, destination, tab, detail) => {
     expect(matchWorkspaceLocation(`/w/${slug}${suffix}`, slug)).toMatchObject({

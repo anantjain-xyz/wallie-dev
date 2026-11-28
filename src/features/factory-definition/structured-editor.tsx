@@ -764,7 +764,7 @@ export function StructuredFactoryDefinitionEditor({
             id="definition-field-stages"
             tabIndex={-1}
           >
-            Pipeline
+            Stages
           </h3>
           <button
             className="ui-button"

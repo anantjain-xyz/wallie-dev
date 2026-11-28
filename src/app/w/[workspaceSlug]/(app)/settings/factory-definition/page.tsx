@@ -58,7 +58,7 @@ export default scopeFactoryIndex(FactoryDefinitionPage, {
   picker: "guarded",
   resetParams: FACTORY_DEFINITION_RESET_PARAMS,
   route: "definition",
-  title: "Factory definition",
+  title: "Pipeline",
 });
 
 async function FactoryDefinitionPage({
@@ -108,7 +108,7 @@ async function FactoryDefinitionPage({
             selectedValue="unavailable"
           />
         }
-        title="Factory definition"
+        title="Pipeline"
         workspaceSlug={workspaceSlug}
       />
     );
@@ -127,7 +127,7 @@ async function FactoryDefinitionPage({
             selectedValue="unavailable"
           />
         }
-        title="Factory definition"
+        title="Pipeline"
         workspaceSlug={workspaceSlug}
       />
     );

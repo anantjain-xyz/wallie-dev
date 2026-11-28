@@ -102,20 +102,17 @@ const routes = {
     path: workspaceFactoryDefinitionPath,
     mode: "single",
     access: "active",
-    tab: "Configuration",
   },
   agents: {
     destination: "factory",
     path: workspaceAgentsPath,
     mode: "single",
-    tab: "Configuration",
     details: true,
   },
   scorers: {
     destination: "factory",
     path: workspaceScorersPath,
     mode: "single",
-    tab: "Configuration",
     details: true,
   },
   automations: {
@@ -123,14 +120,12 @@ const routes = {
     path: workspaceAutomationPreviewPath,
     mode: "single",
     access: "active-managed",
-    tab: "Configuration",
   },
   workflows: {
     destination: "factory",
     path: workspaceWorkflowsPath,
     mode: "single",
     access: "active-managed",
-    tab: "Configuration",
     details: true,
   },
   governance: {
@@ -138,21 +133,18 @@ const routes = {
     path: workspaceGovernancePath,
     mode: "single",
     access: "managed",
-    tab: "Configuration",
   },
   context: {
     destination: "factory",
     path: workspaceContextPath,
     mode: "single",
     access: "managed",
-    tab: "Knowledge",
   },
   memory: {
     destination: "factory",
     path: workspaceMemoryPath,
     mode: "single",
     access: "managed",
-    tab: "Knowledge",
   },
   settings: { destination: "settings", path: workspaceSettingsPath, mode: "global", details: true },
 } as const satisfies Record<string, LocationRule>;

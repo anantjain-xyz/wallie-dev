@@ -946,7 +946,7 @@ export function FactoryDefinitionEditor({
   return (
     <PageContainer className="max-w-[1240px]">
       <PageHeader
-        title="Factory definition"
+        title="Pipeline"
         description={factorySelection ? undefined : factoryName}
         actions={
           <>

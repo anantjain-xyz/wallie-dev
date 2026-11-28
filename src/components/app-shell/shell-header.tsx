@@ -251,18 +251,6 @@ function isShellNavIntentPointer(pointerType: string) {
   return pointerType === "" || pointerType === "mouse" || pointerType === "pen";
 }
 
-function subscribeToLocationHash(change: () => void) {
-  const { navigation } = window as Window & { navigation?: EventTarget };
-  navigation?.addEventListener("currententrychange", change);
-  window.addEventListener("hashchange", change);
-  window.addEventListener("popstate", change);
-  return () => {
-    navigation?.removeEventListener("currententrychange", change);
-    window.removeEventListener("hashchange", change);
-    window.removeEventListener("popstate", change);
-  };
-}
-
 /** Prefetch a top-level workspace route once per `(currentPathname, targetHref)` pair on user intent. */
 export function prefetchShellNavHrefOnIntent(
   router: { prefetch?: (href: string, options?: { kind: PrefetchKind }) => void },
@@ -302,11 +290,6 @@ export function ShellHeader({
   const searchParams = useSearchParams();
   const returnValues = searchParams?.getAll("returnTo");
   const returnParam = returnValues?.length === 1 ? returnValues[0] : null;
-  const locationHash = useSyncExternalStore(
-    subscribeToLocationHash,
-    () => window.location.hash,
-    () => "",
-  );
   const router = useRouter();
   const { startNavigation } = useOptionalRouteProgress();
   const shouldResumeSetup = shouldShowOnboardingResumeCta(onboarding);
@@ -341,7 +324,6 @@ export function ShellHeader({
   const { activeItem, sections, sidebar, tabs } = getGroupedWorkspaceNavigation({
     canManageDefinition: canManageFactoryDefinition,
     factories: currentFactories,
-    hash: locationHash,
     pathname,
     preferRememberedScope: globalScope,
     returnTo: returnParam,
@@ -780,7 +762,12 @@ export function ShellHeader({
           >
             <RouteEntrance pathname={pathname} />
             {activeItem ? (
-              <WorkspaceGroupTabs label={activeItem.label} tabs={tabs} sections={sections} />
+              <WorkspaceGroupTabs
+                label={activeItem.label}
+                sections={sections}
+                singleRow={activeItem.id === "factory"}
+                tabs={tabs}
+              />
             ) : null}
             {visibleCreationPreview?.content}
             <div
