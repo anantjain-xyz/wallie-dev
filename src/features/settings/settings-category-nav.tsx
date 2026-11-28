@@ -134,6 +134,12 @@ const managerAnchors = new Set([
   "workspace-oauth-connections",
 ]);
 
+const mobileWorkspacePlacement = {
+  integrations: { column: "col-start-1", outline: "max-lg:justify-self-start" },
+  workspace: { column: "col-start-2", outline: "max-lg:justify-self-center" },
+  advanced: { column: "col-start-3", outline: "max-lg:justify-self-end" },
+};
+
 function settingsCategorySubmenu(category: SettingsCategory, canManage: boolean) {
   const submenu = SETTINGS_CATEGORY_SUBMENUS[category];
   return canManage ? submenu : submenu.filter((item) => !managerAnchors.has(item.id));
@@ -148,6 +154,7 @@ export function SettingsCategoryNav({
   const router = useRouter();
   const search = useSearchParams().toString();
   const [activeAnchor, setActiveAnchor] = useState<string | null>(null);
+  const [mountedSectionIds, setMountedSectionIds] = useState<string[]>([]);
   const { stopNavigation: stopPersonalNavigation, warning: personalWarning } =
     usePersonalSettingsGuard();
   const { blocked: factoryNavigationBlocked, confirmLeave: confirmFactoryLeave } =
@@ -161,7 +168,9 @@ export function SettingsCategoryNav({
       : activeAnchor;
   const [jumpOpen, setJumpOpen] = useState(false);
   const jumpId = useId();
-  const workspaceLabelId = useId();
+  const outline = settingsCategorySubmenu(activeCategory, canManage).filter(({ id }) =>
+    mountedSectionIds.includes(id),
+  );
   const reachTarget = useCallback((target: HTMLElement) => {
     const heading = target.querySelector<HTMLElement>("[data-settings-heading]");
     heading?.focus({ preventScroll: true });
@@ -176,6 +185,8 @@ export function SettingsCategoryNav({
 
   useEffect(() => {
     const submenu = settingsCategorySubmenu(activeCategory, canManage);
+    const sections = document.getElementById("settings-sections") ?? document.body;
+    let mountedKey: string | undefined;
     let pending: { id: string; origin: Element | null } | null = null;
 
     function reachPendingHash() {
@@ -244,18 +255,28 @@ export function SettingsCategoryNav({
     const observedSections = new WeakSet<HTMLElement>();
 
     function observeMountedSections() {
+      const ids: string[] = [];
       for (const item of submenu) {
         const section = document.getElementById(item.id);
-        if (!section || observedSections.has(section)) continue;
+        if (!section || !sections.contains(section) || section.closest("[hidden]")) continue;
+        ids.push(item.id);
+        if (observedSections.has(section)) continue;
         observedSections.add(section);
         observer?.observe(section);
+      }
+      const key = ids.join(" ");
+      if (key !== mountedKey) {
+        mountedKey = key;
+        setMountedSectionIds((current) => (current.join(" ") === key ? current : ids));
       }
       reachPendingHash();
     }
 
     observeMountedSections();
     const mutationObserver = new MutationObserver(observeMountedSections);
-    mutationObserver.observe(document.getElementById("settings-sections") ?? document.body, {
+    mutationObserver.observe(sections, {
+      attributes: true,
+      attributeFilter: ["hidden"],
       childList: true,
       subtree: true,
     });
@@ -270,88 +291,108 @@ export function SettingsCategoryNav({
   return (
     <nav
       aria-label="Settings categories"
-      className="self-start lg:sticky lg:top-[calc(var(--shell-scroll-padding)+16px)] lg:max-h-[calc(100dvh-var(--shell-scroll-padding)-16px)] lg:overflow-y-auto"
+      className="min-w-0 self-start lg:sticky lg:top-[calc(var(--shell-scroll-padding)+16px)] lg:max-h-[calc(100dvh-var(--shell-scroll-padding)-16px)] lg:overflow-y-auto lg:p-1"
     >
-      <p className="mb-1 px-2 type-label text-muted lg:px-3" id={workspaceLabelId}>
-        Workspace settings
-      </p>
-      <ul aria-labelledby={workspaceLabelId} className="grid grid-cols-3 gap-1 lg:flex lg:flex-col">
-        {SETTINGS_CATEGORY_LINKS.filter(({ id }) => id !== "personal").map((category) => {
+      <ul className="grid grid-cols-3 items-start gap-x-1.5 lg:flex lg:flex-col lg:items-stretch lg:gap-1.5">
+        {SETTINGS_CATEGORY_LINKS.map((category) => {
           const isActive = category.id === activeCategory;
+          const hasOutline = isActive && outline.length > 0;
+          const placement =
+            category.id === "personal" ? null : mobileWorkspacePlacement[category.id];
+          const spansWorkspaceRow = placement && hasOutline;
           return (
-            <li className="min-w-0" key={category.id}>
+            <li
+              className={`min-w-0 ${
+                !placement
+                  ? "col-span-full row-start-3 mt-2 lg:mt-2.5"
+                  : spansWorkspaceRow
+                    ? "col-span-full row-span-2 row-start-1 grid grid-cols-subgrid grid-rows-subgrid max-lg:pointer-events-none lg:block"
+                    : `row-start-1 ${placement.column}`
+              }`}
+              key={category.id}
+            >
               <Link
                 aria-current={isActive ? "page" : undefined}
                 aria-disabled={factoryNavigationBlocked || undefined}
-                className="settings-anchor !block min-h-9 !px-2 text-center aria-[current=page]:bg-control-hover aria-[current=page]:text-foreground lg:!px-3 lg:text-left"
+                className={`settings-anchor min-h-11 touch-manipulation aria-[current=page]:bg-control-muted aria-[current=page]:font-semibold aria-[current=page]:text-foreground lg:min-h-9 ${
+                  placement
+                    ? "max-lg:h-full max-lg:justify-center max-lg:px-2 max-lg:text-center"
+                    : ""
+                } ${
+                  spansWorkspaceRow
+                    ? `${placement.column} row-start-1 pointer-events-auto max-lg:relative max-lg:after:absolute max-lg:after:inset-s-1/2 max-lg:after:top-full max-lg:after:h-1.5 max-lg:after:w-px max-lg:after:bg-border-strong`
+                    : ""
+                }`}
                 href={`/w/${workspaceSlug}/settings?category=${category.id}`}
                 onFocus={() => preloadSettingsCategory(category.id)}
                 onNavigate={(event) => {
-                  if (!confirmFactoryLeave()) event.preventDefault();
+                  if (
+                    (category.id === "personal" && stopPersonalNavigation()) ||
+                    !confirmFactoryLeave()
+                  ) {
+                    event.preventDefault();
+                  }
                 }}
                 onPointerEnter={() => preloadSettingsCategory(category.id)}
               >
                 {category.label}
               </Link>
+              {category.id === "personal" ? personalWarning : null}
+              {hasOutline ? (
+                <div
+                  className={`col-span-full mt-1.5 lg:mt-1 ${
+                    placement
+                      ? `row-start-2 pointer-events-auto max-lg:w-2/3 max-lg:min-w-[min(100%,12rem)] ${placement.outline}`
+                      : "max-lg:ml-2"
+                  }`}
+                >
+                  <button
+                    aria-controls={jumpId}
+                    aria-expanded={jumpOpen}
+                    className="settings-anchor min-h-11 w-full touch-manipulation bg-control-hover lg:hidden"
+                    onClick={() => setJumpOpen(!jumpOpen)}
+                    type="button"
+                  >
+                    Jump to a section
+                    <ChevronDownIcon className={jumpOpen ? "rotate-180" : undefined} />
+                  </button>
+                  <ul
+                    className={`${jumpOpen ? "block" : "hidden lg:block"} ml-2 border-l border-border pl-1.5`}
+                    id={jumpId}
+                  >
+                    {outline.map((item) => (
+                      <li key={item.id}>
+                        <a
+                          aria-current={item.id === activeSection ? "location" : undefined}
+                          className={`settings-anchor min-h-11 touch-manipulation lg:min-h-0 ${item.id === activeSection ? "settings-anchor-active" : ""}`}
+                          href={`#${item.id}`}
+                          onClick={(event) => {
+                            if (
+                              event.button === 0 &&
+                              !event.metaKey &&
+                              !event.ctrlKey &&
+                              !event.shiftKey &&
+                              !event.altKey &&
+                              window.location.hash === event.currentTarget.hash
+                            ) {
+                              const target = document.getElementById(item.id);
+                              if (target) {
+                                event.preventDefault();
+                                reachTarget(target);
+                              }
+                            }
+                          }}
+                        >
+                          {item.label}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </li>
           );
         })}
-      </ul>
-      <Link
-        aria-current={activeCategory === "personal" ? "page" : undefined}
-        aria-disabled={factoryNavigationBlocked || undefined}
-        className="settings-anchor mt-2 min-h-9 aria-[current=page]:bg-control-hover aria-[current=page]:text-foreground"
-        href={`/w/${workspaceSlug}/settings?category=personal`}
-        onFocus={() => preloadSettingsCategory("personal")}
-        onNavigate={(event) => {
-          if (stopPersonalNavigation() || !confirmFactoryLeave()) event.preventDefault();
-        }}
-        onPointerEnter={() => preloadSettingsCategory("personal")}
-      >
-        Personal
-      </Link>
-      {personalWarning}
-      <button
-        aria-controls={jumpId}
-        aria-expanded={jumpOpen}
-        className="settings-anchor mt-2 min-h-9 w-full lg:hidden"
-        onClick={() => setJumpOpen(!jumpOpen)}
-        type="button"
-      >
-        Jump to a section
-        <ChevronDownIcon className={jumpOpen ? "rotate-180" : undefined} />
-      </button>
-      <ul
-        className={`${jumpOpen ? "block" : "hidden lg:block"} ml-3 border-l border-border pl-2 lg:mt-4`}
-        id={jumpId}
-      >
-        {settingsCategorySubmenu(activeCategory, canManage).map((item) => (
-          <li key={item.id}>
-            <a
-              aria-current={item.id === activeSection ? "location" : undefined}
-              className={`settings-anchor min-h-9 lg:min-h-0 ${item.id === activeSection ? "settings-anchor-active" : ""}`}
-              href={`#${item.id}`}
-              onClick={(event) => {
-                if (
-                  event.button === 0 &&
-                  !event.metaKey &&
-                  !event.ctrlKey &&
-                  !event.shiftKey &&
-                  !event.altKey &&
-                  window.location.hash === event.currentTarget.hash
-                ) {
-                  const target = document.getElementById(item.id);
-                  if (target) {
-                    event.preventDefault();
-                    reachTarget(target);
-                  }
-                }
-              }}
-            >
-              {item.label}
-            </a>
-          </li>
-        ))}
       </ul>
     </nav>
   );
