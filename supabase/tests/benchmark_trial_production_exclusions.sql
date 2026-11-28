@@ -173,7 +173,8 @@ select is((select page#>>'{sessions,0,id}' from exclusion_session_list), pg_temp
 select is(public.get_session_list_page('benchmark-exclusion-fixture', search_query => 'PrivateReplayCanary')->'sessions',
   '[]'::jsonb, 'full text search cannot find the trial title');
 
-create temp table exclusion_board as select public.get_pipeline_dashboard_page(pg_temp.exclusion_id(10)) as board;
+create temp table exclusion_board as
+select public.get_filtered_pipeline_dashboard_page(pg_temp.exclusion_id(10)) as board;
 select is((select jsonb_array_length(board->'lanes') from exclusion_board), 1,
   'a trial cannot make a nondefault pipeline lane visible');
 select is((select board#>>'{lanes,0,totalCount}' from exclusion_board), '1', 'pipeline counts exclude trials');

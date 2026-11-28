@@ -13963,17 +13963,6 @@ export type Database = {
           updated_at: string
         }[]
       }
-      get_pipeline_dashboard_page: {
-        Args: {
-          cursor_seen_ids?: string[]
-          page_limit?: number
-          target_factory_id?: string
-          target_pipeline_id?: string
-          target_stage_id?: string
-          target_workspace_id: string
-        }
-        Returns: Json
-      }
       get_run_context_inputs: {
         Args: {
           target_attempt_count: number

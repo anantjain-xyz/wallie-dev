@@ -87,7 +87,7 @@ $$;
 
 create temporary table pipeline_results as
 select
-  pg_temp.pipeline_board_lane(public.get_pipeline_dashboard_page(s.workspace_id)) as unfiltered,
+  pg_temp.pipeline_board_lane(public.get_filtered_pipeline_dashboard_page(s.workspace_id)) as unfiltered,
   pg_temp.pipeline_board_lane(public.get_filtered_pipeline_dashboard_page(s.workspace_id, search_query => 'FIX 100%')) as title,
   pg_temp.pipeline_board_lane(public.get_filtered_pipeline_dashboard_page(s.workspace_id, search_query => '  op-353 ')) as linear,
   pg_temp.pipeline_board_lane(public.get_filtered_pipeline_dashboard_page(s.workspace_id, search_query => '#1', status_filter => 'failed')) as number,
