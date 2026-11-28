@@ -9,44 +9,57 @@ import {
 
 export type SessionCreationScope =
   | { kind: "factory"; factory: SessionCreationFactory }
-  | { kind: "all" };
+  | { kind: "pinned"; factory: SessionCreationFactory }
+  | { kind: "all" }
+  | { kind: "unavailable" };
 
 export function useSessionCreationDestination(
   scope: SessionCreationScope | undefined,
   open: boolean,
   workspaceId: string,
+  contextKey?: string,
 ) {
+  const editable = scope !== undefined && scope.kind !== "pinned";
+  const seedId = scope?.kind === "factory" ? scope.factory.id.toLowerCase() : undefined;
+  const choiceContext = JSON.stringify([contextKey, scope?.kind, seedId]);
+  const loading = editable && open;
   const [catalog, setCatalog] = useState<
-    | { revision: number; factories: SessionCreationFactory[]; error?: never }
-    | { revision: number; factories?: never; error: string }
+    | { context: string; revision: number; factories: SessionCreationFactory[]; error?: never }
+    | { context: string; revision: number; factories?: never; error: string }
     | null
   >(null);
-  const [choice, setChoice] = useState<{ id: string; manual: boolean }>();
+  const [choice, setChoice] = useState<string>();
   const [revision, setRevision] = useState(0);
-  const loadAll = scope?.kind === "all" && open;
-  const [wasLoadingAll, setWasLoadingAll] = useState(loadAll);
-  if (loadAll !== wasLoadingAll) {
-    setWasLoadingAll(loadAll);
-    if (loadAll) setRevision((value) => value + 1);
+  const [previous, setPrevious] = useState({ choiceContext, loading });
+  if (previous.choiceContext !== choiceContext || previous.loading !== loading) {
+    setPrevious({ choiceContext, loading });
+    if (previous.choiceContext !== choiceContext) setChoice(undefined);
+    if (loading) setRevision((value) => value + 1);
   }
-  const currentCatalog = catalog?.revision === revision ? catalog : null;
+  const matchingCatalog = catalog?.context === choiceContext ? catalog : null;
+  const currentCatalog = matchingCatalog?.revision === revision ? matchingCatalog : null;
+  const factories = matchingCatalog?.factories;
+  const selectedId =
+    choice ??
+    seedId ??
+    (scope?.kind === "all" && factories?.length === 1 ? factories[0].id.toLowerCase() : undefined);
+  const factory =
+    scope?.kind === "pinned"
+      ? scope.factory
+      : factories?.find(({ id }) => id.toLowerCase() === selectedId);
 
   useEffect(() => {
-    if (!loadAll) return;
+    if (!loading) return;
     const controller = new AbortController();
     void loadSessionCreationFactoriesFromClient({ workspaceId, signal: controller.signal }).then(
       (factories) => {
         if (controller.signal.aborted) return;
-        setCatalog({ factories, revision });
-        if (factories.length === 1) {
-          setChoice((current) =>
-            current?.manual ? current : { id: factories[0].id, manual: false },
-          );
-        }
+        setCatalog({ context: choiceContext, factories, revision });
       },
       (error: unknown) => {
         if (!controller.signal.aborted) {
           setCatalog({
+            context: choiceContext,
             error: error instanceof Error ? error.message : "Couldn’t load factories.",
             revision,
           });
@@ -54,23 +67,19 @@ export function useSessionCreationDestination(
       },
     );
     return () => controller.abort();
-  }, [loadAll, revision, workspaceId]);
+  }, [choiceContext, loading, revision, workspaceId]);
 
   return {
     catalog: currentCatalog,
-    catalogIsCurrent: !loadAll || currentCatalog !== null,
+    catalogIsCurrent: !editable || currentCatalog !== null,
     choose(id: string) {
-      setChoice({ id, manual: true });
+      if (currentCatalog?.factories?.some((factory) => factory.id === id)) {
+        setChoice(id.toLowerCase());
+      }
     },
-    factory:
-      scope?.kind === "factory"
-        ? scope.factory
-        : scope?.kind === "all"
-          ? catalog?.factories?.find(
-              ({ id }, _index, factories) =>
-                choice?.id === id && (choice.manual || factories.length === 1),
-            )
-          : undefined,
+    editable,
+    factory,
+    unavailable: !factory && (scope?.kind === "unavailable" || Boolean(selectedId)),
     reload() {
       setRevision((value) => value + 1);
     },

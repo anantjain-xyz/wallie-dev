@@ -189,9 +189,10 @@ describe("scoped application shell", () => {
     router.query = new URLSearchParams("factory=platform");
     view.rerender(shell({ snapshot: previous }));
     expect(header().queryByRole("combobox", { name: "Factory" })).toBeNull();
+    expect(header().getByRole("button", { name: "New session" })).toBeDisabled();
     view.rerender(shell({ snapshot: receipt(), viewerId: "person-b" }));
     expect(header().queryByRole("combobox", { name: "Factory" })).toBeNull();
-    expect(header().queryByRole("button", { name: "New session" })).toBeNull();
+    expect(header().getByRole("button", { name: "New session" })).toBeDisabled();
   });
 
   it("shows the actual review factory without retargeting the action, even with an All inbox return", async () => {
@@ -203,7 +204,7 @@ describe("scoped application shell", () => {
     render(shell({ snapshot: receipt(factories, mobile.id) }));
     expect(await header().findByText("Mobile app")).toBeInTheDocument();
     expect(header().queryByRole("combobox", { name: "Factory" })).toBeNull();
-    expect(header().queryByRole("button", { name: "New session" })).toBeNull();
+    expect(header().getByRole("button", { name: "New session" })).toBeEnabled();
     expect(navigation().getByRole("link", { name: "Inbox" })).toHaveAttribute(
       "aria-current",
       "page",
@@ -224,13 +225,21 @@ describe("scoped application shell", () => {
     );
   });
 
-  it("keeps All read-only when none of its factories can receive a session", () => {
+  it("keeps All read-only when the authenticated creation catalog is empty", async () => {
+    const load = vi.fn(async () => Response.json({ factories: [] }));
+    vi.stubGlobal("fetch", load);
     router.query = new URLSearchParams("factory=all&create=1");
     const archived: FactorySelectionOption[] = [{ ...mobile, status: "archived" }];
     render(shell({ options: archived, snapshot: receipt(archived) }));
     expect(header().getByRole("combobox", { name: "Factory" })).toHaveTextContent("All factories");
-    expect(header().queryByRole("button", { name: "New session" })).toBeNull();
     expect(screen.queryByRole("dialog", { name: "Start a new session" })).toBeNull();
+    fireEvent.click(header().getByRole("button", { name: "New session" }));
+    expect(await screen.findByText(/can’t start a session in any active factory/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+    expect(load).toHaveBeenCalledExactlyOnceWith(
+      "/api/workspaces/workspace-a/session-factories",
+      expect.objectContaining({ cache: "no-store" }),
+    );
   });
 
   it("offers a factory-only picker with no All option", async () => {

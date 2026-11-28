@@ -3,6 +3,10 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  LazyCreateSessionDialog,
+  NewSessionButton,
+} from "@/components/app-shell/new-session-action";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { BackLink } from "@/components/ui/back-link";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
@@ -59,12 +63,18 @@ import type {
 import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
 import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
-import { workspaceBasePath, workspaceSessionsPath, workspaceSettingsPath } from "@/lib/routes";
+import {
+  workspaceBasePath,
+  workspaceOnboardingPath,
+  workspaceSessionsPath,
+  workspaceSettingsPath,
+} from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 type OnboardingPageClientProps = {
   initialData: WorkspaceOnboardingData;
   initialNow?: string;
+  viewerId?: string;
 };
 
 type EditableProfile = RepositoryProfileState;
@@ -300,12 +310,18 @@ export function scrollOnboardingSetupToTop(target?: {
   scrollTarget?.scrollTo({ behavior: "auto", left: 0, top: 0 });
 }
 
-export function OnboardingPageClient({ initialData, initialNow }: OnboardingPageClientProps) {
+export function OnboardingPageClient({
+  initialData,
+  initialNow,
+  viewerId,
+}: OnboardingPageClientProps) {
   const renderNow = initialNow ?? "1970-01-01T00:00:00.000Z";
   const router = useRouter();
   const { startNavigation } = useOptionalRouteProgress();
   const { pushToast } = useOptionalToast();
   const [data, setData] = useState(initialData);
+  const [sessionDialog, setSessionDialog] = useState<"closed" | "open" | null>(null);
+  const newSessionRef = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [runtimeCompletionState, setRuntimeCompletionState] = useState<RuntimeCompletionState>(
     () => {
@@ -347,6 +363,11 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
   const dirtyStep = data.canManage && stepDraft?.step === activeStep.id && stepDraft.dirty;
   const savingStep = stepDraft?.step === activeStep.id && stepDraft.pending;
   const navigationDisabled = isSaving || savingStep;
+  const sessionCreationBlocker = !isCompleted
+    ? "Complete workspace setup before starting a session."
+    : dirtyStep || navigationDisabled || leaveAction
+      ? "Finish editing setup before starting a session."
+      : undefined;
   const onStepDraftStateChange = useCallback(
     (draft: OnboardingStepDraftState) => setStepDraft({ ...draft, step: onboarding.currentStep }),
     [onboarding.currentStep],
@@ -829,9 +850,32 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
   return (
     <div className="min-h-[100svh] bg-sheet text-foreground">
       <div className="mx-auto w-full max-w-[1080px] pb-[max(2rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-5 sm:px-8 sm:pt-9">
-        <header className="mb-5 sm:mb-8">
-          <h1 className="type-page-title [overflow-wrap:anywhere]">Set up {data.workspace.name}</h1>
+        <header className="mb-5 flex items-center justify-between gap-3 sm:mb-8">
+          <h1 className="type-page-title min-w-0 [overflow-wrap:anywhere]">
+            Set up {data.workspace.name}
+          </h1>
+          {viewerId ? (
+            <NewSessionButton
+              disabledReason={sessionCreationBlocker}
+              onOpen={() => setSessionDialog("open")}
+              pathname={workspaceOnboardingPath(data.workspace.slug)}
+              ref={newSessionRef}
+              userId={viewerId}
+              workspaceId={data.workspace.id}
+            />
+          ) : null}
         </header>
+        {viewerId && sessionDialog ? (
+          <LazyCreateSessionDialog
+            creationScope={{ kind: "all" }}
+            onClose={() => setSessionDialog("closed")}
+            onCloseAutoFocus={() => requestAnimationFrame(() => newSessionRef.current?.focus())}
+            open={sessionDialog === "open" && !sessionCreationBlocker}
+            userId={viewerId}
+            workspaceId={data.workspace.id}
+            workspaceSlug={data.workspace.slug}
+          />
+        ) : null}
 
         <main
           id="main-content"

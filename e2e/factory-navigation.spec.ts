@@ -301,7 +301,7 @@ test("a factory switch wins before its route commits and an unconfirmed draft re
     await expect(page.getByRole("combobox", { name: "Factory", exact: true })).toHaveText(
       "Legacy studio (archived)",
     );
-    await expect(page.getByRole("button", { name: "New session", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "New session", exact: true })).toBeEnabled();
     await expect(preview).toBeHidden();
     await capture(page, info, "archived-browse-with-draft-recovery");
 
@@ -641,6 +641,11 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
       name: /Open session #\d+: Customer tools session 1/,
     });
     const factory = page.getByRole("combobox", { name: "Factory", exact: true });
+    const launcher = page
+      .locator("[data-shell-header]")
+      .getByRole("button", { name: "New session", exact: true });
+    const composer = page.getByRole("dialog", { name: "Start a new session", exact: true });
+    const destination = composer.getByRole("combobox", { name: "Factory", exact: true });
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
     await signInViaMagicLink(page, sessionsPath, { baseURL: app, email: memberEmail });
@@ -682,6 +687,30 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     if (!secondaryAgentHref) throw new Error("Missing the delegated factory agent.");
     expect(new URL(secondaryAgentHref, app).searchParams.get("factory")).toBe(visibleFactory.id);
     await capture(page, info, "05-agents-desktop-light");
+    const agentsUrl = page.url();
+    await launcher.click();
+    await expect(destination).toHaveText(visibleFactory.name);
+    await destination.press("Enter");
+    await expect(composer.getByRole("option")).toHaveText(
+      [defaultFactory.name, visibleFactory.name].toSorted((left, right) =>
+        left.localeCompare(right),
+      ),
+    );
+    await page.keyboard.press("Escape");
+    await expect(destination).toBeFocused();
+    await expect(composer).toBeVisible();
+    await selectDropdownOption(destination, defaultFactory.id);
+    await expect(destination).toHaveText(defaultFactory.name);
+    await expect(page).toHaveURL(agentsUrl);
+    await composer.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(factory).toHaveText(visibleFactory.name);
+    await expect(launcher).toBeFocused();
+
+    await page.goto(`${sessionsPath}/2?factory=${defaultFactory.id}`);
+    await launcher.click();
+    await expect(destination).toHaveText(visibleFactory.name);
+    await composer.getByRole("button", { name: "Close", exact: true }).click();
+
     const wrongFactory = new URL(secondaryAgentHref, app);
     wrongFactory.searchParams.set("factory", defaultFactory.id);
     const wrongScope = await page.goto(wrongFactory.href);
@@ -1056,6 +1085,13 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
 
     await page.goto(`${governancePath}?factory=${defaultFactory.id}&event=${event.id}`);
     await expect(page.getByRole("heading", { name: "Factory unavailable" })).toBeVisible();
+
+    const settingsUrl = `${workspacePath}/settings?category=workspace&factory=${visibleFactory.id}`;
+    await page.goto(settingsUrl);
+    await launcher.click();
+    await expect(destination).toHaveText("Choose a factory");
+    await expect(composer.getByRole("button", { name: "Start session" })).toBeDisabled();
+    await expect(page).toHaveURL(settingsUrl);
   } finally {
     if (workspaceId) await write(admin.from("workspaces").delete().eq("id", workspaceId));
     if (memberId) await write(admin.auth.admin.deleteUser(memberId));
