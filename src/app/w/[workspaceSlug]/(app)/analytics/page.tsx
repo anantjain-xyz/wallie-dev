@@ -84,10 +84,6 @@ async function AnalyticsPage({
     );
 
   const { query, errors, dates } = recoverAnalyticsFilters(search);
-  if (search.overviewFilters === "invalid") {
-    errors.other =
-      "Some filters from this Overview bookmark couldn’t be carried over. Review and apply the filters to see the report.";
-  }
   const { currentMember, supabase, workspace } =
     await loadAuthenticatedWorkspaceContext(workspaceSlug);
   const scope = { supabase, workspaceId: workspace.id, factoryId: factory.id, query };

@@ -133,7 +133,6 @@ test("factory outcome release reconciles the signed-in Analytics report and priv
     environment: "production",
   };
   const search = new URLSearchParams(scope);
-  const overview = `${workspace}/overview?${search}`;
   const analytics = `${workspace}/analytics?${search}`;
   const evidence = page.getByRole("region", { name: "Evidence", exact: true });
   const deliveryCost = money.format(fixture.expected.costPerObservedMergeUsd) + " · partial";
@@ -151,13 +150,13 @@ test("factory outcome release reconciles the signed-in Analytics report and priv
     });
     await page
       .getByRole("navigation", { name: "Workspace navigation" })
-      .getByRole("link", { name: "Analytics", exact: true })
+      .getByRole("link", { name: "Insights", exact: true })
       .click();
     await expect(page.getByRole("combobox", { name: "Factory", exact: true })).toHaveAttribute(
       "data-value",
       fixture.factoryId,
     );
-    await page.goto(overview);
+    await page.goto(analytics);
     await expect(page).toHaveURL(analytics);
     await expect(
       page.getByRole("region", { name: "Reporting health" }).getByText("Current", { exact: true }),
@@ -597,14 +596,14 @@ test("factory outcome release reconciles the signed-in Analytics report and priv
     await expect(page.getByRole("region", { name: "Export analytics" })).toHaveCount(0);
 
     await fixture.observeSiblingPendingRequest();
-    await page.goto(overview);
+    await page.goto(analytics);
     await expect(
       page.getByRole("region", { name: "Reporting health" }).getByText("Current", { exact: true }),
     ).toBeVisible();
 
     const correction = await fixture.applyLateCorrection();
     await fixture.drainProjections();
-    await page.goto(overview);
+    await page.goto(analytics);
     await expect(highlight(page, "Time to delivery")).toContainText(
       duration(fixture.expected.correctedMergeMedianSeconds),
     );
@@ -643,12 +642,12 @@ test("factory outcome release reconciles the signed-in Analytics report and priv
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.emulateMedia({ colorScheme: "dark" });
-    await page.goto(overview);
+    await page.goto(analytics);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-    const menu = page.getByRole("button", { name: "Workspace navigation: Analytics" });
+    const menu = page.getByRole("button", { name: "Workspace navigation: Insights" });
     await menu.press("Enter");
     const drawer = page.getByRole("dialog", { name: "Workspace pages" });
-    await expect(drawer.getByRole("link", { name: "Analytics", exact: true })).toHaveAttribute(
+    await expect(drawer.getByRole("link", { name: "Insights", exact: true })).toHaveAttribute(
       "aria-current",
       "page",
     );

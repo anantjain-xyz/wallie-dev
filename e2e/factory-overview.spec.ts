@@ -20,7 +20,7 @@ async function confirmProjection(page: Page, label: string) {
     .click();
 }
 
-test("legacy Overview bookmarks join the same scoped Analytics destination", async ({
+test("Analytics keeps scoped reporting filters through navigation and recovery", async ({
   baseURL,
   page,
 }) => {
@@ -33,11 +33,12 @@ test("legacy Overview bookmarks join the same scoped Analytics destination", asy
     from: fixture.from,
     to: fixture.to,
     compare: "previous",
-    dimension: "source",
+    dimension: "model",
     environment: "production",
   };
-  const overview = `${workspace}/overview?${new URLSearchParams(scope)}`;
-  const analytics = `${workspace}/analytics?${new URLSearchParams(scope)}`;
+  const search = new URLSearchParams(scope);
+  const analyticsPath = `${workspace}/analytics`;
+  const analytics = `${analyticsPath}?${search}`;
   const outcomes = page.getByRole("region", { name: "Factory outcomes" });
   const health = page.getByRole("region", { name: "Reporting health" });
   const factory = page.getByRole("combobox", { name: "Factory", exact: true });
@@ -51,11 +52,14 @@ test("legacy Overview bookmarks join the same scoped Analytics destination", asy
     });
     const sidebar = page.getByRole("navigation", { name: "Workspace navigation" });
     await expect(sidebar.getByRole("link", { name: "Overview", exact: true })).toHaveCount(0);
-    await sidebar.getByRole("link", { name: "Analytics", exact: true }).click();
+    await sidebar.getByRole("link", { name: "Insights", exact: true }).click();
     await expect(outcomes).toBeVisible();
     await expect(factory).toHaveAttribute("data-value", fixture.factoryId);
 
-    await page.goto(overview + "#overview-filters");
+    const retired = await page.request.get(`${workspace}/overview?${search}`, { maxRedirects: 0 });
+    expect(retired.status()).toBe(404);
+
+    await page.goto(analytics + "#overview-filters");
     await expect(page).toHaveURL(analytics + "#overview-filters");
     await expect(page.getByLabel("From date (UTC)")).toBeVisible();
     await expect(page.getByLabel("From date (UTC)")).toHaveValue(fixture.from);
@@ -64,7 +68,7 @@ test("legacy Overview bookmarks join the same scoped Analytics destination", asy
       page.getByRole("checkbox", { name: "Compare with previous period" }),
     ).toBeChecked();
 
-    await page.goto(overview + "#overview-analytics");
+    await page.goto(analytics + "#overview-analytics");
     await expect(page).toHaveURL(analytics + "#overview-analytics");
     await expect(page.getByRole("heading", { name: "Factory outcomes" })).toBeInViewport();
     await expect(factory).toHaveAttribute("data-value", fixture.factoryId);
@@ -74,7 +78,11 @@ test("legacy Overview bookmarks join the same scoped Analytics destination", asy
     const summaryLink = outcomes.getByRole("link", { name: "PR throughput" });
     await summaryLink.press("Enter");
     await expect(page).toHaveURL(analytics + "#throughput");
-    await expect(page.getByRole("region", { name: "Pull request throughput" })).toBeFocused();
+    const throughput = page.getByRole("region", { name: "Pull request throughput" });
+    await expect(throughput).toBeFocused();
+    await expect(
+      throughput.getByRole("combobox", { name: "Break down throughput by" }),
+    ).toHaveAttribute("data-value", scope.dimension);
 
     await health.locator("details").first().locator(":scope > summary").press("Enter");
     await expect(health.getByText("Lifecycle capture began", { exact: true })).toBeVisible();
@@ -92,16 +100,23 @@ test("legacy Overview bookmarks join the same scoped Analytics destination", asy
     await expect(evidence).toContainText(fixture.deploymentObservationId);
     await evidence.getByRole("link", { name: "Close evidence" }).press("Enter");
     await expect(page).toHaveURL(analytics + "#time-to-delivery");
+    await page.reload();
+    await expect(
+      deployment.getByRole("combobox", { name: "Deployment environment" }),
+    ).toHaveAttribute("data-value", scope.environment);
+    await expect(page.getByLabel("From date (UTC)")).toHaveValue(fixture.from);
+    await expect(page.getByLabel("To date (UTC, exclusive)")).toHaveValue(fixture.to);
 
-    for (const request of [
-      new URLSearchParams({ ...scope, factory: fixture.siblingFactoryId }),
-      new URLSearchParams({ ...scope, factory: "all" }),
-      new URLSearchParams([...new URLSearchParams(scope), ["factory", fixture.siblingFactoryId]]),
-    ]) {
-      await page.goto(`${workspace}/overview?${request}`);
-      await expect(page.getByRole("heading", { name: "Factory unavailable" })).toBeVisible();
-      expect(new URL(page.url()).pathname).toBe(workspace + "/analytics");
-      await expect(factory).toHaveAttribute("data-value", "unavailable");
+    for (const [request, selection] of [
+      [new URLSearchParams({ ...scope, factory: fixture.siblingFactoryId }), "unavailable"],
+      [new URLSearchParams({ ...scope, factory: "all" }), "pick"],
+      [new URLSearchParams([...search, ["factory", fixture.siblingFactoryId]]), "unavailable"],
+    ] as const) {
+      await page.goto(`${analyticsPath}?${request}`);
+      const heading = selection === "pick" ? "Choose a factory" : "Factory unavailable";
+      await expect(page.getByRole("heading", { name: heading })).toBeVisible();
+      await expect(page).toHaveURL(`${analyticsPath}?${request}`);
+      await expect(factory).toHaveAttribute("data-value", selection);
       await expect(outcomes).toHaveCount(0);
       await expect(health).toHaveCount(0);
       await expect(page.getByText("Restricted delivery", { exact: true })).toHaveCount(0);
@@ -110,25 +125,26 @@ test("legacy Overview bookmarks join the same scoped Analytics destination", asy
     await page.setViewportSize({ width: 390, height: 844 });
     await page.emulateMedia({ colorScheme: "dark" });
     const invalid = new URLSearchParams({ ...scope, to: fixture.from, environment: "Production" });
-    await page.goto(`${workspace}/overview?${invalid}#overview-filters`);
-    await expect(page.getByRole("alert").filter({ hasText: /Overview bookmark/ })).toBeVisible();
+    await page.goto(`${analyticsPath}?${invalid}#overview-filters`);
+    const alert = page.getByRole("region", { name: "Reporting filters" }).getByRole("alert");
+    await expect(alert).toBeVisible();
+    await expect(alert).toContainText("The end must be later than the start.");
+    await expect(alert).toContainText("Choose a deployment environment from the list.");
+    await expect(page.getByLabel("To date (UTC, exclusive)")).toHaveValue(fixture.from);
     await expect(factory).toHaveAttribute("data-value", fixture.factoryId);
     await expect(outcomes).toHaveCount(0);
     const reset = page.getByRole("link", { name: "Reset reporting filters" });
-    await expect(reset).toHaveAttribute(
-      "href",
-      `${workspace}/analytics?factory=${fixture.factoryId}`,
-    );
+    await expect(reset).toHaveAttribute("href", `${analyticsPath}?factory=${fixture.factoryId}`);
     await reset.click();
     await expect(outcomes).toBeVisible();
     await expect(factory).toHaveAttribute("data-value", fixture.factoryId);
-    await page.goto(overview);
+    await page.goto(analytics);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-    const menu = page.getByRole("button", { name: "Workspace navigation: Analytics" });
+    const menu = page.getByRole("button", { name: "Workspace navigation: Insights" });
     await menu.press("Enter");
     const drawer = page.getByRole("dialog", { name: "Workspace pages" });
     await expect(drawer.getByRole("link", { name: "Overview", exact: true })).toHaveCount(0);
-    await expect(drawer.getByRole("link", { name: "Analytics", exact: true })).toHaveAttribute(
+    await expect(drawer.getByRole("link", { name: "Insights", exact: true })).toHaveAttribute(
       "aria-current",
       "page",
     );
