@@ -583,6 +583,12 @@ describe("factory session composer", () => {
   });
 });
 
+const pinnedScope = {
+  kind: "pinned",
+  factory: { id: "00000000-0000-4000-8000-000000000030", name: "Default Factory" },
+} satisfies SessionCreationScope;
+const scopedOptionFields = { factoryId: pinnedScope.factory.id, linearIssueLinking: true };
+
 describe("CreateSessionDialog accessibility", () => {
   it.each([true, false])(
     "preserves compiled selections when the pinned repository is available %s",
@@ -594,6 +600,7 @@ describe("CreateSessionDialog accessibility", () => {
       const shipId = "00000000-0000-4000-8000-000000000011";
       const factoryDefinitionDigest = "d".repeat(64);
       clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+        ...scopedOptionFields,
         canDraftSpecification: available,
         defaultGithubRepositoryId: repositoryId,
         factoryDefinitionDigest,
@@ -612,6 +619,7 @@ describe("CreateSessionDialog accessibility", () => {
       render(
         <OverlayProvider>
           <CreateSessionDialog
+            creationScope={pinnedScope}
             onClose={vi.fn()}
             open
             userId="user-1"
@@ -627,9 +635,8 @@ describe("CreateSessionDialog accessibility", () => {
       await user.type(screen.getByLabelText("Prompt"), "Build this with the active factory");
       const start = screen.getByRole("button", { name: "Start session" });
       if (available) {
-        const repository = screen.getByRole("combobox", { name: "Repository" });
-        expect(repository).toBeDisabled();
-        expect(repository).toHaveTextContent("acme/pinned");
+        expect(screen.getByText("Repository").parentElement).toHaveTextContent("acme/pinned");
+        expect(screen.queryByRole("combobox", { name: "Repository" })).not.toBeInTheDocument();
         const specification = screen.getByRole("checkbox", { name: "Draft a specification first" });
         expect(specification).not.toBeChecked();
         await user.click(specification);
@@ -662,6 +669,7 @@ describe("CreateSessionDialog accessibility", () => {
       const factoryDefinitionDigest = "d".repeat(64);
       const stageId = "00000000-0000-4000-8000-000000000012";
       clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+        ...scopedOptionFields,
         defaultGithubRepositoryId: defaultId,
         factoryDefinitionDigest,
         pipelineId: "00000000-0000-4000-8000-000000000010",
@@ -679,6 +687,7 @@ describe("CreateSessionDialog accessibility", () => {
       render(
         <OverlayProvider>
           <CreateSessionDialog
+            creationScope={pinnedScope}
             onClose={vi.fn()}
             open
             userId="user-1"
@@ -746,6 +755,7 @@ describe("CreateSessionDialog accessibility", () => {
 
   it("names the default factory in a visible, labeled field", async () => {
     clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      ...scopedOptionFields,
       defaultGithubRepositoryId: null,
       pipelineId: "00000000-0000-4000-8000-000000000010",
       repositoryOptions: [],
@@ -762,7 +772,7 @@ describe("CreateSessionDialog accessibility", () => {
     render(
       <OverlayProvider>
         <CreateSessionDialog
-          creationFactoryName="Default Factory"
+          creationScope={pinnedScope}
           onClose={vi.fn()}
           open
           userId="00000000-0000-4000-8000-000000000002"
@@ -780,6 +790,7 @@ describe("CreateSessionDialog accessibility", () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
     clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      ...scopedOptionFields,
       defaultGithubRepositoryId: null,
       pipelineId: "00000000-0000-4000-8000-000000000010",
       repositoryOptions: [],
@@ -797,6 +808,7 @@ describe("CreateSessionDialog accessibility", () => {
       <OverlayProvider>
         <button type="button">Outside</button>
         <CreateSessionDialog
+          creationScope={pinnedScope}
           onClose={onClose}
           open
           userId="00000000-0000-4000-8000-000000000002"
@@ -831,6 +843,7 @@ describe("CreateSessionDialog accessibility", () => {
     const workspaceId = "00000000-0000-4000-8000-000000000001";
     const userId = "00000000-0000-4000-8000-000000000002";
     clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      ...scopedOptionFields,
       defaultGithubRepositoryId: null,
       pipelineId: "00000000-0000-4000-8000-000000000010",
       repositoryOptions: [],
@@ -851,6 +864,7 @@ describe("CreateSessionDialog accessibility", () => {
     render(
       <OverlayProvider>
         <CreateSessionDialog
+          creationScope={pinnedScope}
           onClose={onClose}
           open
           userId={userId}
@@ -874,6 +888,7 @@ describe("CreateSessionDialog accessibility", () => {
     await waitFor(() =>
       expect(clientMocks.createSessionFromClient).toHaveBeenCalledWith({
         attachmentIds: [],
+        factoryId: pinnedScope.factory.id,
         requestId: expect.any(String),
         githubRepositoryId: null,
         linearIssueUrl: "https://linear.app/acme/issue/TEAM-42/title",
@@ -891,6 +906,7 @@ describe("CreateSessionDialog accessibility", () => {
     const user = userEvent.setup();
     const workspaceId = "00000000-0000-4000-8000-000000000001";
     clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      ...scopedOptionFields,
       defaultGithubRepositoryId: null,
       pipelineId: "00000000-0000-4000-8000-000000000010",
       repositoryOptions: [],
@@ -917,6 +933,7 @@ describe("CreateSessionDialog accessibility", () => {
     render(
       <OverlayProvider>
         <CreateSessionDialog
+          creationScope={pinnedScope}
           onClose={vi.fn()}
           open
           userId="00000000-0000-4000-8000-000000000002"
@@ -949,6 +966,7 @@ describe("CreateSessionDialog accessibility", () => {
   it("accepts prompt images from clipboard paste and drag-and-drop", async () => {
     const workspaceId = "00000000-0000-4000-8000-000000000001";
     clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      ...scopedOptionFields,
       defaultGithubRepositoryId: null,
       pipelineId: "00000000-0000-4000-8000-000000000010",
       repositoryOptions: [],
@@ -978,6 +996,7 @@ describe("CreateSessionDialog accessibility", () => {
     render(
       <OverlayProvider>
         <CreateSessionDialog
+          creationScope={pinnedScope}
           onClose={vi.fn()}
           open
           userId="00000000-0000-4000-8000-000000000002"
@@ -1021,6 +1040,7 @@ describe("CreateSessionDialog accessibility", () => {
   it("clears a Linear URL error when the URL is corrected", async () => {
     const user = userEvent.setup();
     clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      ...scopedOptionFields,
       defaultGithubRepositoryId: null,
       pipelineId: "00000000-0000-4000-8000-000000000010",
       repositoryOptions: [],
@@ -1037,6 +1057,7 @@ describe("CreateSessionDialog accessibility", () => {
     render(
       <OverlayProvider>
         <CreateSessionDialog
+          creationScope={pinnedScope}
           onClose={vi.fn()}
           open
           userId="00000000-0000-4000-8000-000000000002"
@@ -1064,6 +1085,7 @@ describe("CreateSessionDialog accessibility", () => {
     const planStageId = "00000000-0000-4000-8000-000000000011";
     const buildStageId = "00000000-0000-4000-8000-000000000012";
     clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      ...scopedOptionFields,
       defaultGithubRepositoryId: null,
       pipelineId: "00000000-0000-4000-8000-000000000010",
       repositoryOptions: [],
@@ -1080,6 +1102,7 @@ describe("CreateSessionDialog accessibility", () => {
     render(
       <OverlayProvider>
         <CreateSessionDialog
+          creationScope={pinnedScope}
           onClose={vi.fn()}
           open
           userId="00000000-0000-4000-8000-000000000002"
@@ -1130,6 +1153,7 @@ describe("CreateSessionDialog accessibility", () => {
     const buildStageId = "00000000-0000-4000-8000-000000000012";
     clientMocks.loadSessionRepositoryOptionsFromClient
       .mockResolvedValueOnce({
+        ...scopedOptionFields,
         defaultGithubRepositoryId: null,
         pipelineId,
         repositoryOptions: [],
@@ -1138,6 +1162,7 @@ describe("CreateSessionDialog accessibility", () => {
         ],
       })
       .mockResolvedValueOnce({
+        ...scopedOptionFields,
         defaultGithubRepositoryId: null,
         pipelineId,
         repositoryOptions: [],
@@ -1156,6 +1181,7 @@ describe("CreateSessionDialog accessibility", () => {
     render(
       <OverlayProvider>
         <CreateSessionDialog
+          creationScope={pinnedScope}
           onClose={vi.fn()}
           open
           userId="00000000-0000-4000-8000-000000000002"
@@ -1190,6 +1216,7 @@ describe("CreateSessionDialog accessibility", () => {
       const user = userEvent.setup();
       const workspaceId = "00000000-0000-4000-8000-000000000001";
       clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+        ...scopedOptionFields,
         defaultGithubRepositoryId: null,
         pipelineId: "00000000-0000-4000-8000-000000000010",
         repositoryOptions: [],
@@ -1210,6 +1237,7 @@ describe("CreateSessionDialog accessibility", () => {
       render(
         <OverlayProvider>
           <CreateSessionDialog
+            creationScope={pinnedScope}
             onClose={vi.fn()}
             open
             userId="00000000-0000-4000-8000-000000000002"
@@ -1242,7 +1270,9 @@ describe("CreateSessionDialog accessibility", () => {
   );
 
   it("tabs through the expanded form and footer actions in both directions without leaving the dialog", async () => {
-    prepareDraftOptions();
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue(
+      draftOptionsWithRepositoryChoice(),
+    );
     const user = userEvent.setup();
     render(<DraftHarness />);
 
@@ -1322,6 +1352,7 @@ describe("CreateSessionDialog accessibility", () => {
 
   it("keeps the form scroll position when keyboard focus moves through portaled repository options", async () => {
     clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      ...scopedOptionFields,
       defaultGithubRepositoryId: "repo-1",
       pipelineId: "pipeline-1",
       repositoryOptions: [
@@ -1374,7 +1405,9 @@ describe("CreateSessionDialog accessibility", () => {
       availableHeight: 84,
     },
   ])("keeps repository options $name clear of the dialog footer", async (viewport) => {
-    prepareDraftOptions();
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue(
+      draftOptionsWithRepositoryChoice(),
+    );
     const user = userEvent.setup();
     render(<DraftHarness />);
 
@@ -1415,8 +1448,9 @@ describe("CreateSessionDialog accessibility", () => {
 
   it("keeps a checked specification draft when refreshed options lose the named agent", async () => {
     const user = userEvent.setup();
-    const key = { userId: "user-1", workspaceId: "workspace-1" };
+    const key = { factoryId: pinnedScope.factory.id, userId: "user-1", workspaceId: "workspace-1" };
     const options = {
+      ...scopedOptionFields,
       defaultGithubRepositoryId: "repo-1",
       factoryDefinitionDigest: "a".repeat(64),
       pipelineId: "pipeline-1",
@@ -1434,7 +1468,14 @@ describe("CreateSessionDialog accessibility", () => {
 
     render(
       <OverlayProvider>
-        <CreateSessionDialog {...key} onClose={vi.fn()} open workspaceSlug="acme" />
+        <CreateSessionDialog
+          creationScope={pinnedScope}
+          onClose={vi.fn()}
+          open
+          userId={key.userId}
+          workspaceId={key.workspaceId}
+          workspaceSlug="acme"
+        />
       </OverlayProvider>,
     );
 
@@ -1494,7 +1535,7 @@ describe("CreateSessionDialog accessibility", () => {
       return (
         <OverlayProvider>
           <CreateSessionDialog
-            creationFactoryId="factory-1"
+            creationScope={pinnedScope}
             onClose={vi.fn()}
             open={open}
             userId="user-1"
@@ -1562,8 +1603,7 @@ describe("CreateSessionDialog accessibility", () => {
         render(
           <OverlayProvider>
             <CreateSessionDialog
-              creationFactoryId="factory-1"
-              creationFactoryName="Central"
+              creationScope={pinnedScope}
               onClose={vi.fn()}
               open
               userId="user-1"
@@ -1574,7 +1614,9 @@ describe("CreateSessionDialog accessibility", () => {
           </OverlayProvider>,
         );
         await user.type(screen.getByLabelText("Prompt"), "Use the named publication");
-        expect(screen.getByText("Factory").parentElement).toHaveTextContent("Central");
+        expect(screen.getByText("Factory").parentElement).toHaveTextContent(
+          pinnedScope.factory.name,
+        );
         expect(screen.queryByRole("combobox", { name: "Workflow" })).not.toBeInTheDocument();
         const start = screen.getByRole("button", { name: "Start session" });
         if (state === "current") {
@@ -1632,7 +1674,7 @@ describe("CreateSessionDialog accessibility", () => {
     const dialog = (open: boolean, workflowLaunchActivationId?: string) => (
       <OverlayProvider>
         <CreateSessionDialog
-          creationFactoryId="factory-1"
+          creationScope={pinnedScope}
           onClose={onClose}
           open={open}
           userId="user-1"
@@ -1711,7 +1753,7 @@ describe("CreateSessionDialog accessibility", () => {
       render(
         <OverlayProvider>
           <CreateSessionDialog
-            creationFactoryId="factory-1"
+            creationScope={pinnedScope}
             onClose={vi.fn()}
             open
             userId="user-1"
@@ -1776,7 +1818,7 @@ describe("CreateSessionDialog accessibility", () => {
       render(
         <OverlayProvider>
           <CreateSessionDialog
-            creationFactoryId="factory-1"
+            creationScope={pinnedScope}
             onClose={vi.fn()}
             open
             userId="user-1"
@@ -1814,7 +1856,6 @@ describe("CreateSessionDialog accessibility", () => {
   it("can clear a selected workflow when refreshed options lose the active definition", async () => {
     const user = userEvent.setup();
     const workspaceId = "00000000-0000-4000-8000-000000000009";
-    const creationFactoryId = "00000000-0000-4000-8000-000000000010";
     const published = {
       workflowId: "00000000-0000-4000-8000-000000000011",
       activationId: "00000000-0000-4000-8000-000000000012",
@@ -1839,7 +1880,7 @@ describe("CreateSessionDialog accessibility", () => {
       render(
         <OverlayProvider>
           <CreateSessionDialog
-            creationFactoryId={creationFactoryId}
+            creationScope={pinnedScope}
             onClose={vi.fn()}
             open
             userId="user-1"
@@ -1858,7 +1899,13 @@ describe("CreateSessionDialog accessibility", () => {
       act(() => invalidateSessionRepositoryCache(workspaceId));
       expect(await screen.findByText(/The selected workflow changed/)).toBeVisible();
       await waitFor(() =>
-        expect(getSessionRepositorySnapshot({ userId: "user-1", workspaceId })).toMatchObject({
+        expect(
+          getSessionRepositorySnapshot({
+            factoryId: pinnedScope.factory.id,
+            userId: "user-1",
+            workspaceId,
+          }),
+        ).toMatchObject({
           data: options,
           isStale: false,
         }),
@@ -1883,6 +1930,7 @@ describe("CreateSessionDialog accessibility", () => {
     const workspaceId = "00000000-0000-4000-8000-000000000001";
     const userId = "00000000-0000-4000-8000-000000000002";
     const repositoryResult = {
+      ...scopedOptionFields,
       defaultGithubRepositoryId: "repo-1",
       pipelineId: "00000000-0000-4000-8000-000000000010",
       repositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],
@@ -1897,7 +1945,7 @@ describe("CreateSessionDialog accessibility", () => {
     };
 
     await loadSessionRepositories(
-      { userId, workspaceId },
+      { factoryId: pinnedScope.factory.id, userId, workspaceId },
       { load: async () => repositoryResult, now: Date.now() },
     );
     invalidateSessionRepositoryCache(workspaceId);
@@ -1908,6 +1956,7 @@ describe("CreateSessionDialog accessibility", () => {
     render(
       <OverlayProvider>
         <CreateSessionDialog
+          creationScope={pinnedScope}
           onClose={vi.fn()}
           open
           userId={userId}
@@ -1941,6 +1990,7 @@ function DraftHarness({
     <OverlayProvider>
       <button onClick={() => setOpen(true)}>Reopen composer</button>
       <CreateSessionDialog
+        creationScope={pinnedScope}
         open={open}
         onClose={() => setOpen(false)}
         userId={userId}
@@ -1957,10 +2007,19 @@ const routingReason = "Exercise the reviewed fallback for this task.";
 
 function draftOptions() {
   return {
+    ...scopedOptionFields,
     defaultGithubRepositoryId: "repo-1",
     pipelineId: "pipeline-1",
     repositoryOptions: [{ id: "repo-1", fullName: "acme/app" }],
     stageOptions: [{ id: "stage-1", name: "Plan", position: 1, description: "Plan the work" }],
+  };
+}
+
+function draftOptionsWithRepositoryChoice() {
+  const options = draftOptions();
+  return {
+    ...options,
+    repositoryOptions: [...options.repositoryOptions, { id: "repo-2", fullName: "acme/other" }],
   };
 }
 
@@ -2002,6 +2061,7 @@ function OptimisticDraftHarness() {
       <button onClick={() => setOpen(true)}>Reopen composer</button>
       <main>{preview?.content ?? <h1>Workspace</h1>}</main>
       <CreateSessionDialog
+        creationScope={pinnedScope}
         open={open}
         onClose={() => setOpen(false)}
         onReopen={() => setOpen(true)}

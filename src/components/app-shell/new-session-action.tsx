@@ -63,16 +63,16 @@ function retainCreateSessionDialogModule() {
 
 export function preloadCreateSessionDialogOnce(
   startedKeys: Set<string>,
-  input: { userId: string; workspaceId: string; factoryId?: string },
+  { userId, workspaceId, factoryId }: { userId: string; workspaceId: string; factoryId?: string },
   load: () => Promise<PreloadedCreateSessionDialogModule> = loadCreateSessionDialogModule,
 ) {
-  const key = JSON.stringify([input.userId, input.workspaceId, input.factoryId ?? null]);
+  const key = JSON.stringify([userId, workspaceId, factoryId ?? null]);
   if (startedKeys.has(key)) return;
   startedKeys.add(key);
   load()
     .then((module) => {
       if (module.CreateSessionDialog) publishCreateSessionDialog(module.CreateSessionDialog);
-      if (input.factoryId) return module.preloadSessionRepositories(input);
+      if (factoryId) return module.preloadSessionRepositories({ userId, workspaceId, factoryId });
     })
     .catch(() => {
       startedKeys.delete(key);

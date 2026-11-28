@@ -120,7 +120,8 @@ describe("isCreateSessionSubmitDisabled", () => {
 });
 
 describe("RepositoryField", () => {
-  const cacheKey = { userId: "user-1", workspaceId: "workspace-1" };
+  const cacheKey = { factoryId: "factory-1", userId: "user-1", workspaceId: "workspace-1" };
+  const scopedOptions = { factoryId: cacheKey.factoryId, linearIssueLinking: true };
   const baseProps = {
     cacheKey,
     onValueChange: () => undefined,
@@ -172,6 +173,7 @@ describe("RepositoryField", () => {
         ...baseProps,
         snapshot: {
           data: {
+            ...scopedOptions,
             defaultGithubRepositoryId: null,
             pipelineId: null,
             repositoryOptions: [],
@@ -197,6 +199,7 @@ describe("RepositoryField", () => {
         selectedGithubRepositoryId: "repo-1",
         snapshot: {
           data: {
+            ...scopedOptions,
             defaultGithubRepositoryId: "repo-1",
             pipelineId: null,
             repositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],
@@ -223,6 +226,7 @@ describe("RepositoryField", () => {
         selectedGithubRepositoryId: "repo-1",
         snapshot: {
           data: {
+            ...scopedOptions,
             defaultGithubRepositoryId: "repo-1",
             pipelineId: null,
             repositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],

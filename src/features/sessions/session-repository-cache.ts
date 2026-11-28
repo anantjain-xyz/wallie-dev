@@ -4,7 +4,7 @@ import { useCallback, useEffect, useSyncExternalStore } from "react";
 
 import {
   loadSessionRepositoryOptionsFromClient,
-  type SessionRepositoryOptionsResult,
+  type ScopedSessionRepositoryOptionsResult,
 } from "@/features/sessions/client";
 import {
   SESSION_REPOSITORIES_CHANGED_EVENT,
@@ -18,13 +18,13 @@ import {
 export const SESSION_REPOSITORY_CACHE_TTL_MS = 30_000;
 
 export type SessionRepositoryCacheKey = {
-  factoryId?: string;
+  factoryId: string;
   userId: string;
   workspaceId: string;
 };
 
 export type SessionRepositorySnapshot = {
-  data: SessionRepositoryOptionsResult | null;
+  data: ScopedSessionRepositoryOptionsResult | null;
   error: string | null;
   isLoading: boolean;
   isRefreshing: boolean;
@@ -33,15 +33,15 @@ export type SessionRepositorySnapshot = {
 };
 
 type SessionRepositoryLoader = (input: {
-  factoryId?: string;
+  factoryId: string;
   workspaceId: string;
-}) => Promise<SessionRepositoryOptionsResult>;
+}) => Promise<ScopedSessionRepositoryOptionsResult>;
 
 type CacheEntry = {
   generation: number;
   key: SessionRepositoryCacheKey;
   listeners: Set<() => void>;
-  promise: Promise<SessionRepositoryOptionsResult> | null;
+  promise: Promise<ScopedSessionRepositoryOptionsResult> | null;
   snapshot: SessionRepositorySnapshot;
   updatedAt: number;
 };
@@ -59,7 +59,7 @@ let activeUserId: string | null = null;
 let invalidationListenerAttached = false;
 
 function serializeKey(key: SessionRepositoryCacheKey) {
-  return `${key.userId}:${key.workspaceId}:${key.factoryId ?? ""}`;
+  return `${key.userId}:${key.workspaceId}:${key.factoryId}`;
 }
 
 function scopeCacheToUser(userId: string) {
@@ -146,7 +146,7 @@ export function loadSessionRepositories(
     load?: SessionRepositoryLoader;
     now?: number;
   } = {},
-): Promise<SessionRepositoryOptionsResult> {
+): Promise<ScopedSessionRepositoryOptionsResult> {
   ensureInvalidationListener();
   scopeCacheToUser(key.userId);
   const entry = getEntry(key);
@@ -178,7 +178,7 @@ export function loadSessionRepositories(
       const generation = entry.generation;
       try {
         const data = await load({
-          ...(key.factoryId ? { factoryId: key.factoryId } : {}),
+          factoryId: key.factoryId,
           workspaceId: key.workspaceId,
         });
         if (!isCurrentEntry()) return data;
