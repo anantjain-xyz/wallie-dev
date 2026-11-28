@@ -9,8 +9,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
-  type ComponentProps,
   type MouseEvent,
   type PointerEvent,
   type ReactNode,
@@ -22,6 +20,10 @@ import {
   WorkspaceGroupTabs,
 } from "@/components/app-shell/grouped-workspace-navigation";
 import { RouteEntrance } from "@/components/app-shell/navigation-motion";
+import {
+  LazyCreateSessionDialog,
+  NewSessionButton,
+} from "@/components/app-shell/new-session-action";
 import {
   readSessionLaunchActivation,
   resolveSessionReturnTo,
@@ -52,7 +54,6 @@ import {
   WorkspaceSwitcher,
   type WorkspaceSwitcherOption,
 } from "@/components/app-shell/workspace-switcher";
-import { PlusIcon } from "@/components/shared/icons/plus-icon";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import type { FactorySelectionOption } from "@/features/factories/factory-selection";
@@ -62,12 +63,7 @@ import {
 } from "@/features/onboarding/resume";
 import type { WorkspaceSummary } from "@/lib/auth";
 import { workspaceBasePath, workspaceOnboardingPath, workspaceSessionsPath } from "@/lib/routes";
-import {
-  finishInteraction,
-  interactionRouteTemplateForPath,
-  isUnmodifiedPrimaryClick,
-  startInteraction,
-} from "@/lib/telemetry/interaction-rum";
+import { isUnmodifiedPrimaryClick } from "@/lib/telemetry/interaction-rum";
 import { cn } from "@/lib/utils";
 import type { SessionCreationPreview } from "@/features/sessions/pending-session-creation";
 import type { SessionCreationScope } from "@/features/sessions/create-session-dialog";
@@ -86,166 +82,6 @@ type ShellHeaderProps = {
   workspaceAvatarUrl: string | null;
   workspaceOptions?: readonly WorkspaceSwitcherOption[];
 };
-
-type CreateSessionDialogModule = typeof import("@/features/sessions/create-session-dialog");
-type CreateSessionDialogComponent = CreateSessionDialogModule["CreateSessionDialog"];
-type PreloadedCreateSessionDialogModule = Pick<
-  CreateSessionDialogModule,
-  "preloadSessionRepositories"
-> &
-  Partial<Pick<CreateSessionDialogModule, "CreateSessionDialog">>;
-
-const loadCreateSessionDialogModule = () => import("@/features/sessions/create-session-dialog");
-
-let createSessionDialogModule: CreateSessionDialogComponent | null = null;
-let createSessionDialogModulePromise: Promise<CreateSessionDialogComponent> | null = null;
-const createSessionDialogListeners = new Set<() => void>();
-
-function publishCreateSessionDialog(component: CreateSessionDialogComponent) {
-  if (createSessionDialogModule === component) return;
-  createSessionDialogModule = component;
-  for (const listener of createSessionDialogListeners) listener();
-}
-
-function subscribeCreateSessionDialog(listener: () => void) {
-  createSessionDialogListeners.add(listener);
-  return () => {
-    createSessionDialogListeners.delete(listener);
-  };
-}
-
-function retainCreateSessionDialogModule() {
-  if (createSessionDialogModule) return Promise.resolve(createSessionDialogModule);
-  if (!createSessionDialogModulePromise) {
-    createSessionDialogModulePromise = loadCreateSessionDialogModule()
-      .then((module) => {
-        publishCreateSessionDialog(module.CreateSessionDialog);
-        return module.CreateSessionDialog;
-      })
-      .catch((error: unknown) => {
-        createSessionDialogModulePromise = null;
-        throw error;
-      });
-  }
-  return createSessionDialogModulePromise;
-}
-
-export function preloadCreateSessionDialogOnce(
-  startedKeys: Set<string>,
-  input: { userId: string; workspaceId: string; factoryId?: string },
-  load: () => Promise<PreloadedCreateSessionDialogModule> = loadCreateSessionDialogModule,
-) {
-  const key = JSON.stringify([input.userId, input.workspaceId, input.factoryId ?? null]);
-  if (startedKeys.has(key)) return;
-  startedKeys.add(key);
-  load()
-    .then((module) => {
-      if (module.CreateSessionDialog) publishCreateSessionDialog(module.CreateSessionDialog);
-      if (input.factoryId) return module.preloadSessionRepositories(input);
-    })
-    .catch(() => {
-      startedKeys.delete(key);
-    });
-}
-
-export function CreateSessionDialogLoading({
-  onClose,
-  onCloseAutoFocus,
-  onRetry,
-}: { onClose?: () => void; onCloseAutoFocus?: () => void; onRetry?: () => void } = {}) {
-  const retryRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    finishInteraction("open_create_dialog", "success");
-  }, []);
-
-  useEffect(() => {
-    if (onRetry) retryRef.current?.focus();
-  }, [onRetry]);
-
-  return (
-    <Dialog
-      defaultOpen
-      onOpenChange={(open) => {
-        if (!open) onClose?.();
-      }}
-    >
-      <DialogContent onCloseAutoFocus={onCloseAutoFocus} title="Start a new session">
-        {onRetry ? (
-          <div className="space-y-4">
-            <p className="text-sm text-foreground" role="alert">
-              Couldn’t load the session form. Try again or close to return.
-            </p>
-            <button className="ui-button-primary" onClick={onRetry} ref={retryRef} type="button">
-              Retry
-            </button>
-          </div>
-        ) : (
-          <div aria-busy="true" role="status">
-            <div aria-hidden="true" className="h-40 animate-pulse rounded bg-control-muted" />
-            <p className="mt-4 text-sm text-muted">Loading session form…</p>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-type CreateSessionDialogProps = ComponentProps<CreateSessionDialogComponent>;
-
-export function CreateSessionDialogRequest({
-  load = retainCreateSessionDialogModule,
-  onClose,
-  onCloseAutoFocus,
-}: Pick<CreateSessionDialogProps, "onClose" | "onCloseAutoFocus"> & {
-  load?: () => Promise<unknown>;
-}) {
-  const [attempt, setAttempt] = useState(0);
-  const [failedAttempt, setFailedAttempt] = useState<number | null>(null);
-  const retry = useCallback(() => setAttempt((current) => current + 1), []);
-
-  useEffect(() => {
-    let current = true;
-    void load().catch(() => {
-      if (current) setFailedAttempt(attempt);
-    });
-    return () => {
-      current = false;
-    };
-  }, [attempt, load]);
-
-  return (
-    <CreateSessionDialogLoading
-      onClose={onClose}
-      onCloseAutoFocus={onCloseAutoFocus}
-      onRetry={failedAttempt === attempt ? retry : undefined}
-    />
-  );
-}
-
-function CreateSessionDialog(props: CreateSessionDialogProps) {
-  const DialogImpl = useSyncExternalStore(
-    subscribeCreateSessionDialog,
-    () => createSessionDialogModule,
-    () => null,
-  );
-
-  // next/dynamic wraps this chunk in Suspense. React then keeps that fallback
-  // on screen for FALLBACK_THROTTLE_MS (300ms) after the chunk has already
-  // loaded. Render the dialog from the resolved module instead.
-  if (!DialogImpl) {
-    return props.open ? (
-      <CreateSessionDialogRequest
-        onClose={props.onClose}
-        onCloseAutoFocus={props.onCloseAutoFocus}
-      />
-    ) : null;
-  }
-
-  // The value is the cached module export, not a component created in render.
-  // eslint-disable-next-line react-hooks/static-components -- module is loaded once and reused
-  return <DialogImpl {...props} />;
-}
 
 function isShellNavIntentPointer(pointerType: string) {
   return pointerType === "" || pointerType === "mouse" || pointerType === "pen";
@@ -305,11 +141,11 @@ export function ShellHeader({
   const sessionsHref = workspaceSessionsPath(workspace.slug);
   const location = matchWorkspaceLocation(pathname, workspace.slug);
   const factoryRequest = readFactoryRequest(searchParams);
-  const { snapshot, publish } = useWorkspaceScopeSnapshot(
-    viewerId,
-    workspace.id,
-    workspaceScopeLocationKey(pathname, location?.detail ? undefined : factoryRequest),
+  const scopeLocationKey = workspaceScopeLocationKey(
+    pathname,
+    location?.detail ? undefined : factoryRequest,
   );
+  const { snapshot, publish } = useWorkspaceScopeSnapshot(viewerId, workspace.id, scopeLocationKey);
   const currentFactories = snapshot?.factories ?? factories;
   const scopeChoices =
     location && snapshot ? workspaceScopeOptions(location, currentFactories) : [];
@@ -372,23 +208,28 @@ export function ShellHeader({
   }, [sidebarMediaQuery]);
 
   const sessionsBrowse = location?.destination === "sessions" && !location.detail;
-  const creationScope = useMemo<SessionCreationScope | null>(() => {
-    if (!sessionsBrowse || !snapshot) return null;
-    const { factories, scope } = snapshot;
-    if (scope.kind === "all")
-      return factories.some(({ status }) => status === "active") ? scope : null;
-    if (scope.kind !== "factory" || scope.factory.status !== "active") return null;
-    const { id, name } = scope.factory;
-    return { kind: "factory", factory: { id, name } };
-  }, [sessionsBrowse, snapshot]);
-  const creationFactoryQuery =
-    creationScope?.kind === "factory" ? creationScope.factory.id : creationScope?.kind;
-  const createFromUrl = searchParams?.get("create") === "1";
+  const scopeMode = location?.mode;
+  const browseCreationScope = useMemo<SessionCreationScope | null>(() => {
+    if (!scopeMode || scopeMode === "global") return { kind: "all" };
+    const scope = snapshot?.scope;
+    if (!scope || scope.kind === "resource-pending") return null;
+    if (scope.kind === "factory") {
+      const { id, name, status } = scope.factory;
+      return status === "active"
+        ? { kind: "factory", factory: { id, name } }
+        : { kind: "unavailable" };
+    }
+    return { kind: scope.kind === "unavailable" ? "unavailable" : "all" };
+  }, [scopeMode, snapshot]);
+  const createFromUrl = sessionsBrowse && searchParams?.get("create") === "1";
   const urlWorkflowActivation = createFromUrl
     ? readSessionLaunchActivation(searchParams)
     : undefined;
   const composerKey = `${viewerId}:${workspace.id}`;
-  const [userCreateOwner, setUserCreateOwner] = useState<string | null>(null);
+  const committedLocation = useRef(locationKey);
+  const [userCreateOwner, setUserCreateOwner] = useState<{ key: string; location: string } | null>(
+    null,
+  );
   const [recoverableLaunch, setRecoverableLaunch] = useState<{
     composerKey: string;
     location: string;
@@ -401,26 +242,54 @@ export function ShellHeader({
     setRecoverableLaunch(null);
   }
   const clearRecoverableLaunch = useCallback(() => setRecoverableLaunch(null), []);
-  const returnTo = createFromUrl
+  const requestedWorkflow = createFromUrl ? urlWorkflowActivation : launchOnLocation?.activationId;
+  const wantsLaunch = createFromUrl || Boolean(launchOnLocation);
+  const launchScope = useMemo<SessionCreationScope | null>(() => {
+    if (!wantsLaunch || !sessionsBrowse || !snapshot) return null;
+    if (browseCreationScope?.kind === "factory") {
+      return { kind: "pinned", factory: browseCreationScope.factory };
+    }
+    return snapshot.scope.kind === "all" &&
+      requestedWorkflow === undefined &&
+      snapshot.factories.some(({ status }) => status === "active")
+      ? { kind: "all" }
+      : null;
+  }, [browseCreationScope, requestedWorkflow, sessionsBrowse, snapshot, wantsLaunch]);
+  const launchFromUrl = createFromUrl && launchScope !== null;
+  const returnTo = launchFromUrl
     ? resolveSessionReturnTo(returnParam, workspace.slug)
-    : (launchOnLocation?.returnTo ?? null);
-  const workflowLaunchActivationId = createFromUrl
-    ? urlWorkflowActivation
-    : launchOnLocation?.activationId;
+    : launchScope
+      ? (launchOnLocation?.returnTo ?? null)
+      : null;
+  const workflowLaunchActivationId = launchScope ? requestedWorkflow : undefined;
   const launchKey = JSON.stringify({ workflowLaunchActivationId, returnTo });
+  const creationScope = launchScope ?? browseCreationScope;
+  const creationFactoryId =
+    creationScope?.kind === "factory" || creationScope?.kind === "pinned"
+      ? creationScope.factory.id
+      : undefined;
+  const creationFactoryQuery = creationFactoryId ?? creationScope?.kind;
   const createUrlKey = JSON.stringify([composerKey, pathname, creationFactoryQuery, launchKey]);
   const [dismissedCreateUrlKey, setDismissedCreateUrlKey] = useState<string | null>(null);
   if (!createFromUrl && dismissedCreateUrlKey) setDismissedCreateUrlKey(null);
-  // Leaving the direct scope closes the dialog but keeps it mounted: drafts and
-  // attachments live inside it. Reopening takes an explicit new action.
-  if (userCreateOwner !== null && (userCreateOwner !== composerKey || !creationScope)) {
+  const ownsOpenDialog =
+    userCreateOwner?.key === composerKey && userCreateOwner.location === locationKey;
+  if (userCreateOwner !== null && (!ownsOpenDialog || !creationScope)) {
     setUserCreateOwner(null);
   }
+  const createDisabledReason = shouldResumeSetup
+    ? "Complete workspace setup before starting a session."
+    : !creationScope
+      ? "Waiting for this page’s factory."
+      : undefined;
   const createOpen =
-    creationScope !== null &&
-    !shouldResumeSetup &&
-    (userCreateOwner === composerKey || (createFromUrl && dismissedCreateUrlKey !== createUrlKey));
-  const previewLocationKey = creationFactoryQuery && !shouldResumeSetup ? createUrlKey : null;
+    !createDisabledReason &&
+    (ownsOpenDialog || (launchFromUrl && dismissedCreateUrlKey !== createUrlKey));
+  const previewLocationKey = createDisabledReason
+    ? null
+    : launchScope
+      ? createUrlKey
+      : JSON.stringify([composerKey, locationKey, creationFactoryQuery]);
   const [creationPreview, setCreationPreview] = useState<{
     locationKey: string;
     preview: SessionCreationPreview;
@@ -439,7 +308,7 @@ export function ShellHeader({
   const handleCreateReopen = useCallback(
     (submittedFactoryId?: string) => {
       if (!submittedFactoryId) {
-        setUserCreateOwner(composerKey);
+        setUserCreateOwner({ key: composerKey, location: committedLocation.current });
         return;
       }
       const href = sessionLaunchHref(
@@ -480,9 +349,7 @@ export function ShellHeader({
   )
     setMountedComposer({ key: composerKey, scope: creationScope });
   const createTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const pendingFocusHref = useRef<string | null>(null);
-  const committedLocation = useRef(locationKey);
-  const createDialogPreloads = useRef<Set<string> | null>(null);
+  const pendingCreateFocus = useRef<{ location: string; preferLauncher: boolean } | null>(null);
   const prefetchedNavKeysRef = useRef<Set<string> | null>(null);
   useEffect(() => {
     if (shouldResumeSetup && createFromUrl) {
@@ -491,10 +358,14 @@ export function ShellHeader({
   }, [createFromUrl, onboardingHref, router, shouldResumeSetup]);
 
   const restoreCreateFocus = useCallback(() => {
-    if (pendingFocusHref.current !== committedLocation.current) return;
-    const target = createTriggerRef.current ?? mainRef.current;
+    const pending = pendingCreateFocus.current;
+    if (pending?.location !== committedLocation.current) return;
+    const target =
+      (pending.preferLauncher && !createTriggerRef.current?.disabled
+        ? createTriggerRef.current
+        : null) ?? mainRef.current;
     target?.focus({ preventScroll: true });
-    if (target === document.activeElement) pendingFocusHref.current = null;
+    if (target === document.activeElement) pendingCreateFocus.current = null;
   }, []);
 
   const handleCreateCloseAutoFocus = useCallback(() => {
@@ -503,7 +374,7 @@ export function ShellHeader({
 
   useEffect(() => {
     committedLocation.current = locationKey;
-    if (pendingFocusHref.current !== locationKey) return;
+    if (pendingCreateFocus.current?.location !== locationKey) return;
     const frame = requestAnimationFrame(restoreCreateFocus);
     return () => cancelAnimationFrame(frame);
   }, [locationKey, restoreCreateFocus]);
@@ -511,12 +382,12 @@ export function ShellHeader({
   const handleCreateClose = useCallback(
     (reason?: "preview") => {
       setUserCreateOwner(null);
-      const cleanHref = withoutSessionLaunch(pathname, search);
-      if (createFromUrl) {
+      const cleanHref = launchFromUrl ? withoutSessionLaunch(pathname, search) : locationKey;
+      if (launchFromUrl) {
         setDismissedCreateUrlKey(createUrlKey);
       }
       if (reason === "preview") {
-        if (createFromUrl) {
+        if (launchFromUrl) {
           setRecoverableLaunch({
             composerKey,
             location: cleanHref,
@@ -529,20 +400,21 @@ export function ShellHeader({
       }
       const destination =
         returnTo ??
-        (createFromUrl && pathname !== sessionsHref
+        (launchFromUrl && pathname !== sessionsHref
           ? workspaceSessionsPath(workspace.slug, { factory: creationFactoryQuery })
           : cleanHref + window.location.hash);
       clearRecoverableLaunch();
-      pendingFocusHref.current = destination.split("#", 1)[0];
-      if (!createFromUrl && pendingFocusHref.current === locationKey) return;
+      const focusLocation = destination.split("#", 1)[0];
+      pendingCreateFocus.current = { location: focusLocation, preferLauncher: !returnTo };
+      if (!launchFromUrl && focusLocation === locationKey) return;
       router.replace(destination, { scroll: destination.split(/[?#]/u, 1)[0] !== pathname });
     },
     [
       clearRecoverableLaunch,
       composerKey,
-      createFromUrl,
       createUrlKey,
       creationFactoryQuery,
+      launchFromUrl,
       locationKey,
       pathname,
       returnTo,
@@ -553,15 +425,6 @@ export function ShellHeader({
       workspace.slug,
     ],
   );
-
-  function preloadCreateDialog() {
-    createDialogPreloads.current ??= new Set();
-    preloadCreateSessionDialogOnce(createDialogPreloads.current, {
-      userId: viewerId,
-      workspaceId: workspace.id,
-      factoryId: creationScope?.kind === "factory" ? creationScope.factory.id : undefined,
-    });
-  }
 
   function handleNavClick(event: MouseEvent<HTMLAnchorElement>, mobile: boolean) {
     if (!isUnmodifiedPrimaryClick(event)) return;
@@ -608,42 +471,6 @@ export function ShellHeader({
     globalScope ? remembered : scoped,
     globalScope,
   );
-
-  function renderPrimaryAction() {
-    if (shouldResumeSetup) {
-      return (
-        <Link
-          className={cn(
-            sessionsBrowse ? "ui-button-primary" : "ui-button",
-            "min-h-9 px-2.5 text-[13px]",
-          )}
-          href={onboardingHref}
-        >
-          <span className="lg:hidden">Setup</span>
-          <span className="hidden lg:inline">Resume setup</span>
-        </Link>
-      );
-    }
-    if (!sessionsBrowse || !creationScope) return null;
-
-    return (
-      <button
-        ref={createTriggerRef}
-        type="button"
-        className="ui-button-primary inline-flex size-9 items-center justify-center gap-2 whitespace-nowrap px-0 lg:min-h-9 lg:w-auto lg:px-3"
-        aria-label="New session"
-        onClick={() => {
-          startInteraction("open_create_dialog", interactionRouteTemplateForPath(pathname));
-          setUserCreateOwner(composerKey);
-        }}
-        onFocus={preloadCreateDialog}
-        onPointerEnter={preloadCreateDialog}
-      >
-        <PlusIcon className="h-3.5 w-3.5" />
-        <span className="hidden lg:inline">New session</span>
-      </button>
-    );
-  }
 
   return (
     <WorkspaceScopeContext.Provider value={scopeContext}>
@@ -739,7 +566,27 @@ export function ShellHeader({
               </Dialog>
             </div>
             <div className="ml-auto flex shrink-0 items-center gap-1 lg:gap-2">
-              {renderPrimaryAction()}
+              {shouldResumeSetup ? (
+                <Link
+                  className={cn(
+                    sessionsBrowse ? "ui-button-primary" : "ui-button",
+                    "min-h-9 px-2.5 text-[13px]",
+                  )}
+                  href={onboardingHref}
+                >
+                  <span className="lg:hidden">Setup</span>
+                  <span className="hidden lg:inline">Resume setup</span>
+                </Link>
+              ) : null}
+              <NewSessionButton
+                disabledReason={createDisabledReason}
+                factoryId={creationFactoryId}
+                onOpen={() => setUserCreateOwner({ key: composerKey, location: locationKey })}
+                pathname={pathname}
+                ref={createTriggerRef}
+                userId={viewerId}
+                workspaceId={workspace.id}
+              />
               <ThemeToggle />
               <AccountMenu avatarUrl={viewerAvatarUrl} email={viewerEmail} />
             </div>
@@ -781,8 +628,9 @@ export function ShellHeader({
       </div>
 
       {mountedComposer?.key === composerKey ? (
-        <CreateSessionDialog
+        <LazyCreateSessionDialog
           key={composerKey}
+          creationContextKey={scopeLocationKey}
           creationScope={mountedComposer.scope}
           launchKey={launchKey}
           open={createOpen}

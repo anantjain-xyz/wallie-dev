@@ -74,8 +74,10 @@ const intakeOptionsSchema = z
   })
   .refine(({ definitionDigest, options }) => definitionDigest !== null || options.length === 0);
 const defaultWorkflowOption = { label: "Default pipeline", value: "" };
+const factoryFieldId = "session-factory";
 
 type CreateSessionDialogProps = {
+  creationContextKey?: string;
   creationFactoryId?: string;
   creationFactoryName?: string;
   creationScope?: SessionCreationScope;
@@ -231,6 +233,7 @@ function ScopedCreateSessionDialog({ onDraftReset, ...props }: CreateSessionDial
 
 function CreateSessionDialogBody({
   clearRecoveryToast,
+  creationContextKey,
   creationFactoryId,
   creationFactoryName,
   creationScope,
@@ -254,6 +257,7 @@ function CreateSessionDialogBody({
   const pathname = usePathname();
   const { startNavigation } = useOptionalRouteProgress();
   const errorRef = useRef<HTMLDivElement>(null);
+  const fixedFactoryRef = useRef<HTMLDListElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const submitInFlightRef = useRef(false);
   const sessionCommittedRef = useRef(false);
@@ -263,7 +267,12 @@ function CreateSessionDialogBody({
   const previewVisibleRef = useRef(false);
   const [unconfirmedAttempt, setUnconfirmedAttempt] = useState<SessionCreationAttempt | null>(null);
   const unconfirmed = unconfirmedAttempt !== null;
-  const destination = useSessionCreationDestination(creationScope, open, workspaceId);
+  const destination = useSessionCreationDestination(
+    creationScope,
+    open,
+    workspaceId,
+    creationContextKey,
+  );
   const targetFactoryId = destination.factory?.id.toLowerCase();
   const targetFactoryName = creationScope
     ? destination.catalogIsCurrent
@@ -273,6 +282,7 @@ function CreateSessionDialogBody({
   const workflowFactoryId = creationScope ? targetFactoryId : creationFactoryId;
   const scopeKey = JSON.stringify([
     creationScope?.kind ?? "legacy",
+    destination.editable ? creationContextKey : undefined,
     targetFactoryId,
     launchKey ?? { workflowLaunchActivationId },
   ]);
@@ -299,7 +309,12 @@ function CreateSessionDialogBody({
     if (sessionCommittedRef.current) {
       onPreviewChange?.(null);
       onReset();
-    } else if (attemptRef.current?.scopeKey === scopeKey && isSubmitting && onPreviewChange) {
+    } else if (
+      attemptRef.current?.scopeKey === scopeKey &&
+      isSubmitting &&
+      onPreviewChange &&
+      (!destination.editable || previewVisibleRef.current)
+    ) {
       showPendingPreview(attemptRef.current.snapshot);
     } else if (!attemptRef.current && scopeOptionsReady) {
       refreshExpiredImages();
@@ -1100,6 +1115,8 @@ function CreateSessionDialogBody({
     manualOverrideChoice,
   );
   const dialogDisabled = isSubmitting || unconfirmed;
+  const factoryOptions = destination.catalog?.factories;
+  const factoryUnavailable = Boolean(factoryOptions?.length && destination.unavailable);
   const repositoryField = repositoryCacheKey ? (
     <RepositoryField
       disabled={dialogDisabled}
@@ -1128,10 +1145,21 @@ function CreateSessionDialogBody({
         dismissible={!isSubmittingHere && !hasActiveAttachmentOperation}
         title="Start a new session"
         onCloseAutoFocus={onCloseAutoFocus}
+        onEscapeKeyDown={(event) => {
+          if (document.getElementById(factoryFieldId)?.getAttribute("aria-expanded") === "true") {
+            event.preventDefault();
+          }
+        }}
         onOpenAutoFocus={(event) => {
           if (visibleErrorMessage) {
             event.preventDefault();
             errorRef.current?.focus();
+          } else if (destination.editable && event.currentTarget instanceof HTMLElement) {
+            event.preventDefault();
+            (
+              event.currentTarget.querySelector<HTMLElement>(`#${factoryFieldId}`) ??
+              event.currentTarget
+            ).focus({ preventScroll: true });
           }
         }}
       >
@@ -1184,29 +1212,34 @@ function CreateSessionDialogBody({
                 ) : null}
               </div>
             ) : null}
-            {creationScope?.kind === "all" &&
-            destination.catalog?.factories?.length &&
-            (destination.catalog.factories.length > 1 || !destination.factory) ? (
+            {factoryOptions?.length && (factoryOptions.length > 1 || !destination.factory) ? (
               <SelectField
+                aria-describedby={factoryUnavailable ? "session-factory-unavailable" : undefined}
                 aria-required="true"
-                disabled={isSubmitting || hasActiveAttachmentOperation}
+                disabled={hasActiveAttachmentOperation}
                 fallbackLabel="Choose a factory"
+                id={factoryFieldId}
                 label="Factory"
-                onValueChange={destination.choose}
-                options={destination.catalog.factories.map(({ id, name }) => ({
-                  label: name,
-                  value: id,
-                }))}
+                onValueChange={(id) => {
+                  destination.choose(id);
+                  if (factoryOptions.length === 1) {
+                    requestAnimationFrame(() =>
+                      fixedFactoryRef.current?.focus({ preventScroll: true }),
+                    );
+                  }
+                }}
+                options={factoryOptions.map(({ id, name }) => ({ label: name, value: id }))}
+                triggerClassName="min-h-11 sm:min-h-9"
                 value={destination.factory?.id ?? ""}
                 wrap
               />
             ) : targetFactoryName ? (
-              <dl className="space-y-1">
+              <dl className="space-y-1" ref={fixedFactoryRef} tabIndex={-1}>
                 <dt className="text-sm font-medium">Factory</dt>
                 <dd className="text-sm text-muted wrap-anywhere">{targetFactoryName}</dd>
               </dl>
             ) : null}
-            {creationScope?.kind === "all" && (!destination.catalog || !destination.factory) ? (
+            {destination.editable ? (
               !destination.catalog ? (
                 <p aria-busy="true" className="text-sm text-muted" role="status">
                   Loading factories…
@@ -1225,6 +1258,10 @@ function CreateSessionDialogBody({
                 <p className="text-sm text-muted" role="status">
                   You can’t start a session in any active factory. Ask a workspace admin for access.
                 </p>
+              ) : factoryUnavailable ? (
+                <p className="text-sm text-warning" id="session-factory-unavailable" role="status">
+                  You can’t start a session in that factory. Choose another factory.
+                </p>
               ) : null
             ) : null}
             {factoryConflictsWithRetry ? (
@@ -1232,10 +1269,16 @@ function CreateSessionDialogBody({
                 <p className="text-sm text-warning" role="status">
                   Creation is unconfirmed in{" "}
                   {unconfirmedAttempt.snapshot.factoryName ?? "the default factory"}. A session may
-                  already exist. Return there to retry.
+                  already exist.
+                  {!launchConflictsWithRetry &&
+                  factoryOptions?.some(({ id }) => id === unconfirmedAttempt.input.factoryId)
+                    ? " Select that factory above to retry."
+                    : originalDraftAction
+                      ? null
+                      : " Return to the original draft to retry."}
                 </p>
                 {originalDraftAction}
-                {scopeOptionsReady && targetFactoryId ? (
+                {destination.editable && scopeOptionsReady && targetFactoryId ? (
                   <button
                     className="ui-button min-h-9"
                     disabled={isSubmitting}
@@ -1260,7 +1303,7 @@ function CreateSessionDialogBody({
                 disabled={dialogDisabled}
                 aria-describedby={visibleErrorMessage ? "create-session-error" : undefined}
                 autoComplete="off"
-                autoFocus={!visibleErrorMessage && creationScope?.kind !== "all"}
+                autoFocus={!visibleErrorMessage && !destination.editable}
                 name="prompt"
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
@@ -1397,11 +1440,12 @@ function CreateSessionDialogBody({
               />
             ) : null}
 
-            {unconfirmed ||
-            workflowOptions.length ||
-            workflowActivationId ||
-            workflowOptionsError ||
-            workflowLaunchRequested ? (
+            {!factoryConflictsWithRetry &&
+            (unconfirmed ||
+              workflowOptions.length ||
+              workflowActivationId ||
+              workflowOptionsError ||
+              workflowLaunchRequested) ? (
               <div className="min-w-0 space-y-2">
                 {unconfirmedAttempt || workflowLaunchRequested ? (
                   <div className="space-y-1">

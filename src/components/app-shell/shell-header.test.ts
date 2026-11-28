@@ -5,21 +5,21 @@ import "@testing-library/jest-dom/vitest";
 import { PrefetchKind } from "next/dist/client/components/router-reducer/router-reducer-types";
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   CreateSessionDialogLoading,
   CreateSessionDialogRequest,
-  prefetchShellNavHrefOnIntent,
   preloadCreateSessionDialogOnce,
-  ShellHeader,
-} from "@/components/app-shell/shell-header";
+} from "@/components/app-shell/new-session-action";
+import { prefetchShellNavHrefOnIntent, ShellHeader } from "@/components/app-shell/shell-header";
 import { normalizeTheme, resolveInitialTheme } from "@/components/app-shell/theme-toggle";
 import {
   matchWorkspaceLocation,
   readFactoryRequest,
   resolveWorkspaceScope,
   workspaceScopeLocationKey,
+  workspaceScopePreferenceKey,
 } from "@/components/app-shell/workspace-location";
 import { WorkspaceScopeHandoff } from "@/components/app-shell/workspace-scope-context";
 import { OverlayProvider } from "@/components/ui/overlay-provider";
@@ -81,9 +81,19 @@ function renderShell(props: Partial<HeaderProps> = {}) {
   return renderToStaticMarkup(createElement(ShellHeader, createShellProps(props), "Page body"));
 }
 
-function shellElement(props: Partial<HeaderProps> = {}, children: ReactNode = "Page body") {
+function shellElement(
+  props: Partial<HeaderProps> = {},
+  children: ReactNode = "Page body",
+  {
+    resourceFactoryId = null,
+    receiptPath = mocked.pathname,
+  }: {
+    resourceFactoryId?: string | null;
+    receiptPath?: string;
+  } = {},
+) {
   const header = createShellProps(props);
-  const location = matchWorkspaceLocation(mocked.pathname, header.workspace.slug);
+  const location = matchWorkspaceLocation(receiptPath, header.workspace.slug);
   const factories = header.factories ?? [];
   const query = readFactoryRequest(mocked.searchParams);
   return createElement(
@@ -95,16 +105,13 @@ function shellElement(props: Partial<HeaderProps> = {}, children: ReactNode = "P
       createElement(WorkspaceScopeHandoff, {
         snapshot: {
           factories,
-          locationKey: workspaceScopeLocationKey(
-            mocked.pathname,
-            location?.detail ? undefined : query,
-          ),
+          locationKey: workspaceScopeLocationKey(receiptPath, location?.detail ? undefined : query),
           picker: location?.detail ? "locked" : "header",
           scope: resolveWorkspaceScope(
             location,
             factories,
             query,
-            location?.detail ? null : undefined,
+            location?.detail ? resourceFactoryId : undefined,
           ),
           viewerId: header.viewerId,
           workspaceId: header.workspace.id,
@@ -213,14 +220,20 @@ describe("ShellHeader", () => {
     }
   });
 
-  it("replaces New session with Resume setup while onboarding is incomplete", () => {
+  beforeEach(() => {
+    clientMocks.loadSessionCreationFactoriesFromClient
+      .mockReset()
+      .mockResolvedValue(defaultOptions);
+  });
+
+  it("keeps New session visible with Resume setup while onboarding is incomplete", () => {
     const html = renderShell({
       onboarding: { currentStep: "repository", status: "in_progress" },
     });
 
     expect(html).toContain('href="/w/acme-corp/onboarding"');
     expect(html).toContain("Resume setup");
-    expect(html).not.toContain("New session");
+    expect(html).toContain('aria-label="New session"');
     expect(html).not.toContain("data-dialog-state");
   });
 
@@ -239,13 +252,13 @@ describe("ShellHeader", () => {
       "href",
       "/w/acme-corp/onboarding",
     );
-    expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+    expect(screen.getByRole("button", { name: "New session" })).toBeDisabled();
     expect(screen.queryByRole("dialog", { name: "Start a new session" })).toBeNull();
     expect(mocked.replace).toHaveBeenCalledWith("/w/acme-corp/onboarding");
   });
 
   it.each(["runs", "sessions/42"])(
-    "offers a secondary Resume setup action on %s without a session launcher",
+    "offers a secondary Resume setup action on %s with creation disabled",
     (path) => {
       mocked.pathname = `/w/acme-corp/${path}`;
       mountShell({ onboarding: { currentStep: "repository", status: "in_progress" } });
@@ -254,44 +267,43 @@ describe("ShellHeader", () => {
       expect(resume).toHaveAttribute("href", "/w/acme-corp/onboarding");
       expect(resume).toHaveClass("ui-button");
       expect(resume).not.toHaveClass("ui-button-primary");
-      expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+      expect(screen.getByRole("button", { name: "New session" })).toBeDisabled();
     },
   );
 
   it("blocks the default-factory creation deep link for an unauthorized viewer", () => {
     mocked.searchParams = new URLSearchParams("create=1&factory=factory-1");
     mountShell({ factories: [] });
-    expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+    expect(screen.getByRole("button", { name: "New session" })).toBeEnabled();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it.each([
-    ["the workspace home", "/w/acme-corp", "", true],
-    ["the explicit default factory scope", "/w/acme-corp", "factory=factory-1", true],
-    ["a case-insensitive default factory id", "/w/acme-corp", "factory=FACTORY-1", true],
-    ["a runs list page", "/w/acme-corp/runs", "", false],
-    ["an unscoped session detail page", "/w/acme-corp/sessions/42", "", false],
-    ["an unscoped run detail page", "/w/acme-corp/runs/run-1", "", false],
-  ])(
-    "places the New session launcher according to the view at %s",
-    (_label, pathname, query, show) => {
-      mocked.pathname = pathname;
-      mocked.searchParams = new URLSearchParams(query);
-      mountShell();
-      expect(Boolean(screen.queryByRole("button", { name: "New session" }))).toBe(show);
-      expect(screen.queryByRole("link", { name: /New session in/ })).toBeNull();
-    },
-  );
-
-  it.each([
-    ["another factory", "factory=other-factory", true],
-    ["the all-factories aggregate", "factory=all", true],
-    ["a repeated malformed scope", "factory=factory-1&factory=other-factory", false],
-    ["an unknown factory id", "factory=missing-factory", false],
-  ])("never rewrites New session to the default factory from %s", (_label, query, allowed) => {
+    ["the workspace home", "/w/acme-corp", ""],
+    ["the explicit default factory scope", "/w/acme-corp", "factory=factory-1"],
+    ["a case-insensitive default factory id", "/w/acme-corp", "factory=FACTORY-1"],
+    ["a runs list page", "/w/acme-corp/runs", ""],
+    ["an unscoped session detail page", "/w/acme-corp/sessions/42", ""],
+    ["an unscoped run detail page", "/w/acme-corp/runs/run-1", ""],
+    ["a workflow editor", "/w/acme-corp/workflows/workflow-1", ""],
+    ["global Settings", "/w/acme-corp/settings", ""],
+  ])("places one New session launcher at %s", (_label, pathname, query) => {
+    mocked.pathname = pathname;
     mocked.searchParams = new URLSearchParams(query);
     mountShell();
-    expect(Boolean(screen.queryByRole("button", { name: "New session" }))).toBe(allowed);
+    expect(screen.getByRole("button", { name: "New session" })).toBeEnabled();
+    expect(screen.queryByRole("link", { name: /New session in/ })).toBeNull();
+  });
+
+  it.each([
+    ["another factory", "factory=other-factory"],
+    ["the all-factories aggregate", "factory=all"],
+    ["a repeated malformed scope", "factory=factory-1&factory=other-factory"],
+    ["an unknown factory id", "factory=missing-factory"],
+  ])("never rewrites New session to the default factory from %s", (_label, query) => {
+    mocked.searchParams = new URLSearchParams(query);
+    mountShell();
+    expect(screen.getByRole("button", { name: "New session" })).toBeEnabled();
     expect(screen.queryByRole("link", { name: /New session in/ })).toBeNull();
     expect(mocked.replace).not.toHaveBeenCalled();
   });
@@ -306,15 +318,67 @@ describe("ShellHeader", () => {
     mocked.pathname = pathname;
     mountShell();
     expect(screen.queryByRole("link", { name: /New session in/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+    expect(screen.getByRole("button", { name: "New session" })).toBeEnabled();
   });
 
   it("blocks a create deep link in an unknown scope without offering a different factory", () => {
     mocked.searchParams = new URLSearchParams("create=1&factory=missing-factory");
     mountShell();
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+    expect(screen.getByRole("button", { name: "New session" })).toBeEnabled();
     expect(screen.queryByRole("link", { name: /New session in/ })).toBeNull();
+  });
+
+  it("uses the committed detail factory and waits for a new route’s receipt", async () => {
+    const detailPath = "/w/acme-corp/sessions/42";
+    const [defaultFactory, otherFactory] = defaultOptions;
+    const header = { viewerId: "detail-composer-receipt" };
+    mockScopedSessionOptions();
+    mocked.pathname = detailPath;
+    mocked.searchParams = new URLSearchParams(`factory=${defaultFactory.id}`);
+    const oldReceipt = { resourceFactoryId: otherFactory.id, receiptPath: detailPath };
+    const view = render(shellElement(header, "Detail", oldReceipt));
+    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    await screen.findByLabelText("Prompt");
+    const dialog = await screen.findByRole("dialog", { name: "Start a new session" });
+    const picker = await within(dialog).findByRole("combobox", { name: "Factory" });
+    expect(picker).toHaveTextContent(otherFactory.name);
+    fireEvent.click(picker);
+    fireEvent.click(screen.getByRole("option", { name: defaultFactory.name }));
+    expect(picker).toHaveTextContent(defaultFactory.name);
+    expect(screen.getByText(otherFactory.name, { selector: "header span" })).toBeInTheDocument();
+    expect(mocked.push).not.toHaveBeenCalled();
+    expect(mocked.replace).not.toHaveBeenCalled();
+
+    mocked.pathname = "/w/acme-corp/runs/run-1";
+    view.rerender(shellElement(header, "Run detail", oldReceipt));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: "New session" })).toBeDisabled();
+    view.rerender(shellElement(header, "Run detail", { resourceFactoryId: otherFactory.id }));
+    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    const nextDialog = await screen.findByRole("dialog", { name: "Start a new session" });
+    expect(await within(nextDialog).findByRole("combobox", { name: "Factory" })).toHaveTextContent(
+      otherFactory.name,
+    );
+  });
+
+  it("opens global Settings without preselecting a URL filter or remembered factory", async () => {
+    const viewerId = "global-composer";
+    mocked.pathname = "/w/acme-corp/settings";
+    mocked.searchParams = new URLSearchParams(
+      `category=integrations&factory=${creationFactory.id}`,
+    );
+    window.localStorage.setItem(
+      workspaceScopePreferenceKey(viewerId, workspace.id),
+      creationFactory.id,
+    );
+    mountShell({ viewerId });
+    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    const dialog = await screen.findByRole("dialog", { name: "Start a new session" });
+    expect(await within(dialog).findByRole("combobox", { name: "Factory" })).toHaveTextContent(
+      "Choose a factory",
+    );
+    expect(mocked.replace).not.toHaveBeenCalled();
   });
 
   it("keeps Pipeline current on the page and both existing setup bookmarks", () => {
@@ -538,7 +602,7 @@ describe("ShellHeader", () => {
     expect(screen.getByRole("heading", { name: "Archived sessions" })).toBeVisible();
     expect(screen.queryByRole("region", { name: "Creating session" })).toBeNull();
     if (outcome !== "success") await settle();
-    expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+    expect(screen.getByRole("button", { name: "New session" })).toBeEnabled();
     expect(screen.queryByRole("dialog", { name: "Start a new session" })).toBeNull();
     expect(mocked.push).toHaveBeenCalledTimes(outcome === "ineligible" ? 0 : 1);
 
@@ -567,7 +631,7 @@ describe("ShellHeader", () => {
         }),
       );
       expect(screen.queryByRole("dialog", { name: "Start a new session" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+      expect(screen.getByRole("button", { name: "New session" })).toBeEnabled();
     }
     view.rerender(shellElement(header));
     const recovered = await screen.findByRole("dialog", { name: "Start a new session" });

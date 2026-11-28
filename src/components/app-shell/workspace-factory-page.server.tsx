@@ -64,7 +64,12 @@ export function scopeFactoryIndex<Search extends WorkspaceLocationQuery>(
       snapshot.factories,
     );
     if (!choices.length && route === "governance") {
-      return <Page params={params} searchParams={searchParams} />;
+      return (
+        <>
+          <WorkspaceScopeHandoff snapshot={snapshot} />
+          <Page params={params} searchParams={searchParams} />
+        </>
+      );
     }
 
     if (snapshot.scope.kind !== "factory") {

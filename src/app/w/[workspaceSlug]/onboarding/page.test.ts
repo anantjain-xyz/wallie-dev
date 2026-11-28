@@ -191,6 +191,7 @@ const onboardingData = {
 describe("workspace onboarding page", () => {
   it("renders member-accessible onboarding data without the app shell", async () => {
     const authenticatedContext = {
+      user: { id: "owner-1" },
       workspace: { id: "workspace-1", name: "Northwind", slug: "northwind" },
     };
     mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue(authenticatedContext);
@@ -201,10 +202,11 @@ describe("workspace onboarding page", () => {
 
     const element = (await WorkspaceOnboardingPage({
       params: Promise.resolve({ workspaceSlug: "northwind" }),
-    })) as ReactElement<{ initialData: WorkspaceOnboardingData }>;
+    })) as ReactElement<{ initialData: WorkspaceOnboardingData; viewerId: string }>;
 
     expect(element.type).toBe(mocked.OnboardingPageClient);
     expect(element.props.initialData).toBe(onboardingData);
+    expect(element.props.viewerId).toBe("owner-1");
     expect(mocked.loadWorkspaceOnboardingDataForContext).toHaveBeenCalledWith(authenticatedContext);
   });
 

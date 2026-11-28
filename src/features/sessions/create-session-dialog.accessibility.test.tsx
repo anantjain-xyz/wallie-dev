@@ -5,10 +5,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
-import { CreateSessionDialogLoading } from "@/components/app-shell/shell-header";
+import { CreateSessionDialogLoading } from "@/components/app-shell/new-session-action";
 import {
   getSessionRepositorySnapshot,
   invalidateSessionRepositoryCache,
@@ -114,6 +114,12 @@ describe("factory session composer", () => {
       />
     </OverlayProvider>
   );
+
+  beforeEach(() => {
+    clientMocks.loadSessionCreationFactoriesFromClient
+      .mockReset()
+      .mockResolvedValue([bench, central]);
+  });
 
   it("waits for a deliberate All choice before fetching options, validating files, or starting", async () => {
     const user = userEvent.setup();
@@ -307,21 +313,187 @@ describe("factory session composer", () => {
       canonicalUrl: "/w/acme/sessions/42",
       number: 42,
     });
-    const view = render(renderScope({ kind: "factory", factory: central }));
+    render(renderScope({ kind: "factory", factory: central }));
+    const picker = await screen.findByRole("combobox", { name: "Factory" });
+    expect(picker).toHaveTextContent(central.name);
     await user.type(screen.getByLabelText("Prompt"), "Keep this draft");
     expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
 
-    view.rerender(renderScope({ kind: "factory", factory: bench }));
+    await user.click(picker);
+    await user.click(screen.getByRole("option", { name: bench.name }));
     expect(await screen.findByText(stage.name)).toBeVisible();
     await act(async () => pending.resolve(centralOptions));
 
-    expect(screen.getByText("Factory").parentElement).toHaveTextContent(bench.name);
+    expect(picker).toHaveTextContent(bench.name);
     expect(screen.getByText("Repository").parentElement).toHaveTextContent(repo.fullName);
     expect(screen.queryByLabelText("Linear issue URL")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Start session" }));
     expect(clientMocks.createSessionFromClient).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ factoryId: bench.id, promptMd: "Keep this draft" }),
     );
+  });
+
+  it("preselects the viewed factory, retains the draft, and submits new choices for explicit Default", async () => {
+    const user = userEvent.setup();
+    const file = new File(["proof"], "proof.png", { type: "image/png" });
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockImplementation(({ factoryId }) =>
+      Promise.resolve(factoryId === central.id ? centralOptions : benchOptions),
+    );
+    clientMocks.uploadSessionAttachmentFromClient.mockResolvedValueOnce({
+      id: "draft-image",
+      fileName: file.name,
+      contentType: file.type,
+      sizeBytes: file.size,
+    });
+    clientMocks.createSessionFromClient.mockResolvedValueOnce({
+      canonicalUrl: "/w/acme/sessions/42",
+      number: 42,
+    });
+    render(renderScope({ kind: "factory", factory: bench }));
+
+    const picker = await screen.findByRole("combobox", { name: "Factory" });
+    expect(picker).toHaveTextContent(bench.name);
+    expect(await screen.findByText(stage.name)).toBeVisible();
+    expect(screen.queryByLabelText("Linear issue URL")).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText("Prompt"), "Review the illustration");
+    await user.type(screen.getByLabelText("Title (optional)"), "Illustration");
+    await user.upload(screen.getByLabelText("Add images"), file);
+    await screen.findByText(/Ready/);
+
+    picker.focus();
+    await user.keyboard("{Enter}{Escape}");
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(picker).toHaveFocus();
+    await user.keyboard("{Enter}{ArrowDown}{Enter}");
+    expect(picker).toHaveTextContent(central.name);
+    expect(picker).toHaveFocus();
+    expect(await screen.findByLabelText("Linear issue URL")).toBeVisible();
+    expect(screen.queryByText(stage.name)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Prompt")).toHaveValue("Review the illustration");
+    expect(screen.getByLabelText("Title (optional)")).toHaveValue("Illustration");
+    expect(screen.getByText(file.name)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+
+    expect(clientMocks.loadSessionRepositoryOptionsFromClient).toHaveBeenNthCalledWith(1, {
+      factoryId: bench.id,
+      workspaceId,
+    });
+    expect(clientMocks.loadSessionRepositoryOptionsFromClient).toHaveBeenNthCalledWith(2, {
+      factoryId: central.id,
+      workspaceId,
+    });
+    expect(clientMocks.createSessionFromClient).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        factoryId: central.id,
+        githubRepositoryId: "central-repo",
+        selectedStageIds: ["central-stage"],
+        attachmentIds: ["draft-image"],
+        title: "Illustration",
+      }),
+    );
+    expect(clientMocks.uploadSessionAttachmentFromClient).toHaveBeenCalledOnce();
+    expect(clientMocks.deletePendingSessionAttachmentFromClient).not.toHaveBeenCalled();
+  });
+
+  it.each([{ kind: "factory", factory: bench }, { kind: "unavailable" }] as const)(
+    "requires an explicit choice for an unavailable $kind scope even with one option",
+    async (scope) => {
+      const user = userEvent.setup();
+      clientMocks.loadSessionCreationFactoriesFromClient.mockResolvedValue([central]);
+      clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue(centralOptions);
+      render(renderScope(scope));
+
+      const picker = await screen.findByRole("combobox", { name: "Factory" });
+      expect(picker).toHaveTextContent("Choose a factory");
+      expect(picker).toHaveAccessibleDescription(/Choose another factory/);
+      expect(clientMocks.loadSessionRepositoryOptionsFromClient).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+      await user.click(picker);
+      expect(screen.queryByRole("option", { name: bench.name })).not.toBeInTheDocument();
+      await user.click(screen.getByRole("option", { name: central.name }));
+      const fixedFactory = await screen.findByText(central.name);
+      expect(fixedFactory).toBeVisible();
+      await waitFor(() => expect(fixedFactory.closest("dl")).toHaveFocus());
+      expect(screen.queryByRole("combobox", { name: "Factory" })).not.toBeInTheDocument();
+      expect(await screen.findByLabelText("Linear issue URL")).toBeVisible();
+      expect(clientMocks.loadSessionRepositoryOptionsFromClient).toHaveBeenCalledExactlyOnceWith({
+        factoryId: central.id,
+        workspaceId,
+      });
+    },
+  );
+
+  it("ignores a late eligible catalog for a previous scope when the current one is empty", async () => {
+    const pending = Promise.withResolvers<(typeof bench)[]>();
+    clientMocks.loadSessionCreationFactoriesFromClient
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce([]);
+    const view = render(renderScope({ kind: "factory", factory: bench }));
+    expect(screen.getByText("Loading factories…")).toBeVisible();
+    view.rerender(renderScope({ kind: "factory", factory: central }));
+    expect(await screen.findByText(/can’t start a session in any active factory/)).toBeVisible();
+    await act(async () => pending.resolve([bench, central]));
+    expect(screen.queryByRole("combobox", { name: "Factory" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+    expect(clientMocks.loadSessionRepositoryOptionsFromClient).not.toHaveBeenCalled();
+  });
+
+  it("clears publication and override choices before starting in a different factory", async () => {
+    const user = userEvent.setup();
+    const routing = routingOptions(1);
+    const workflow = {
+      workflowId: "00000000-0000-4000-8000-000000000015",
+      activationId: "00000000-0000-4000-8000-000000000016",
+      label: "Benchmark publication",
+    };
+    const fetchOptions = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () =>
+        Response.json({ definitionDigest: digest, options: [workflow] }),
+      );
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockImplementation(({ factoryId }) =>
+      Promise.resolve(
+        factoryId === central.id ? centralOptions : { ...routing, factoryId: bench.id },
+      ),
+    );
+    clientMocks.createSessionFromClient.mockResolvedValueOnce({
+      canonicalUrl: "/w/acme/sessions/42",
+      number: 42,
+    });
+    try {
+      render(renderScope({ kind: "factory", factory: bench }));
+      const picker = await screen.findByRole("combobox", { name: "Factory" });
+      const pick = async (trigger: HTMLElement, name: string | RegExp) => {
+        await user.click(trigger);
+        await user.click(screen.getByRole("option", { name }));
+      };
+      await pick(await screen.findByRole("combobox", { name: "Workflow" }), workflow.label);
+      await pick(picker, central.name);
+      expect(screen.queryByRole("combobox", { name: "Workflow" })).not.toBeInTheDocument();
+      await pick(picker, bench.name);
+      expect(await screen.findByRole("combobox", { name: "Workflow" })).toHaveTextContent(
+        "Default pipeline",
+      );
+      await pick(
+        screen.getByRole("combobox", { name: "Configuration for this session" }),
+        /Fallback/,
+      );
+      await user.type(screen.getByRole("textbox", { name: "Reason for override" }), routingReason);
+      await pick(picker, central.name);
+      expect(
+        screen.queryByRole("textbox", { name: "Reason for override" }),
+      ).not.toBeInTheDocument();
+      await user.type(screen.getByLabelText("Prompt"), "Start without stale options");
+      await user.click(screen.getByRole("button", { name: "Start session" }));
+      const [input] = clientMocks.createSessionFromClient.mock.calls[0];
+      expect(input.factoryId).toBe(central.id);
+      expect(input.workflowSelection).toBeUndefined();
+      expect(input.routingOverride).toBeUndefined();
+      expect(input.factoryDefinitionDigest).toBeUndefined();
+    } finally {
+      fetchOptions.mockRestore();
+    }
   });
 
   it("does not retry an uncertain request or delete its uploaded image in another factory", async () => {
@@ -337,7 +509,7 @@ describe("factory session composer", () => {
       sizeBytes: 5,
     });
     clientMocks.createSessionFromClient.mockImplementationOnce(() => pending.promise);
-    const view = render(renderScope({ kind: "factory", factory: bench }));
+    render(renderScope({ kind: "factory", factory: bench }));
     await user.upload(
       await screen.findByLabelText("Add images"),
       new File(["proof"], "proof.png", { type: "image/png" }),
@@ -347,15 +519,19 @@ describe("factory session composer", () => {
     await user.click(screen.getByRole("button", { name: "Start session" }));
     const [original] = clientMocks.createSessionFromClient.mock.calls[0];
 
-    view.rerender(renderScope({ kind: "factory", factory: central }));
+    const picker = screen.getByRole("combobox", { name: "Factory" });
+    await user.click(picker);
+    await user.click(screen.getByRole("option", { name: central.name }));
     await act(async () => pending.reject(new TypeError("Failed to fetch")));
     expect(screen.getByText(/Creation is unconfirmed in Bench factory/)).toBeVisible();
+    expect(screen.getByText(/Select that factory above to retry/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Retry creation" })).toBeDisabled();
     expect(clientMocks.createSessionFromClient).toHaveBeenCalledOnce();
     expect(clientMocks.deletePendingSessionAttachmentFromClient).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Prompt")).toHaveValue("Preserve this upload");
 
-    view.rerender(renderScope({ kind: "factory", factory: bench }));
+    await user.click(picker);
+    await user.click(screen.getByRole("option", { name: bench.name }));
     clientMocks.createSessionFromClient.mockResolvedValueOnce({
       canonicalUrl: "/w/acme/sessions/42",
       number: 42,
@@ -387,6 +563,19 @@ describe("factory session composer", () => {
     );
     expect(screen.queryByRole("combobox", { name: "Repository" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+    expect(clientMocks.loadSessionRepositoryOptionsFromClient).toHaveBeenCalledExactlyOnceWith({
+      factoryId: bench.id,
+      workspaceId,
+    });
+  });
+
+  it("never unlocks a factory-bound entry even when the viewer can start elsewhere", async () => {
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue(benchOptions);
+    render(renderScope({ kind: "pinned", factory: bench }));
+    expect(await screen.findByText(stage.name)).toBeVisible();
+    expect(screen.getByText("Factory").parentElement).toHaveTextContent(bench.name);
+    expect(screen.queryByRole("combobox", { name: "Factory" })).not.toBeInTheDocument();
+    expect(clientMocks.loadSessionCreationFactoriesFromClient).not.toHaveBeenCalled();
     expect(clientMocks.loadSessionRepositoryOptionsFromClient).toHaveBeenCalledExactlyOnceWith({
       factoryId: bench.id,
       workspaceId,

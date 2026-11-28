@@ -24,5 +24,12 @@ export default async function WorkspaceOnboardingPage({ params }: WorkspaceOnboa
     notFound();
   }
 
-  return <OnboardingPageClient initialData={result.data} initialNow={new Date().toISOString()} />;
+  return (
+    <OnboardingPageClient
+      initialData={result.data}
+      initialNow={new Date().toISOString()}
+      key={`${authenticatedContext.user.id}:${result.data.workspace.id}`}
+      viewerId={authenticatedContext.user.id}
+    />
+  );
 }
