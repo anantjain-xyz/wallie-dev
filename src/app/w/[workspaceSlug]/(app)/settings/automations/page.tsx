@@ -1,8 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Suspense, type ComponentProps } from "react";
+import { Suspense, type ComponentProps, type ReactNode } from "react";
 import { z } from "zod";
 
+import {
+  workspaceLocationForRoute,
+  workspaceScopeOptions,
+} from "@/components/app-shell/workspace-location";
+import { WorkspaceScopeHandoff } from "@/components/app-shell/workspace-scope-context";
+import { WorkspaceScopeRequired } from "@/components/app-shell/workspace-scope-required";
+import { loadWorkspaceRouteScope } from "@/components/app-shell/workspace-scope.server";
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
 import { AutomationAdmissionPanel } from "@/features/factory-automations/automation-admission-panel";
 import {
@@ -20,9 +27,6 @@ import {
   AutomationSchedulePreview,
   type AutomationScheduleEvidence,
 } from "@/features/factory-automations/automation-schedule-preview";
-import { scopeFactoryIndex } from "@/components/app-shell/workspace-factory-page.server";
-import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
-import { resolveGovernanceFactorySelection } from "@/features/factories/factory-selection";
 import {
   isWorkspaceOperator,
   loadAuthenticatedWorkspaceContext,
@@ -55,9 +59,16 @@ import {
   workspaceSettingsPath,
 } from "@/lib/routes";
 
+const FACTORY_SWITCH_RESET_PARAMS = [
+  "automation",
+  "revision",
+  "mode",
+  "historyBefore",
+  "historyBeforeId",
+];
+
 const selectionSchema = z
   .object({
-    factory: factoryAutomationPathSchema.shape.factoryId.optional(),
     automation: factoryAutomationPathSchema.shape.automationId.optional(),
     revision: factoryAutomationReadQuerySchema.shape.revisionId,
     afterId: factoryAutomationListQuerySchema.shape.afterId,
@@ -146,7 +157,7 @@ async function ScheduleAndSample({
   );
 }
 
-async function AutomationSettingsPage({
+export default async function AutomationSettingsPage({
   params,
   searchParams,
 }: {
@@ -154,21 +165,61 @@ async function AutomationSettingsPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
-  const [{ workspace, supabase, currentMember }, factories] = await Promise.all([
-    loadAuthenticatedWorkspaceContext(workspaceSlug),
-    loadWorkspaceFactoryOptions(workspaceSlug),
-  ]);
-  const manageable = factories.filter(({ canManage, status }) => canManage && status === "active");
-  if (!manageable.length) notFound();
-  const pagePath = workspaceAutomationPreviewPath(workspaceSlug);
+  const snapshot = await loadWorkspaceRouteScope({
+    picker: "guarded",
+    resetParams: FACTORY_SWITCH_RESET_PARAMS,
+    route: "automations",
+    search,
+    workspaceSlug,
+  });
+  const factories = workspaceScopeOptions(
+    workspaceLocationForRoute("automations", workspaceSlug),
+    snapshot.factories,
+  );
+  if (!factories.length) notFound();
+  if (snapshot.scope.kind !== "factory") {
+    return (
+      <WorkspaceScopeRequired
+        route="automations"
+        snapshot={snapshot}
+        title="Automations"
+        workspaceSlug={workspaceSlug}
+      />
+    );
+  }
+
+  const { workspaceId } = snapshot;
+  const factoryId = snapshot.scope.factory.id;
+  const picker = (
+    <AutomationFactoryPicker
+      factories={factories}
+      factoryId={factoryId}
+      resetParams={snapshot.resetParams}
+    />
+  );
+  function inFactory(children: ReactNode) {
+    return (
+      <>
+        <WorkspaceScopeHandoff snapshot={snapshot} />
+        {children}
+      </>
+    );
+  }
+  function unavailableSelection() {
+    return inFactory(
+      <AutomationDraftNavigation>
+        {picker}
+        <UnavailableSelection href={workspaceAutomationPreviewPath(workspaceSlug)} />
+      </AutomationDraftNavigation>,
+    );
+  }
+
   const parsed = selectionSchema.safeParse(search);
-  if (!parsed.success) return <UnavailableSelection href={pagePath} />;
+  if (!parsed.success) return unavailableSelection();
   const query = parsed.data;
-  const selection = resolveGovernanceFactorySelection(manageable, query.factory);
-  if (selection.kind !== "factory") return <UnavailableSelection href={pagePath} />;
+  const { supabase, currentMember } = await loadAuthenticatedWorkspaceContext(workspaceSlug);
   const canDiscover = isWorkspaceOperator(currentMember);
-  const factoryId = selection.factory.id;
-  const scope = { workspaceId: workspace.id, factoryId };
+  const scope = { workspaceId, factoryId };
   const list = await listFactoryAutomations(supabase, scope, query.afterId);
   if (!list) notFound();
 
@@ -185,7 +236,7 @@ async function AutomationSettingsPage({
             { revisionId: query.revision },
           )
         : null;
-  if (automationId && !automation) return <UnavailableSelection href={pagePath} />;
+  if (automationId && !automation) return unavailableSelection();
 
   const pageSelection = { factory: factoryId, afterId: query.afterId };
   const definition = automation?.revision.definition;
@@ -257,27 +308,21 @@ async function AutomationSettingsPage({
   };
   const newHref = workspaceAutomationPreviewPath(workspaceSlug, { ...pageSelection, mode: "new" });
 
-  return (
+  return inFactory(
     <AutomationDraftNavigation
-      key={JSON.stringify([workspace.id, query, automation?.automationId, editMode])}
+      key={JSON.stringify([workspaceId, factoryId, query, automation?.automationId, editMode])}
     >
+      {picker}
       <PageContainer className="max-w-5xl">
         <PageHeader
           title="Automations"
           actionsRightOnDesktop
           actions={
-            <div className="flex flex-wrap items-end gap-2">
-              <AutomationFactoryPicker
-                factories={manageable}
-                factoryId={factoryId}
-                workspaceSlug={workspaceSlug}
-              />
-              {query.mode !== "new" ? (
-                <Link href={newHref} className="ui-button ui-button-primary shrink-0">
-                  New rule
-                </Link>
-              ) : null}
-            </div>
+            query.mode !== "new" ? (
+              <Link href={newHref} className="ui-button ui-button-primary shrink-0">
+                New rule
+              </Link>
+            ) : null
           }
         />
         <div className="space-y-8">
@@ -356,7 +401,7 @@ async function AutomationSettingsPage({
                       scheduleTimeZone={
                         liveTrigger?.kind === "schedule" ? liveTrigger.timeZone : undefined
                       }
-                      endpoint={`${factoryAutomationApiPath(workspace.id, factoryId, automation.automationId)}/admission-control`}
+                      endpoint={`${factoryAutomationApiPath(workspaceId, factoryId, automation.automationId)}/admission-control`}
                     />
                   </Suspense>
                 </>
@@ -390,9 +435,9 @@ async function AutomationSettingsPage({
             </div>
           </PageSection>
           <AutomationLinearCatalog
-            key={`${workspace.id}:${factoryId}:${canDiscover}`}
+            key={`${workspaceId}:${factoryId}:${canDiscover}`}
             canDiscover={canDiscover}
-            endpoint={`/api/workspaces/${workspace.id}/factories/${factoryId}/connectors`}
+            endpoint={`/api/workspaces/${workspaceId}/factories/${factoryId}/connectors`}
             integrationsHref={workspaceSettingsPath(workspaceSlug, {
               category: "integrations",
               factory: factoryId,
@@ -407,7 +452,7 @@ async function AutomationSettingsPage({
             {editMode ? (
               <AutomationEditor
                 key={automation?.automationId ?? factoryId}
-                workspaceId={workspace.id}
+                workspaceId={workspaceId}
                 workspaceSlug={workspaceSlug}
                 factoryId={factoryId}
                 afterId={query.afterId}
@@ -448,7 +493,7 @@ async function AutomationSettingsPage({
                     definition={definition}
                     schedule={selectedSchedule}
                     endpoint={automationDryRunApiPath(
-                      workspace.id,
+                      workspaceId,
                       factoryId,
                       automation.automationId,
                     )}
@@ -487,12 +532,6 @@ async function AutomationSettingsPage({
           </AutomationLinearCatalog>
         </div>
       </PageContainer>
-    </AutomationDraftNavigation>
+    </AutomationDraftNavigation>,
   );
 }
-
-export default scopeFactoryIndex(AutomationSettingsPage, {
-  route: "automations",
-  title: "Automations",
-  picker: "leaf",
-});

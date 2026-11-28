@@ -8,6 +8,7 @@ import FailureValidationPage from "@/app/w/[workspaceSlug]/(app)/failure-groups/
 import ImprovementPage from "@/app/w/[workspaceSlug]/(app)/improvements/[proposalId]/page";
 import InboxPage from "@/app/w/[workspaceSlug]/(app)/inbox/page";
 import RunsPage from "@/app/w/[workspaceSlug]/(app)/runs/page";
+import AutomationsPage from "@/app/w/[workspaceSlug]/(app)/settings/automations/page";
 import { scopeFactoryIndex } from "@/components/app-shell/workspace-factory-page.server";
 import {
   workspaceFactorySwitchHref,
@@ -26,6 +27,9 @@ const mocks = vi.hoisted(() => ({
   inboxView: vi.fn(),
   runs: vi.fn(),
   activity: vi.fn(),
+  automationList: vi.fn(),
+  automationRead: vi.fn(),
+  automationSetup: vi.fn(),
   factories: vi.fn(),
   failureCohort: vi.fn(),
   failureValidation: vi.fn(),
@@ -66,6 +70,17 @@ vi.mock("@/features/factory-activity/activity-actors-data", () => ({
 vi.mock("@/features/factory-activity/activity-page", () => ({
   FactoryActivityPage: () => "Activity feed",
 }));
+vi.mock("@/lib/factory-automations/service", () => ({
+  listFactoryAutomations: mocks.automationList,
+  readFactoryAutomation: mocks.automationRead,
+  readAutomationAdmissionControl: vi.fn(),
+}));
+vi.mock("@/lib/factory-automations/operator-data", () => ({
+  loadFactoryAutomationSetup: mocks.automationSetup,
+  listFactoryAutomationOccurrenceHistory: vi.fn(),
+  loadAutomationRepositories: vi.fn(),
+  loadAutomationRevisionNames: vi.fn(),
+}));
 vi.mock("@/lib/factory-failures/cohorts", () => ({ getFailureCohort: mocks.failureCohort }));
 vi.mock("@/features/factory-failures/failure-validation-data", () => ({
   loadFailureValidation: mocks.failureValidation,
@@ -80,6 +95,7 @@ const groupsPath = `/w/${slug}/failure-groups`;
 const groupPath = `${groupsPath}/${cohortId}`;
 const validationPath = `${groupPath}/validation/${memberId}`;
 const improvementsPath = `/w/${slug}/improvements`;
+const automationsPath = `/w/${slug}/settings/automations`;
 const proposalPath = `${improvementsPath}/${proposalId}`;
 const mobile = {
   id: "029d7bb8-d497-4ad1-b085-d3264e568faf",
@@ -142,6 +158,9 @@ describe("workspace scope route wiring", () => {
     mocks.factories.mockResolvedValue([platform, mobile]);
     mocks.inbox.mockResolvedValue({});
     mocks.inboxView.mockReturnValue("Inbox");
+    mocks.automationList.mockResolvedValue({ automations: [], nextCursor: null });
+    mocks.automationRead.mockResolvedValue(null);
+    mocks.automationSetup.mockResolvedValue(null);
   });
 
   it("keeps the real Runs route and feeds only valid catalog fields into its strict parser", async () => {
@@ -227,6 +246,75 @@ describe("workspace scope route wiring", () => {
       "Resolved factory body",
     );
     expect(await Body.mock.calls[0]?.[0]?.searchParams).toEqual({ factory: mobile.id });
+  });
+
+  it("uses the authorized Automations receipt for the list, editor setup, and switch reset", async () => {
+    const factory = mobile.id.toUpperCase();
+    const result = await AutomationsPage(props({ factory, mode: "new", afterId: cohortId }));
+    const receipt = result.props.children[0].props.snapshot;
+    expect(receipt).toMatchObject({
+      locationKey: workspaceScopeLocationKey(automationsPath, factory),
+      picker: "guarded",
+      scope: { kind: "factory", factory: mobile },
+    });
+    const scope = { workspaceId: "workspace-id", factoryId: mobile.id };
+    expect(mocks.automationList).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(),
+      scope,
+      cohortId,
+    );
+    expect(mocks.automationSetup).toHaveBeenCalledExactlyOnceWith(expect.anything(), scope);
+    expect(mocks.automationRead).not.toHaveBeenCalled();
+    expect(
+      workspaceFactorySwitchHref(
+        automationsPath,
+        `factory=${factory}&automation=${proposalId}&revision=${revisionId}&mode=new&afterId=${cohortId}&historyBefore=earlier&historyBeforeId=${memberId}&q=keep`,
+        platform.id,
+        receipt.resetParams,
+      ),
+    ).toBe(`${automationsPath}?factory=${platform.id}&q=keep`);
+  });
+
+  it.each([
+    { factory: "", outcome: "Factory unavailable" },
+    { factory: "invalid", outcome: "Factory unavailable" },
+    { factory: cohortId, outcome: "Factory unavailable" },
+    { factory: [platform.id, platform.id], outcome: "Factory unavailable" },
+    { factory: mobile.id, outcome: "Factory unavailable" },
+    { factory: revisionId, outcome: "Factory unavailable" },
+    { factory: "all", outcome: "Choose a factory" },
+    { factory: undefined, outcome: "Choose a factory" },
+  ])(
+    "does not load rules or editor setup for Automations factory $factory",
+    async ({ factory, outcome }) => {
+      mocks.factories.mockResolvedValue([
+        platform,
+        { ...mobile, canManage: false },
+        { ...mobile, id: revisionId, status: "archived" },
+      ]);
+      const markup = await renderPage(AutomationsPage(props({ factory, mode: "new" })));
+      expect(markup).toContain(outcome);
+      expect(markup).not.toContain("New rule");
+      expect(mocks.automationList).not.toHaveBeenCalled();
+      expect(mocks.automationRead).not.toHaveBeenCalled();
+      expect(mocks.automationSetup).not.toHaveBeenCalled();
+      expect(mocks.scopeHandoff).toHaveBeenCalledWith(
+        { snapshot: expect.objectContaining({ picker: "header" }) },
+        undefined,
+      );
+    },
+  );
+
+  it("does not retarget an unavailable automation or offer an editor after a scoped rule miss", async () => {
+    await AutomationsPage(
+      props({ factory: mobile.id, automation: proposalId, revision: revisionId }),
+    );
+    expect(mocks.automationRead).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(),
+      { workspaceId: "workspace-id", factoryId: mobile.id, automationId: proposalId },
+      { revisionId },
+    );
+    expect(mocks.automationSetup).not.toHaveBeenCalled();
   });
 
   it.each([

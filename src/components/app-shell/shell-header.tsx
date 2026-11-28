@@ -328,6 +328,8 @@ export function ShellHeader({
     workspaceScopeLocationKey(pathname, location?.detail ? undefined : factoryRequest),
   );
   const currentFactories = snapshot?.factories ?? factories;
+  const scopeChoices =
+    location && snapshot ? workspaceScopeOptions(location, currentFactories) : [];
   const scoped = snapshot?.scope ?? { kind: "global" };
   const globalScope = location?.mode === "global";
   const remembered = useRememberedWorkspaceScope({
@@ -686,12 +688,14 @@ export function ShellHeader({
               {location && snapshot ? (
                 <WorkspaceFactoryPicker
                   allowAll={location.mode === "aggregate" && !location.detail}
-                  choices={workspaceScopeOptions(location, currentFactories)}
+                  choices={scopeChoices}
                   guardTarget={snapshot.picker === "guarded" ? setGuardedPickerTarget : undefined}
                   locked={snapshot.picker !== "header"}
                   resetParams={snapshot.resetParams}
                   scope={scoped}
-                  visibleFactoryCount={currentFactories.length}
+                  visibleFactoryCount={
+                    location.route === "automations" ? scopeChoices.length : currentFactories.length
+                  }
                 />
               ) : null}
               {activeItem ? (

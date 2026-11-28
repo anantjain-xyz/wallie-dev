@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Link from "next/link";
+import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 
+import { WorkspaceScopeContext } from "@/components/app-shell/workspace-scope-context";
 import { PortalRootProvider } from "@/components/ui/portal-root";
 
 import {
@@ -16,7 +18,14 @@ import {
 } from "./automation-draft-navigation";
 
 const { push } = vi.hoisted(() => ({ push: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/w/example/settings/automations",
+  useRouter: () => ({ push }),
+  useSearchParams: () =>
+    new URLSearchParams(
+      "factory=current&automation=rule&historyBefore=earlier&historyBeforeId=event&afterId=older&q=keep",
+    ),
+}));
 
 const observePopstate = vi.fn();
 
@@ -43,18 +52,34 @@ function Example() {
           { id: "current", name: "Current", status: "active", isDefault: true },
           { id: "alternate", name: "Alternate", status: "active", isDefault: false },
         ]}
-        workspaceSlug="example"
+        resetParams={["automation", "historyBefore", "historyBeforeId"]}
       />
     </>
+  );
+}
+
+function ExampleShell() {
+  const [target, setTarget] = useState<HTMLDivElement | null>(null);
+  return (
+    <WorkspaceScopeContext.Provider
+      value={{ guardedPicker: { target }, ownsPicker: false, publish: () => () => undefined }}
+    >
+      <header>
+        <div ref={setTarget} />
+      </header>
+      <main>
+        <AutomationDraftNavigation>
+          <Example />
+        </AutomationDraftNavigation>
+      </main>
+    </WorkspaceScopeContext.Provider>
   );
 }
 
 function setup() {
   render(
     <PortalRootProvider>
-      <AutomationDraftNavigation>
-        <Example />
-      </AutomationDraftNavigation>
+      <ExampleShell />
     </PortalRootProvider>,
   );
   return userEvent.setup();
@@ -73,10 +98,19 @@ function setupHistory() {
     history.currentEntry = { key, url: urls[key] };
     window.dispatchEvent(new PopStateEvent("popstate", { state: key }));
   }
+  function requestTraversal(key: Key) {
+    const event = Object.assign(new Event("navigate", { cancelable: true }), {
+      destination: { key, url: urls[key], sameDocument: true },
+      navigationType: "traverse",
+    });
+    if (history.dispatchEvent(event)) move(key);
+    return event;
+  }
   const history = Object.assign(new EventTarget(), {
     currentEntry: { key: "draft" as Key, url: urls.draft },
     traverseTo: vi.fn(asyncMove),
     move,
+    requestTraversal,
     pushHash() {
       history.currentEntry = { key: "hash", url: urls.hash };
       history.dispatchEvent(
@@ -113,11 +147,28 @@ it("keeps edits on cancel and clears scope only after the manager discards", asy
   expect(screen.getByRole("textbox", { name: "Draft name" })).toHaveValue("Unsaved edits");
   expect(push).not.toHaveBeenCalled();
 
-  await user.click(screen.getByRole("combobox", { name: "Factory" }));
-  await user.click(screen.getByRole("option", { name: "Alternate" }));
-  dialog = await screen.findByRole("alertdialog", { name: "Discard unsaved changes?" });
+  const trigger = within(screen.getByRole("banner")).getByRole("combobox", { name: "Factory" });
+  async function chooseAlternate() {
+    await user.click(trigger);
+    await user.click(screen.getByRole("option", { name: "Alternate" }));
+    return screen.findByRole("alertdialog", { name: "Discard unsaved changes?" });
+  }
+  dialog = await chooseAlternate();
+  await user.click(within(dialog).getByRole("button", { name: "Keep editing" }));
+  await waitFor(() => expect(trigger).toHaveFocus());
+  await chooseAlternate();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(trigger).toHaveTextContent("Current");
+  expect(screen.getByRole("textbox", { name: "Draft name" })).toHaveValue("Unsaved edits");
+  expect(push).not.toHaveBeenCalled();
+
+  dialog = await chooseAlternate();
   await user.click(within(dialog).getByRole("button", { name: "Discard changes" }));
-  expect(push).toHaveBeenCalledExactlyOnceWith("/w/example/settings/automations?factory=alternate");
+  expect(push).toHaveBeenCalledExactlyOnceWith(
+    "/w/example/settings/automations?factory=alternate&q=keep",
+    { scroll: false },
+  );
 });
 
 it("warns on unload while dirty and opens the rule without a dialog after save", async () => {
@@ -170,6 +221,36 @@ it.each(["back", "forward"] as const)(
     );
     expect(history.traverseTo.mock.calls).toEqual([["draft"], ["draft"], [target]]);
     expect(push).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["back", "forward"] as const)(
+  "stops a cancelable browser %s before it can replace the editor and replays only on discard",
+  async (target) => {
+    const history = setupHistory();
+    const user = setup();
+    const draft = screen.getByRole("textbox", { name: "Draft name" });
+    await user.type(draft, "Unsaved edits");
+
+    await act(async () => {
+      expect(history.requestTraversal(target).defaultPrevented).toBe(true);
+    });
+    expect(history.currentEntry.key).toBe("draft");
+    expect(observePopstate).not.toHaveBeenCalled();
+    expect(history.traverseTo).not.toHaveBeenCalled();
+    await screen.findByRole("alertdialog");
+    await user.keyboard("{Escape}");
+    expect(draft).toHaveValue("Unsaved edits");
+    expect(history.currentEntry.key).toBe("draft");
+
+    await act(async () => {
+      expect(history.requestTraversal(target).defaultPrevented).toBe(true);
+    });
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "Discard changes" }));
+    expect(history.currentEntry.key).toBe(target);
+    expect(history.traverseTo).toHaveBeenCalledExactlyOnceWith(target);
+    expect(observePopstate).toHaveBeenCalledTimes(1);
   },
 );
 
