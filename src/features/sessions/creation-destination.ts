@@ -14,14 +14,14 @@ export type SessionCreationScope =
   | { kind: "unavailable" };
 
 export function useSessionCreationDestination(
-  scope: SessionCreationScope | undefined,
+  scope: SessionCreationScope,
   open: boolean,
   workspaceId: string,
   contextKey?: string,
 ) {
-  const editable = scope !== undefined && scope.kind !== "pinned";
-  const seedId = scope?.kind === "factory" ? scope.factory.id.toLowerCase() : undefined;
-  const choiceContext = JSON.stringify([contextKey, scope?.kind, seedId]);
+  const editable = scope.kind !== "pinned";
+  const seedId = scope.kind === "factory" ? scope.factory.id.toLowerCase() : undefined;
+  const choiceContext = JSON.stringify([contextKey, scope.kind, seedId]);
   const loading = editable && open;
   const [catalog, setCatalog] = useState<
     | { context: string; revision: number; factories: SessionCreationFactory[]; error?: never }
@@ -42,9 +42,9 @@ export function useSessionCreationDestination(
   const selectedId =
     choice ??
     seedId ??
-    (scope?.kind === "all" && factories?.length === 1 ? factories[0].id.toLowerCase() : undefined);
+    (scope.kind === "all" && factories?.length === 1 ? factories[0].id.toLowerCase() : undefined);
   const factory =
-    scope?.kind === "pinned"
+    scope.kind === "pinned"
       ? scope.factory
       : factories?.find(({ id }) => id.toLowerCase() === selectedId);
 
@@ -79,7 +79,7 @@ export function useSessionCreationDestination(
     },
     editable,
     factory,
-    unavailable: !factory && (scope?.kind === "unavailable" || Boolean(selectedId)),
+    unavailable: !factory && (scope.kind === "unavailable" || Boolean(selectedId)),
     reload() {
       setRevision((value) => value + 1);
     },

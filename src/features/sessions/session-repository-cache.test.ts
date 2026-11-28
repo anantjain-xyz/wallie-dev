@@ -12,9 +12,11 @@ import {
   SESSION_REPOSITORY_CACHE_TTL_MS,
 } from "@/features/sessions/session-repository-cache";
 
-const key = { userId: "user-1", workspaceId: "workspace-1" };
+const key = { factoryId: "factory-1", userId: "user-1", workspaceId: "workspace-1" };
 const result = {
   defaultGithubRepositoryId: "repo-1",
+  factoryId: key.factoryId,
+  linearIssueLinking: true,
   pipelineId: "pipeline-1",
   repositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],
   stageOptions: [],
@@ -33,33 +35,41 @@ describe("session repository cache", () => {
 
     await expect(Promise.all([first, second])).resolves.toEqual([result, result]);
     await expect(loadSessionRepositories(key, { load, now: 200 })).resolves.toBe(result);
-    expect(load).toHaveBeenCalledTimes(1);
+    expect(load).toHaveBeenCalledExactlyOnceWith({
+      factoryId: key.factoryId,
+      workspaceId: key.workspaceId,
+    });
   });
 
-  it("does not share results across workspaces or users", async () => {
-    const load = vi.fn(async ({ workspaceId }: { workspaceId: string }) => ({
-      defaultGithubRepositoryId: workspaceId,
-      pipelineId: workspaceId,
-      repositoryOptions: [{ fullName: `acme/${workspaceId}`, id: workspaceId }],
-      stageOptions: [],
-    }));
+  it("does not share results across factories, workspaces, or users", async () => {
+    const load = vi.fn(
+      async ({ factoryId, workspaceId }: { factoryId: string; workspaceId: string }) => ({
+        ...result,
+        defaultGithubRepositoryId: workspaceId,
+        factoryId,
+      }),
+    );
+    const otherWorkspace = { ...key, workspaceId: "workspace-2" };
+    const otherFactory = { ...key, factoryId: "factory-2" };
 
     await loadSessionRepositories(key, { load, now: 100 });
-    await loadSessionRepositories(
-      { userId: "user-1", workspaceId: "workspace-2" },
-      { load, now: 100 },
-    );
+    await loadSessionRepositories(otherWorkspace, { load, now: 100 });
+    await loadSessionRepositories(otherFactory, { load, now: 100 });
     expect(getSessionRepositorySnapshot(key).data).toMatchObject({
+      factoryId: "factory-1",
       defaultGithubRepositoryId: "workspace-1",
     });
-    expect(
-      getSessionRepositorySnapshot({ userId: "user-1", workspaceId: "workspace-2" }).data,
-    ).toMatchObject({ defaultGithubRepositoryId: "workspace-2" });
+    expect(getSessionRepositorySnapshot(otherWorkspace).data).toMatchObject({
+      defaultGithubRepositoryId: "workspace-2",
+    });
+    expect(getSessionRepositorySnapshot(otherFactory).data).toMatchObject({
+      factoryId: "factory-2",
+    });
 
-    const nextUserKey = { userId: "user-2", workspaceId: "workspace-1" };
+    const nextUserKey = { ...key, userId: "user-2" };
     await loadSessionRepositories(nextUserKey, { load, now: 100 });
 
-    expect(load).toHaveBeenCalledTimes(3);
+    expect(load).toHaveBeenCalledTimes(4);
     expect(getSessionRepositorySnapshot(nextUserKey).data).toMatchObject({
       defaultGithubRepositoryId: "workspace-1",
     });
@@ -99,7 +109,7 @@ describe("session repository cache", () => {
 
   it("marks only the changed workspace stale after settings invalidation", async () => {
     const load = vi.fn(async () => result);
-    const otherKey = { userId: "user-1", workspaceId: "workspace-2" };
+    const otherKey = { ...key, workspaceId: "workspace-2" };
     await loadSessionRepositories(key, { load, now: 100 });
     await loadSessionRepositories(otherKey, { load, now: 100 });
 
@@ -107,6 +117,19 @@ describe("session repository cache", () => {
 
     expect(getSessionRepositorySnapshot(key).isStale).toBe(true);
     expect(getSessionRepositorySnapshot(otherKey).isStale).toBe(false);
+  });
+
+  it("marks only the selected factory stale after a scoped change", async () => {
+    const otherFactory = { ...key, factoryId: "factory-2" };
+    await loadSessionRepositories(key, { load: async () => result });
+    await loadSessionRepositories(otherFactory, {
+      load: async () => ({ ...result, factoryId: otherFactory.factoryId }),
+    });
+
+    invalidateSessionRepositoryCache(key.workspaceId, key.factoryId);
+
+    expect(getSessionRepositorySnapshot(key).isStale).toBe(true);
+    expect(getSessionRepositorySnapshot(otherFactory).isStale).toBe(false);
   });
 
   it("receives repository settings invalidation events", async () => {

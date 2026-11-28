@@ -1392,8 +1392,10 @@ describe("create-session dialog loading", () => {
 
   it("deduplicates preloads for one shell mount", () => {
     const startedKey = new Set<string>();
-    const preloadSessionRepositories = vi.fn(async () => ({
+    const preloadSessionRepositories = vi.fn(async ({ factoryId }: { factoryId: string }) => ({
       defaultGithubRepositoryId: null,
+      factoryId,
+      linearIssueLinking: true,
       pipelineId: null,
       repositoryOptions: [],
       stageOptions: [],
@@ -1426,8 +1428,10 @@ describe("create-session dialog loading", () => {
 
   it("keys repository preloads by account, workspace and factory and only loads the chunk from All", async () => {
     const startedKey = new Set<string>();
-    const preloadSessionRepositories = vi.fn(async () => ({
+    const preloadSessionRepositories = vi.fn(async ({ factoryId }: { factoryId: string }) => ({
       defaultGithubRepositoryId: null,
+      factoryId,
+      linearIssueLinking: true,
       pipelineId: null,
       repositoryOptions: [],
       stageOptions: [],

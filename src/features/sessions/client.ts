@@ -81,6 +81,11 @@ export type SessionRepositoryOptionsResult = {
   stageOptions: SessionCreationStageOption[];
 };
 
+export type ScopedSessionRepositoryOptionsResult = SessionRepositoryOptionsResult & {
+  factoryId: string;
+  linearIssueLinking: boolean;
+};
+
 export type SessionCreationFactory = { id: string; name: string };
 
 export async function loadSessionCreationFactoriesFromClient(input: {
@@ -197,12 +202,12 @@ export function isSessionPhaseMutationResult(
 }
 
 export async function loadSessionRepositoryOptionsFromClient(input: {
-  factoryId?: string;
+  factoryId: string;
   workspaceId: string;
-}): Promise<SessionRepositoryOptionsResult> {
-  const query = input.factoryId ? `?${new URLSearchParams({ factoryId: input.factoryId })}` : "";
+}): Promise<ScopedSessionRepositoryOptionsResult> {
+  const query = new URLSearchParams({ factoryId: input.factoryId });
   const response = await fetch(
-    `/api/workspaces/${input.workspaceId}/session-repositories${query}`,
+    `/api/workspaces/${input.workspaceId}/session-repositories?${query}`,
     {
       cache: "no-store",
       method: "GET",
@@ -233,9 +238,8 @@ export async function loadSessionRepositoryOptionsFromClient(input: {
   if (
     !Array.isArray(responsePayload?.repositoryOptions) ||
     !Array.isArray(responsePayload?.stageOptions) ||
-    (input.factoryId !== undefined &&
-      (responsePayload.factoryId !== input.factoryId ||
-        typeof responsePayload.linearIssueLinking !== "boolean")) ||
+    responsePayload.factoryId !== input.factoryId ||
+    typeof responsePayload.linearIssueLinking !== "boolean" ||
     (responsePayload.factoryDefinitionDigest !== undefined &&
       (typeof responsePayload.factoryDefinitionDigest !== "string" ||
         !/^[0-9a-f]{64}$/.test(responsePayload.factoryDefinitionDigest)))
@@ -252,12 +256,8 @@ export async function loadSessionRepositoryOptionsFromClient(input: {
     ...(responsePayload.canDraftSpecification === true ? { canDraftSpecification: true } : {}),
     defaultGithubRepositoryId: responsePayload.defaultGithubRepositoryId ?? null,
     ...(factoryDefinitionDigest ? { factoryDefinitionDigest } : {}),
-    ...(input.factoryId
-      ? {
-          factoryId: responsePayload.factoryId,
-          linearIssueLinking: responsePayload.linearIssueLinking,
-        }
-      : {}),
+    factoryId: responsePayload.factoryId,
+    linearIssueLinking: responsePayload.linearIssueLinking,
     pipelineId: responsePayload.pipelineId ?? null,
     repositoryOptions: responsePayload.repositoryOptions,
     ...(factoryDefinitionDigest && overrideOptions.data

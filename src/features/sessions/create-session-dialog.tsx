@@ -78,9 +78,7 @@ const factoryFieldId = "session-factory";
 
 type CreateSessionDialogProps = {
   creationContextKey?: string;
-  creationFactoryId?: string;
-  creationFactoryName?: string;
-  creationScope?: SessionCreationScope;
+  creationScope: SessionCreationScope;
   launchKey?: string;
   onClose: (reason?: "preview") => void;
   onCloseAutoFocus?: () => void;
@@ -97,7 +95,7 @@ type CreateSessionDialogProps = {
 type OverrideTarget = RoutingOverrideOptions["targets"][number];
 
 type SessionCreationAttempt = {
-  input: CreateSessionInput;
+  input: CreateSessionInput & { factoryId: string };
   launchKey?: string;
   recoverDraft: () => void;
   scopeKey: string;
@@ -234,8 +232,6 @@ function ScopedCreateSessionDialog({ onDraftReset, ...props }: CreateSessionDial
 function CreateSessionDialogBody({
   clearRecoveryToast,
   creationContextKey,
-  creationFactoryId,
-  creationFactoryName,
   creationScope,
   launchKey,
   notifyResult,
@@ -274,14 +270,9 @@ function CreateSessionDialogBody({
     creationContextKey,
   );
   const targetFactoryId = destination.factory?.id.toLowerCase();
-  const targetFactoryName = creationScope
-    ? destination.catalogIsCurrent
-      ? destination.factory?.name
-      : undefined
-    : creationFactoryName;
-  const workflowFactoryId = creationScope ? targetFactoryId : creationFactoryId;
+  const targetFactoryName = destination.catalogIsCurrent ? destination.factory?.name : undefined;
   const scopeKey = JSON.stringify([
-    creationScope?.kind ?? "legacy",
+    creationScope.kind,
     destination.editable ? creationContextKey : undefined,
     targetFactoryId,
     launchKey ?? { workflowLaunchActivationId },
@@ -351,14 +342,13 @@ function CreateSessionDialogBody({
     }
   }, [open]);
 
-  const scoped = Boolean(creationScope);
   useEffect(() => {
-    if (open && destination.catalogIsCurrent && (!scoped || targetFactoryId)) {
+    if (open && destination.catalogIsCurrent && targetFactoryId) {
       void preloadSessionRepositories({ userId, workspaceId, factoryId: targetFactoryId }).catch(
         () => undefined,
       );
     }
-  }, [open, destination.catalogIsCurrent, scoped, targetFactoryId, userId, workspaceId]);
+  }, [open, destination.catalogIsCurrent, targetFactoryId, userId, workspaceId]);
 
   const [prompt, setPrompt] = useState("");
   const [manualDraftSpecification, setDraftSpecification] = useState(false);
@@ -413,24 +403,22 @@ function CreateSessionDialogBody({
     setSetupHref(undefined);
   }
   const repositoryCacheKey =
-    scoped && (!targetFactoryId || !destination.catalogIsCurrent)
-      ? null
-      : { userId, workspaceId, factoryId: targetFactoryId };
+    targetFactoryId && destination.catalogIsCurrent
+      ? { userId, workspaceId, factoryId: targetFactoryId }
+      : null;
   const repositorySnapshot = useSessionRepositories(repositoryCacheKey);
-  const scopeOptionsReady =
-    !scoped ||
-    Boolean(
-      targetFactoryId &&
-      repositorySnapshot.data?.factoryId === targetFactoryId &&
-      !repositorySnapshot.isStale,
-    );
+  const scopeOptionsReady = Boolean(
+    targetFactoryId &&
+    repositorySnapshot.data?.factoryId === targetFactoryId &&
+    !repositorySnapshot.isStale,
+  );
   const linearIssueLinking =
-    !scoped || (scopeOptionsReady && repositorySnapshot.data?.linearIssueLinking === true);
+    scopeOptionsReady && repositorySnapshot.data?.linearIssueLinking === true;
   const linearUrl = linearIssueLinking ? linearDraftUrl : "";
   const factoryDefinitionDigest = repositorySnapshot.data?.factoryDefinitionDigest;
   const canDraftSpecification = repositorySnapshot.data?.canDraftSpecification === true;
   const currentWorkflowCatalog =
-    workflowCatalog?.factoryId === workflowFactoryId &&
+    workflowCatalog?.factoryId === targetFactoryId &&
     workflowCatalog?.definitionDigest === factoryDefinitionDigest &&
     !repositorySnapshot.isStale
       ? workflowCatalog
@@ -439,9 +427,9 @@ function CreateSessionDialogBody({
   const workflowOptionsError = currentWorkflowCatalog?.options === null;
 
   useEffect(() => {
-    if (!open || !workflowFactoryId || !factoryDefinitionDigest) return;
+    if (!open || !targetFactoryId || !factoryDefinitionDigest) return;
     const controller = new AbortController();
-    void fetch(`${workflowAuthoringApiPath(workspaceId, workflowFactoryId)}/intake-options`, {
+    void fetch(`${workflowAuthoringApiPath(workspaceId, targetFactoryId)}/intake-options`, {
       cache: "no-store",
       signal: controller.signal,
     })
@@ -451,7 +439,7 @@ function CreateSessionDialogBody({
         if (controller.signal.aborted) return;
         if (result.definitionDigest && result.definitionDigest !== factoryDefinitionDigest) {
           setWorkflowCatalog({
-            factoryId: workflowFactoryId,
+            factoryId: targetFactoryId,
             definitionDigest: factoryDefinitionDigest,
             options: null,
           });
@@ -459,7 +447,7 @@ function CreateSessionDialogBody({
           return;
         }
         setWorkflowCatalog({
-          factoryId: workflowFactoryId,
+          factoryId: targetFactoryId,
           definitionDigest: result.definitionDigest ?? factoryDefinitionDigest,
           options: result.options,
         });
@@ -467,21 +455,14 @@ function CreateSessionDialogBody({
       .catch(() => {
         if (!controller.signal.aborted) {
           setWorkflowCatalog({
-            factoryId: workflowFactoryId,
+            factoryId: targetFactoryId,
             definitionDigest: factoryDefinitionDigest,
             options: null,
           });
         }
       });
     return () => controller.abort();
-  }, [
-    open,
-    workflowFactoryId,
-    factoryDefinitionDigest,
-    targetFactoryId,
-    workflowOptionsRevision,
-    workspaceId,
-  ]);
+  }, [open, targetFactoryId, factoryDefinitionDigest, workflowOptionsRevision, workspaceId]);
   const specificationUnavailable = draftSpecification && !canDraftSpecification;
   const specificationReadiness =
     "This factory needs an available named agent to draft a specification. Uncheck to start without one.";
@@ -798,7 +779,7 @@ function CreateSessionDialogBody({
       return;
     }
 
-    if (scoped && !targetFactoryId) {
+    if (!targetFactoryId) {
       setErrorMessage("Choose a factory before starting a session.");
       return;
     }
@@ -808,7 +789,7 @@ function CreateSessionDialogBody({
       return;
     }
 
-    if (!scopeOptionsReady || repositorySnapshot.isStale) {
+    if (!scopeOptionsReady) {
       setErrorMessage("Refresh session options first.");
       return;
     }
@@ -878,7 +859,7 @@ function CreateSessionDialogBody({
         attachmentIds: imageDrafts.map((image) => image.attachmentId!),
         ...(draftSpecification ? { draftSpecification: true } : {}),
         ...(factoryDefinitionDigest ? { factoryDefinitionDigest } : {}),
-        ...(targetFactoryId ? { factoryId: targetFactoryId } : {}),
+        factoryId: targetFactoryId,
         githubRepositoryId: selectedGithubRepositoryId || null,
         linearIssueUrl: linearUrl.trim() || null,
         promptMd: prompt.trim(),
@@ -1127,7 +1108,6 @@ function CreateSessionDialogBody({
       }}
       options={repositorySelectOptions}
       selectedGithubRepositoryId={selectedGithubRepositoryId}
-      showFixedValue={scoped}
       snapshot={repositorySnapshot}
     />
   ) : null;
@@ -1524,7 +1504,7 @@ function CreateSessionDialogBody({
                     {workflowLaunchRequested &&
                     (!repositorySnapshot.data || repositorySnapshot.isStale)
                       ? "Checking the factory’s current session options…"
-                      : factoryDefinitionDigest && workflowFactoryId && !currentWorkflowCatalog
+                      : factoryDefinitionDigest && targetFactoryId && !currentWorkflowCatalog
                         ? "Loading current workflows…"
                         : workflowLaunchRequested
                           ? "This publication is no longer available. Close and return to Workflows."
@@ -1694,7 +1674,6 @@ type RepositoryFieldProps = {
   onValueChange: (value: string) => void;
   options: Array<{ label: string; value: string }>;
   selectedGithubRepositoryId: string;
-  showFixedValue?: boolean;
   snapshot: SessionRepositorySnapshot;
 };
 
@@ -1704,7 +1683,6 @@ export function RepositoryField({
   onValueChange,
   options,
   selectedGithubRepositoryId,
-  showFixedValue = false,
   snapshot,
 }: RepositoryFieldProps) {
   function retry() {
@@ -1762,21 +1740,14 @@ export function RepositoryField({
       : undefined;
   return (
     <div className="space-y-2">
-      {showFixedValue && fixedRepository ? (
+      {fixedRepository ? (
         <dl className="space-y-1">
           <dt className="text-sm font-medium">Repository</dt>
           <dd className="text-sm text-muted wrap-anywhere">{fixedRepository.label}</dd>
         </dl>
       ) : options.length > 0 ? (
         <SelectField
-          disabled={
-            disabled ||
-            Boolean(
-              snapshot.data.factoryDefinitionDigest &&
-              options.length === 1 &&
-              selectedGithubRepositoryId,
-            )
-          }
+          disabled={disabled}
           fallbackLabel="Choose a repository"
           label="Repository"
           options={options}

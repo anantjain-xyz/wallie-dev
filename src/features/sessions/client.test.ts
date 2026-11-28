@@ -239,12 +239,15 @@ describe("createSessionFromClient", () => {
 });
 
 describe("loadSessionRepositoryOptionsFromClient", () => {
+  const factoryId = "33333333-3333-4333-8333-333333333333";
+  const input = { factoryId, workspaceId: WORKSPACE_ID };
+  const scopedOptions = { factoryId, linearIssueLinking: false };
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
   it("does not use a successful options response from a different factory", async () => {
-    const factoryId = "33333333-3333-4333-8333-333333333333";
     const fetchMock = mockFetch({
       body: {
         factoryId: "44444444-4444-4444-8444-444444444444",
@@ -254,18 +257,19 @@ describe("loadSessionRepositoryOptionsFromClient", () => {
       },
       ok: true,
     });
-    await expect(
-      loadSessionRepositoryOptionsFromClient({ factoryId, workspaceId: WORKSPACE_ID }),
-    ).rejects.toThrow("Session options response was invalid.");
+    await expect(loadSessionRepositoryOptionsFromClient(input)).rejects.toThrow(
+      "Session options response was invalid.",
+    );
     expect(fetchMock).toHaveBeenCalledWith(
       `/api/workspaces/${WORKSPACE_ID}/session-repositories?factoryId=${factoryId}`,
       { cache: "no-store", method: "GET" },
     );
   });
 
-  it("loads repository options lazily for the workspace", async () => {
+  it("loads repository options lazily for the selected factory", async () => {
     const fetchMock = mockFetch({
       body: {
+        ...scopedOptions,
         canDraftSpecification: true,
         defaultGithubRepositoryId: REPOSITORY_ID,
         factoryDefinitionDigest: "a".repeat(64),
@@ -283,9 +287,8 @@ describe("loadSessionRepositoryOptionsFromClient", () => {
       ok: true,
     });
 
-    await expect(
-      loadSessionRepositoryOptionsFromClient({ workspaceId: WORKSPACE_ID }),
-    ).resolves.toEqual({
+    await expect(loadSessionRepositoryOptionsFromClient(input)).resolves.toEqual({
+      ...scopedOptions,
       canDraftSpecification: true,
       defaultGithubRepositoryId: REPOSITORY_ID,
       factoryDefinitionDigest: "a".repeat(64),
@@ -301,10 +304,18 @@ describe("loadSessionRepositoryOptionsFromClient", () => {
       ],
     });
 
-    expect(fetchMock).toHaveBeenCalledWith(`/api/workspaces/${WORKSPACE_ID}/session-repositories`, {
-      cache: "no-store",
-      method: "GET",
-    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/workspaces/${WORKSPACE_ID}/session-repositories?factoryId=${factoryId}`,
+      { cache: "no-store", method: "GET" },
+    );
+  });
+
+  it("rejects options that omit the factory’s Linear capability", async () => {
+    mockFetch({ body: { factoryId, repositoryOptions: [], stageOptions: [] }, ok: true });
+
+    await expect(loadSessionRepositoryOptionsFromClient(input)).rejects.toThrow(
+      "Session options response was invalid.",
+    );
   });
 
   it("surfaces repository option API errors", async () => {
@@ -314,9 +325,9 @@ describe("loadSessionRepositoryOptionsFromClient", () => {
       status: 404,
     });
 
-    await expect(
-      loadSessionRepositoryOptionsFromClient({ workspaceId: WORKSPACE_ID }),
-    ).rejects.toThrow("Workspace not found.");
+    await expect(loadSessionRepositoryOptionsFromClient(input)).rejects.toThrow(
+      "Workspace not found.",
+    );
   });
 
   it("accepts only qualified option shapes attached to a valid active definition", async () => {
@@ -334,15 +345,16 @@ describe("loadSessionRepositoryOptionsFromClient", () => {
       ],
     };
     const options = {
+      ...scopedOptions,
       factoryDefinitionDigest: "d".repeat(64),
       repositoryOptions: [],
       stageOptions: [],
       routingOverrideOptions,
     };
     mockFetch({ body: options, ok: true });
-    await expect(
-      loadSessionRepositoryOptionsFromClient({ workspaceId: WORKSPACE_ID }),
-    ).resolves.toMatchObject({ routingOverrideOptions });
+    await expect(loadSessionRepositoryOptionsFromClient(input)).resolves.toMatchObject({
+      routingOverrideOptions,
+    });
     mockFetch({
       body: {
         ...options,
@@ -350,28 +362,33 @@ describe("loadSessionRepositoryOptionsFromClient", () => {
       },
       ok: true,
     });
-    await expect(
-      loadSessionRepositoryOptionsFromClient({ workspaceId: WORKSPACE_ID }),
-    ).rejects.toThrow("Session routing options response was invalid.");
+    await expect(loadSessionRepositoryOptionsFromClient(input)).rejects.toThrow(
+      "Session routing options response was invalid.",
+    );
   });
 
   it("rejects malformed repository option responses", async () => {
-    mockFetch({ body: { repositoryOptions: null }, ok: true });
+    mockFetch({ body: { ...scopedOptions, repositoryOptions: null, stageOptions: [] }, ok: true });
 
-    await expect(
-      loadSessionRepositoryOptionsFromClient({ workspaceId: WORKSPACE_ID }),
-    ).rejects.toThrow("Session options response was invalid.");
+    await expect(loadSessionRepositoryOptionsFromClient(input)).rejects.toThrow(
+      "Session options response was invalid.",
+    );
   });
 
   it("rejects an invalid active definition digest", async () => {
     mockFetch({
-      body: { factoryDefinitionDigest: "invalid", repositoryOptions: [], stageOptions: [] },
+      body: {
+        ...scopedOptions,
+        factoryDefinitionDigest: "invalid",
+        repositoryOptions: [],
+        stageOptions: [],
+      },
       ok: true,
     });
 
-    await expect(
-      loadSessionRepositoryOptionsFromClient({ workspaceId: WORKSPACE_ID }),
-    ).rejects.toThrow("Session options response was invalid.");
+    await expect(loadSessionRepositoryOptionsFromClient(input)).rejects.toThrow(
+      "Session options response was invalid.",
+    );
   });
 });
 

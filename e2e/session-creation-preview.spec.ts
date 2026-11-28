@@ -160,12 +160,14 @@ test("creation from a deep link closes immediately and lets navigation win over 
 async function mockRepositoryOptions(page: Page, factoryDefinitionDigest?: string) {
   await page.route(
     (url) => url.pathname.endsWith("/session-repositories"),
-    (route) =>
-      route.fulfill({
+    (route) => {
+      const factoryId = new URL(route.request().url()).searchParams.get("factoryId");
+      expect(factoryId).toBeTruthy();
+      return route.fulfill({
         json: {
           defaultGithubRepositoryId: "repo-fixture",
           factoryDefinitionDigest,
-          factoryId: new URL(route.request().url()).searchParams.get("factoryId"),
+          factoryId,
           linearIssueLinking: true,
           repositoryOptions: [{ id: "repo-fixture", fullName: "acme/wallie" }],
           pipelineId: "pipeline-fixture",
@@ -174,7 +176,8 @@ async function mockRepositoryOptions(page: Page, factoryDefinitionDigest?: strin
             { id: "build-fixture", name: "Build", position: 1, description: "Implement the plan" },
           ],
         },
-      }),
+      });
+    },
   );
 }
 
@@ -333,6 +336,7 @@ for (const mobile of [false, true]) {
     page,
   }) => {
     if (mobile) await page.setViewportSize({ width: 390, height: 844 });
+    const factoryId = await authorizedSessionFactoryId(page);
     const gate = deferred();
     const requests: unknown[] = [];
     await page.route("**/api/sessions", async (route) => {
@@ -359,7 +363,7 @@ for (const mobile of [false, true]) {
     ).toBeFocused();
     await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeHidden();
     await expect(preview.getByText("Creating session…")).toBeVisible();
-    expect(requests).toHaveLength(1);
+    expect(requests).toEqual([expect.objectContaining({ factoryId })]);
     await expect(page).toHaveURL(`${workspacePath}/sessions`);
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
@@ -398,6 +402,7 @@ for (const mobile of [false, true]) {
 test("a lost response retries the same request and keeps its preview until the canonical route commits", async ({
   page,
 }) => {
+  const factoryId = await authorizedSessionFactoryId(page);
   const requests: unknown[] = [];
   const createGate = deferred();
   const navigationGate = deferred();
@@ -444,6 +449,7 @@ test("a lost response retries the same request and keeps its preview until the c
   const preview = page.locator("[data-session-creation]");
   await expect(preview).toBeVisible();
   await expect.poll(() => requests.length).toBe(2);
+  expect(requests[0]).toMatchObject({ factoryId, requestId: expect.any(String) });
   expect(requests[1]).toEqual(requests[0]);
   createGate.release();
   // Hold the destination response so the shell cannot briefly expose the old list.
