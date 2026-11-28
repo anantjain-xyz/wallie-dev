@@ -7,12 +7,12 @@ every existing workspace resource into the workspace default factory without
 rewriting the resource ID, workspace number, pipeline pin, artifact history or
 URL.
 
-| Record              | What it records                                                                                                                                                                                                                                                                   |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Factory             | Stable UUID, workspace ownership, name, workspace-unique slug, `active`/`archived` status and archive attribution. `is_default` marks the migration target.                                                                                                                       |
-| Factory membership  | A workspace member's `manager` or `member` grant for one factory, with grant attribution, revocation attribution and append-only history. Active grants are unique per factory/member.                                                                                            |
-| Factory audit event | Immutable `factory.created`, `factory.renamed` (only when the name changes), `factory.archived`, `factory.restored`, `membership.granted`, `membership.revoked`, `membership.suspended` and `membership.reinstated` events. Actor and subject attribution survive member removal. |
-| Scoped resource     | `sessions.factory_id`, `pipelines.factory_id` and `github_repositories.factory_id`. A resource stays in its factory for its full lifetime.                                                                                                                                        |
+| Record              | What it records                                                                                                                                                                                                                                                              |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Factory             | Stable UUID, workspace ownership, name, workspace-unique slug, `active`/`archived` status and archive attribution. `is_default` marks the migration target.                                                                                                                  |
+| Factory membership  | A workspace member's `manager` or `member` grant for one factory, with grant attribution, revocation attribution and append-only history. Active grants are unique per factory/member.                                                                                       |
+| Factory audit event | Immutable `factory.created`, `factory.renamed`, `factory.slug_changed`, `factory.archived`, `factory.restored`, `membership.granted`, `membership.revoked`, `membership.suspended` and `membership.reinstated` events. Actor and subject attribution survive member removal. |
+| Scoped resource     | `sessions.factory_id`, `pipelines.factory_id` and `github_repositories.factory_id`. A resource stays in its factory for its full lifetime.                                                                                                                                   |
 
 ## Access resolution
 
@@ -91,12 +91,25 @@ membership and audit routes. Routes call the service-role command RPCs only afte
 `requireWorkspaceAccessById`; the database independently checks the same actor
 and factory-manager authority.
 
-In Workspace Settings, managers can rename the selected active factory without
-changing its address (`rename_factory` rejects stale names). Archive goes through
-`archive_additional_factory`, which preserves the workspace default and calls the
-existing archive command for every other factory. Archived factories keep their
-history and grants; restore before editing them in Settings. Factory grants never
-change workspace roles or access to other factories.
+In Workspace Settings, managers can update an active factory's display name
+(`rename_factory`) and slug (`set_factory_slug`) independently, including for
+the workspace default. Each command checks the displayed value and authorizes
+against the current workspace role or factory grant under lock.
+
+The directory and the browser factory-list API show the current slug as
+metadata. App links, versioned API paths, connectors, grants and stored
+definitions use stable factory IDs, not slugs. The legacy default is resolved by
+`is_default`; `default` remains reserved to the original factory even if it
+chooses a different slug. Every former slug stays reserved to its original ID
+for the workspace's lifetime. That factory can reclaim it, but creation or an
+edit can never attach it to another factory in the workspace. Reservations do
+not add a slug lookup or change access.
+
+Archive goes through `archive_additional_factory`, which preserves the
+workspace default and calls the existing archive command for every other
+factory. Archived factories keep their history and grants; restore before
+editing them in Settings. Factory grants never change workspace roles or access
+to other factories.
 
 See [Factory definition records](factory-definition-records.md) for definition
 draft, revision and activation history.

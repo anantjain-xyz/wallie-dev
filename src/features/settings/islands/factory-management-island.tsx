@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { Component, lazy, Suspense, type ComponentProps, type ReactNode } from "react";
 
 const ManagementPanel = lazy(() =>
@@ -37,27 +36,6 @@ class FactoryManagementErrorBoundary extends Component<
       </div>
     );
   }
-}
-
-export function FactoryManagementCloseLink({ href }: { href: string }) {
-  return (
-    <Link
-      aria-label="Close factory management"
-      className="ui-button min-h-11 sm:min-h-9"
-      href={href}
-      onNavigate={() => {
-        const directory = document.getElementById("factories");
-        directory
-          ?.querySelector<HTMLElement>("[data-settings-heading]")
-          ?.focus({ preventScroll: true });
-        directory?.scrollIntoView({ block: "start" });
-      }}
-      prefetch={false}
-      scroll={false}
-    >
-      Close
-    </Link>
-  );
 }
 
 export function WorkspaceFactoryManagementIsland(props: ComponentProps<typeof ManagementPanel>) {

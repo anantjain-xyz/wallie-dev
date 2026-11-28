@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useId, useState } from "react";
 
 import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
+import { useFactoryManagementLeaveGuard } from "@/features/settings/islands/factory-management-navigation";
 import {
+  FACTORY_ROW_ANCHOR_PREFIX,
   SETTINGS_CATEGORY_LINKS,
   type SettingsCategory,
 } from "@/features/settings/settings-categories";
@@ -92,8 +94,18 @@ const SETTINGS_CATEGORY_SUBMENUS: Record<
   ],
 };
 
+function isFactoryRowAnchor(anchor: string) {
+  return (
+    anchor.startsWith(FACTORY_ROW_ANCHOR_PREFIX) &&
+    /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(
+      anchor.slice(FACTORY_ROW_ANCHOR_PREFIX.length),
+    )
+  );
+}
+
 export function resolveSettingsHashRoute(hash: string): SettingsHashRoute | null {
   const anchorId = hash.replace(/^#/u, "");
+  if (isFactoryRowAnchor(anchorId)) return { anchor: anchorId, category: "workspace" };
   return Object.hasOwn(HASH_ROUTES, anchorId) ? HASH_ROUTES[anchorId] : null;
 }
 
@@ -138,8 +150,13 @@ export function SettingsCategoryNav({
   const [activeAnchor, setActiveAnchor] = useState<string | null>(null);
   const { stopNavigation: stopPersonalNavigation, warning: personalWarning } =
     usePersonalSettingsGuard();
+  const { blocked: factoryNavigationBlocked, confirmLeave: confirmFactoryLeave } =
+    useFactoryManagementLeaveGuard();
+  const confirmFactoryHashLeave = useEffectEvent(confirmFactoryLeave);
   const activeSection =
-    activeAnchor === "factory-setup" || activeAnchor === "factory-management"
+    activeAnchor === "factory-setup" ||
+    activeAnchor === "factory-management" ||
+    (activeAnchor && isFactoryRowAnchor(activeAnchor))
       ? "factories"
       : activeAnchor;
   const [jumpOpen, setJumpOpen] = useState(false);
@@ -167,6 +184,12 @@ export function SettingsCategoryNav({
       if (!target || target.closest("[hidden]")) return;
       const { origin } = pending;
       pending = null;
+      if (
+        (target.id === "factory-management" || isFactoryRowAnchor(target.id)) &&
+        target.contains(origin)
+      ) {
+        return;
+      }
       if (document.activeElement === origin || document.activeElement === document.body) {
         reachTarget(target);
       }
@@ -181,11 +204,14 @@ export function SettingsCategoryNav({
         return;
       }
       if (
-        activeCategory !== "personal" &&
-        route.category === "personal" &&
-        stopPersonalNavigation()
+        route.category !== activeCategory &&
+        ((route.category === "personal" && stopPersonalNavigation()) || !confirmFactoryHashLeave())
       ) {
-        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        const editorHash =
+          activeCategory === "workspace" && new URLSearchParams(search).has("manageFactory")
+            ? "#factory-management"
+            : "";
+        window.history.replaceState(null, "", pathname + window.location.search + editorHash);
         return;
       }
       if (route.category !== activeCategory || hash !== `#${route.anchor}`) {
@@ -256,9 +282,13 @@ export function SettingsCategoryNav({
             <li className="min-w-0" key={category.id}>
               <Link
                 aria-current={isActive ? "page" : undefined}
+                aria-disabled={factoryNavigationBlocked || undefined}
                 className="settings-anchor !block min-h-9 !px-2 text-center aria-[current=page]:bg-control-hover aria-[current=page]:text-foreground lg:!px-3 lg:text-left"
                 href={`/w/${workspaceSlug}/settings?category=${category.id}`}
                 onFocus={() => preloadSettingsCategory(category.id)}
+                onNavigate={(event) => {
+                  if (!confirmFactoryLeave()) event.preventDefault();
+                }}
                 onPointerEnter={() => preloadSettingsCategory(category.id)}
               >
                 {category.label}
@@ -269,11 +299,12 @@ export function SettingsCategoryNav({
       </ul>
       <Link
         aria-current={activeCategory === "personal" ? "page" : undefined}
+        aria-disabled={factoryNavigationBlocked || undefined}
         className="settings-anchor mt-2 min-h-9 aria-[current=page]:bg-control-hover aria-[current=page]:text-foreground"
         href={`/w/${workspaceSlug}/settings?category=personal`}
         onFocus={() => preloadSettingsCategory("personal")}
         onNavigate={(event) => {
-          if (stopPersonalNavigation()) event.preventDefault();
+          if (stopPersonalNavigation() || !confirmFactoryLeave()) event.preventDefault();
         }}
         onPointerEnter={() => preloadSettingsCategory("personal")}
       >

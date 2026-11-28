@@ -6,6 +6,7 @@ const mocked = vi.hoisted(() => ({
   renameFactory: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
   restoreFactory: vi.fn(),
+  setFactorySlug: vi.fn(),
 }));
 
 vi.mock("@/lib/factories/scope", async (importOriginal) => {
@@ -15,6 +16,7 @@ vi.mock("@/lib/factories/scope", async (importOriginal) => {
     archiveAdditionalFactory: mocked.archiveAdditionalFactory,
     renameFactory: mocked.renameFactory,
     restoreFactory: mocked.restoreFactory,
+    setFactorySlug: mocked.setFactorySlug,
   };
 });
 vi.mock("@/lib/supabase/admin", () => ({
@@ -123,7 +125,7 @@ describe("factory lifecycle route", () => {
     expect((await response.json()).factory).toMatchObject({ id: factoryId, slug: "payments" });
   });
 
-  it("does not allow a rename to change the address or skip the name fence", async () => {
+  it("does not allow a rename to change the slug or skip the name fence", async () => {
     expect((await patch({ action: "rename", name: "Payments Ops" })).status).toBe(400);
     expect(
       (
@@ -131,7 +133,7 @@ describe("factory lifecycle route", () => {
           action: "rename",
           expectedName: "Payments",
           name: "Payments Ops",
-          slug: "new-address",
+          slug: "new-slug",
         })
       ).status,
     ).toBe(400);
@@ -153,6 +155,62 @@ describe("factory lifecycle route", () => {
       });
       expect(response.status).toBe(status);
       expect(await response.json()).toEqual({ error });
+    },
+  );
+
+  it("sets only the addressed slug against the displayed value, including for the default", async () => {
+    mocked.setFactorySlug.mockResolvedValue({
+      ...factory,
+      is_default: true,
+      slug: "studio",
+      status: "active",
+    });
+    const response = await patch({ action: "set-slug", expectedSlug: "default", slug: " studio " });
+    expect(response.status).toBe(200);
+    expect(mocked.setFactorySlug).toHaveBeenCalledWith(admin, {
+      actorUserId,
+      expectedSlug: "default",
+      factoryId,
+      slug: "studio",
+      workspaceId,
+    });
+    expect((await response.json()).factory).toMatchObject({
+      id: factoryId,
+      is_default: true,
+      name: "Payments",
+      slug: "studio",
+    });
+  });
+
+  it("rejects a malformed slug, edits without a fence, and extra name writes", async () => {
+    const edit = { action: "set-slug", expectedSlug: "payments", slug: "studio" };
+    expect((await patch({ ...edit, slug: "Not-A-Slug" })).status).toBe(400);
+    expect((await patch({ ...edit, expectedSlug: undefined })).status).toBe(400);
+    expect((await patch({ ...edit, name: "Studio" })).status).toBe(400);
+    expect(mocked.setFactorySlug).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["23505", 409, { code: "factory_slug_taken", error: expect.stringContaining("reserved") }],
+    [
+      "PT409",
+      409,
+      { code: "factory_slug_changed", error: "The factory slug changed. Reload and try again." },
+    ],
+    ["P0011", 409, { error: "Restore the factory before editing its slug." }],
+    ["42501", 403, { error: "Could not save the factory slug." }],
+    ["P0002", 404, { error: "Could not save the factory slug." }],
+  ])(
+    "maps slug errors (%s) without disclosing the record or database internals",
+    async (code, status, body) => {
+      mocked.setFactorySlug.mockRejectedValue({ code, message: "internal detail" });
+      const response = await patch({
+        action: "set-slug",
+        expectedSlug: "payments",
+        slug: "studio",
+      });
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual(body);
     },
   );
 

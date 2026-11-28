@@ -18348,6 +18348,34 @@ export type Database = {
         }
         Returns: Json
       }
+      set_factory_slug: {
+        Args: {
+          p_actor_user_id: string
+          p_expected_slug: string
+          p_factory_id: string
+          p_slug: string
+          p_workspace_id: string
+        }
+        Returns: {
+          archived_at: string | null
+          archived_by: string | null
+          archived_reason: string | null
+          created_at: string
+          id: string
+          is_default: boolean
+          name: string
+          slug: string
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "factories"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       set_git_continuity_release: {
         Args: {
           p_enabled: boolean

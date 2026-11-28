@@ -5,6 +5,10 @@ import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  FactoryManagementNavigation,
+  useFactoryManagementGuard,
+} from "@/features/settings/islands/factory-management-navigation";
+import {
   resolveSettingsHashRoute,
   SettingsCategoryNav,
 } from "@/features/settings/settings-category-nav";
@@ -52,6 +56,7 @@ vi.mock("next/link", () => ({
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   replace.mockClear();
   navigate.mockClear();
   searchParams = new URLSearchParams("category=advanced");
@@ -65,6 +70,12 @@ beforeEach(() => {
 });
 
 describe("resolveSettingsHashRoute", () => {
+  it("resolves a closed factory row in Workspace Settings", () => {
+    const anchor = "factory-row-00000000-0000-4000-8000-000000000001";
+    expect(resolveSettingsHashRoute(`#${anchor}`)).toEqual({ anchor, category: "workspace" });
+    expect(resolveSettingsHashRoute("#factory-row-invalid")).toBeNull();
+  });
+
   it("maps legacy aliases to their current category and anchor", () => {
     expect(resolveSettingsHashRoute("#coding-agent")).toEqual({
       anchor: "runtime",
@@ -98,6 +109,11 @@ describe("resolveSettingsHashRoute", () => {
     expect(resolveSettingsHashRoute("#toString")).toBeNull();
   });
 });
+
+function FactoryEditorGuard({ busy, dirty }: { busy: boolean; dirty: boolean }) {
+  useFactoryManagementGuard(dirty, busy);
+  return null;
+}
 
 describe("SettingsCategoryNav hash routing", () => {
   it("groups workspace operations separately from Personal settings", () => {
@@ -150,6 +166,62 @@ describe("SettingsCategoryNav hash routing", () => {
     expect(queryByRole("status")).not.toBeInTheDocument();
     fireEvent.click(personal);
     expect(navigate).toHaveBeenCalledWith("/w/acme/settings?category=personal");
+  });
+
+  it("guards category links that would remove the factory editor", () => {
+    const id = "00000000-0000-4000-8000-000000000001";
+    searchParams = new URLSearchParams(`category=workspace&manageFactory=${id}`);
+    window.history.replaceState(null, "", `/w/acme/settings?${searchParams}#factory-management`);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    function example(busy: boolean) {
+      return (
+        <FactoryManagementNavigation>
+          <FactoryEditorGuard busy={busy} dirty />
+          <SettingsCategoryNav activeCategory="workspace" canManage workspaceSlug="acme" />
+        </FactoryManagementNavigation>
+      );
+    }
+    const { getByRole, rerender } = render(example(false));
+    const usage = getByRole("link", { name: "Usage & retention" });
+    fireEvent.click(usage);
+    fireEvent.click(getByRole("link", { name: /^Workspace$/ }));
+    fireEvent.click(getByRole("link", { name: "Personal" }));
+    expect(navigate).not.toHaveBeenCalled();
+    expect(confirm).toHaveBeenLastCalledWith("Discard unsaved changes to this factory?");
+    expect(confirm).toHaveBeenCalledTimes(3);
+
+    rerender(example(true));
+    expect(usage).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(usage);
+    expect(navigate).not.toHaveBeenCalled();
+    expect(confirm).toHaveBeenCalledTimes(3);
+
+    rerender(example(false));
+    confirm.mockReturnValue(true);
+    fireEvent.click(usage);
+    expect(navigate).toHaveBeenCalledWith("/w/acme/settings?category=advanced");
+  });
+
+  it("keeps the editor URL when a cross-category hash change is declined", () => {
+    const id = "00000000-0000-4000-8000-000000000001";
+    searchParams = new URLSearchParams(`category=workspace&manageFactory=${id}`);
+    const editorPath = `/w/acme/settings?${searchParams}`;
+    window.history.replaceState(null, "", `${editorPath}#factory-management`);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(
+      <FactoryManagementNavigation>
+        <FactoryEditorGuard busy={false} dirty />
+        <SettingsCategoryNav activeCategory="workspace" canManage workspaceSlug="acme" />
+      </FactoryManagementNavigation>,
+    );
+
+    window.history.replaceState(null, "", `${editorPath}#github`);
+    act(() => window.dispatchEvent(new HashChangeEvent("hashchange")));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(replace).not.toHaveBeenCalled();
+    expect(location.pathname + location.search + location.hash).toBe(
+      `${editorPath}#factory-management`,
+    );
   });
 
   it("sticks below the shell header on desktop without covering mobile anchors", () => {

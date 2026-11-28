@@ -8,6 +8,7 @@ import {
   FACTORY_NAME_MAX_LENGTH,
   FACTORY_SLUG_MAX_LENGTH,
   FACTORY_SLUG_TAKEN,
+  FACTORY_SLUG_TAKEN_MESSAGE,
 } from "@/lib/factories/contracts";
 import { slugifyAddress } from "@/lib/slugs";
 
@@ -73,7 +74,7 @@ export function CreateFactoryDialogContent({
         error?: unknown;
       } | null;
       if (response.status === 409 && payload?.code === FACTORY_SLUG_TAKEN) {
-        setError({ field: "slug", message: "That address is already used in this workspace." });
+        setError({ field: "slug", message: FACTORY_SLUG_TAKEN_MESSAGE });
         slugRef.current?.focus();
         return;
       }
@@ -111,7 +112,7 @@ export function CreateFactoryDialogContent({
       <form aria-busy={submitting} className="space-y-4" noValidate onSubmit={create}>
         <div className="space-y-1.5">
           <label className="block type-label" htmlFor={`${id}-name`}>
-            Factory name
+            Display name
           </label>
           <input
             aria-describedby={error?.field === "name" ? `${id}-name-error` : undefined}
@@ -138,7 +139,7 @@ export function CreateFactoryDialogContent({
         </div>
         <div className="space-y-1.5">
           <label className="block type-label" htmlFor={`${id}-slug`}>
-            Address
+            Factory slug
           </label>
           <input
             aria-describedby={`${id}-slug-hint${error?.field === "slug" ? ` ${id}-slug-error` : ""}`}

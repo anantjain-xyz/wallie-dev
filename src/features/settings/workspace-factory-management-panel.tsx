@@ -1,17 +1,36 @@
 import { useRouter } from "next/navigation";
-import { useId, useRef, useState, useTransition, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, useTransition, type FormEvent } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
+import { EditableCombobox } from "@/components/ui/editable-combobox";
+import { SelectField } from "@/components/ui/select";
 import type { FactorySelectionOption } from "@/features/factories/factory-selection";
+import { useFactoryManagementGuard } from "@/features/settings/islands/factory-management-navigation";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
 import type { FactoryManagementMember } from "@/features/settings/workspace-factory-management";
-import { FACTORY_NAME_MAX_LENGTH } from "@/lib/factories/contracts";
+import {
+  FACTORY_NAME_MAX_LENGTH,
+  FACTORY_SLUG_CHANGED,
+  FACTORY_SLUG_MAX_LENGTH,
+  FACTORY_SLUG_TAKEN,
+  factoryNameSchema,
+  factorySlugSchema,
+} from "@/lib/factories/contracts";
 import type { FactoryManagementCommand, FactoryRecord } from "@/lib/factories/scope";
 
 const roleLabel = { manager: "Manager", member: "Member" } as const;
+const unconfirmed = "Could not confirm the update. Reload Settings before trying again.";
+
+function patchFactory(endpoint: string, command: FactoryManagementCommand) {
+  return fetch(endpoint, {
+    body: JSON.stringify(command),
+    headers: { "Content-Type": "application/json" },
+    method: "PATCH",
+  });
+}
 
 export function WorkspaceFactoryManagementPanel({
   factory,
@@ -23,108 +42,43 @@ export function WorkspaceFactoryManagementPanel({
   workspaceId: string;
 }) {
   const router = useRouter();
-  const factoryNameId = useId();
-  const [draft, setDraft] = useState<{ expectedName: string; name: string } | null>(null);
-  const [nameConflict, setNameConflict] = useState(false);
   const [lifecycleOpen, setLifecycleOpen] = useState(false);
   const [message, setMessage] = useState<FlashMessage | null>(null);
   const [refreshing, startRefresh] = useTransition();
-  const name = draft?.name ?? factory.name;
-  const changed = draft && name.trim() && name.trim() !== draft.expectedName;
   const archived = factory.status === "archived";
   const statusAction = archived ? "restore" : "archive";
   const statusLabel = archived ? "Restore factory" : "Archive factory";
   const endpoint = `/api/workspaces/${encodeURIComponent(workspaceId)}/factories/${encodeURIComponent(factory.id)}`;
-  const mutation = useApiAction<{ factory: FactoryRecord }, [FactoryManagementCommand]>({
-    call: async (command) => {
-      const response = await fetch(endpoint, {
-        body: JSON.stringify(command),
-        headers: { "Content-Type": "application/json" },
-        method: "PATCH",
-      });
-      if (command.action === "rename" && response.status === 409) setNameConflict(true);
-      return response;
-    },
-    errorText: "Could not confirm the update. Reload Settings before trying again.",
+  const mutation = useApiAction<{ factory: FactoryRecord }, [{ action: "archive" | "restore" }]>({
+    call: (command) => patchFactory(endpoint, command),
+    errorText: unconfirmed,
     onSuccess: ({ factory: saved }, [command]) => {
       if (
         saved?.id !== factory.id ||
-        saved.slug !== factory.slug ||
-        saved.status !== (command.action === "archive" ? "archived" : "active") ||
-        (command.action === "rename" && saved.name !== command.name.trim())
+        saved.is_default !== factory.isDefault ||
+        saved.status !== (command.action === "archive" ? "archived" : "active")
       ) {
-        throw new Error("Could not confirm the update. Reload Settings before trying again.");
+        throw new Error(unconfirmed);
       }
       setLifecycleOpen(false);
-      setDraft(null);
-      setNameConflict(false);
       startRefresh(() => router.refresh());
     },
     setFlashMessage: setMessage,
     successText: (_payload, [command]) =>
-      command.action === "rename"
-        ? "Factory name saved."
-        : command.action === "archive"
-          ? "Factory archived."
-          : "Factory restored.",
+      command.action === "archive" ? "Factory archived." : "Factory restored.",
   });
-  const busy = mutation.isBusy || refreshing;
+  const navigating = useFactoryManagementGuard(false, mutation.isBusy || refreshing);
+  const busy = mutation.isBusy || refreshing || navigating;
 
   return (
     <div className="space-y-6">
       {!archived ? (
-        <form
-          className="space-y-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!busy && !nameConflict && changed) {
-              setMessage(null);
-              void mutation.run({ action: "rename", expectedName: draft.expectedName, name });
-            }
-          }}
-        >
-          <label className="block type-label" htmlFor={factoryNameId}>
-            Factory name
-          </label>
-          <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-center">
-            <input
-              className="ui-input min-h-11 min-w-0 max-w-md sm:min-h-9 sm:flex-1"
-              readOnly={busy}
-              id={factoryNameId}
-              maxLength={FACTORY_NAME_MAX_LENGTH}
-              name="name"
-              onChange={(event) =>
-                setDraft({
-                  expectedName: draft?.expectedName ?? factory.name,
-                  name: event.currentTarget.value,
-                })
-              }
-              required
-              value={name}
-            />
-            <button
-              className="ui-button min-h-11 justify-self-start sm:min-h-9"
-              disabled={busy || (!nameConflict && !changed)}
-              onClick={
-                nameConflict
-                  ? () => {
-                      setDraft(null);
-                      setMessage(null);
-                      setNameConflict(false);
-                      startRefresh(() => router.refresh());
-                    }
-                  : undefined
-              }
-              type={nameConflict ? "button" : "submit"}
-            >
-              <ActionButtonLabel
-                idle={nameConflict ? "Discard draft and reload" : "Save name"}
-                pending={!lifecycleOpen && mutation.isBusy}
-                pendingLabel="Saving…"
-              />
-            </button>
-          </div>
-        </form>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FactoryIdentityField endpoint={endpoint} factory={factory} field="name" />
+          {factory.slug ? (
+            <FactoryIdentityField endpoint={endpoint} factory={factory} field="slug" />
+          ) : null}
+        </div>
       ) : null}
       {!lifecycleOpen && <InlineActionMessage message={message} />}
       <FactoryMembers
@@ -171,6 +125,168 @@ export function WorkspaceFactoryManagementPanel({
   );
 }
 
+function FactoryIdentityField({
+  endpoint,
+  factory,
+  field,
+}: {
+  endpoint: string;
+  factory: FactorySelectionOption;
+  field: "name" | "slug";
+}) {
+  const router = useRouter();
+  const id = useId();
+  const input = useRef<HTMLInputElement>(null);
+  const slugField = field === "slug";
+  const current = factory[field] ?? "";
+  const [draft, setDraft] = useState<{ expected: string; value: string } | null>(null);
+  const [stale, setStale] = useState(false);
+  const [invalid, setInvalid] = useState(false);
+  const [message, setMessage] = useState<FlashMessage | null>(null);
+  const [refreshing, startRefresh] = useTransition();
+  const value = draft?.value ?? current;
+  const conflict = stale || (draft !== null && draft.expected !== current);
+  const feedback =
+    conflict && message?.kind !== "error"
+      ? { kind: "error" as const, text: `The factory ${field} changed. Reload and try again.` }
+      : message;
+
+  const mutation = useApiAction<
+    { factory: FactoryRecord },
+    [Extract<FactoryManagementCommand, { action: "rename" | "set-slug" }>]
+  >({
+    call: async (command) => {
+      const response = await patchFactory(endpoint, command);
+      if (response.status !== 409) return response;
+      if (command.action === "rename") {
+        setStale(true);
+      } else {
+        const payload = (await response
+          .clone()
+          .json()
+          .catch(() => null)) as {
+          code?: unknown;
+        } | null;
+        if (payload?.code === FACTORY_SLUG_CHANGED) setStale(true);
+        if (payload?.code === FACTORY_SLUG_TAKEN) {
+          setInvalid(true);
+          input.current?.focus();
+        }
+      }
+      return response;
+    },
+    errorText: unconfirmed,
+    onSuccess: ({ factory: saved }, [command]) => {
+      if (
+        saved?.id !== factory.id ||
+        saved.is_default !== factory.isDefault ||
+        saved.status !== "active" ||
+        (command.action === "rename" ? saved.name !== command.name : saved.slug !== command.slug)
+      ) {
+        throw new Error(unconfirmed);
+      }
+      setDraft(null);
+      startRefresh(() => router.refresh());
+    },
+    setFlashMessage: setMessage,
+    successText: slugField ? "Factory slug saved." : "Factory name saved.",
+  });
+  const navigating = useFactoryManagementGuard(
+    conflict || (draft !== null && value !== current),
+    mutation.isBusy || refreshing,
+  );
+  const busy = mutation.isBusy || refreshing || navigating;
+
+  function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy || conflict) return;
+    const parsed = (slugField ? factorySlugSchema : factoryNameSchema).safeParse(value);
+    if (!parsed.success) {
+      setInvalid(true);
+      setMessage({ kind: "error", text: parsed.error.issues[0].message });
+      input.current?.focus();
+      return;
+    }
+    if (parsed.data === current) {
+      setDraft(null);
+      setInvalid(false);
+      setMessage({ kind: "info", text: "No changes to save." });
+      return;
+    }
+    setInvalid(false);
+    setMessage(null);
+    void mutation.run(
+      slugField
+        ? { action: "set-slug", expectedSlug: draft?.expected ?? current, slug: parsed.data }
+        : { action: "rename", expectedName: draft?.expected ?? current, name: parsed.data },
+    );
+  }
+
+  return (
+    <form className="min-w-0 space-y-1.5" noValidate onSubmit={save}>
+      <label className="block type-label" htmlFor={id}>
+        {slugField ? "Factory slug" : "Display name"}
+      </label>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          aria-describedby={slugField ? `${id}-hint ${id}-feedback` : `${id}-feedback`}
+          aria-invalid={invalid || conflict || undefined}
+          autoCapitalize={slugField ? "none" : undefined}
+          autoComplete="off"
+          className="ui-input min-h-11 min-w-0 flex-1 sm:min-h-9"
+          id={id}
+          maxLength={slugField ? FACTORY_SLUG_MAX_LENGTH : FACTORY_NAME_MAX_LENGTH}
+          name={field}
+          onChange={(event) => {
+            setDraft({ expected: draft?.expected ?? current, value: event.currentTarget.value });
+            setInvalid(false);
+            if (!conflict) setMessage(null);
+          }}
+          readOnly={busy}
+          ref={input}
+          required
+          spellCheck={slugField ? false : undefined}
+          value={value}
+        />
+        {!conflict ? (
+          <button className="ui-button min-h-11 sm:min-h-9" disabled={busy} type="submit">
+            <ActionButtonLabel
+              idle={slugField ? "Save slug" : "Save name"}
+              pending={mutation.isBusy}
+              pendingLabel="Saving…"
+            />
+          </button>
+        ) : null}
+      </div>
+      {slugField ? (
+        <p className="type-annotation text-muted" id={`${id}-hint`}>
+          Shown in Settings and the factory list API. Links use the factory ID; old slugs stay
+          reserved.
+        </p>
+      ) : null}
+      <div id={`${id}-feedback`}>
+        <InlineActionMessage message={feedback} />
+      </div>
+      {conflict ? (
+        <button
+          className="ui-button min-h-11 sm:min-h-9"
+          disabled={busy}
+          onClick={() => {
+            setDraft(null);
+            setMessage(null);
+            setStale(false);
+            setInvalid(false);
+            startRefresh(() => router.refresh());
+          }}
+          type="button"
+        >
+          Discard draft and reload
+        </button>
+      ) : null}
+    </form>
+  );
+}
+
 function FactoryMembers({
   archived,
   endpoint,
@@ -184,9 +300,11 @@ function FactoryMembers({
 }) {
   const router = useRouter();
   const id = useId();
+  const memberInputId = `${id}-member`;
   const restoreFocus = useRef<HTMLElement | null>(null);
-  const memberSelect = useRef<HTMLSelectElement | null>(null);
+  const focusMember = useRef(false);
   const [memberId, setMemberId] = useState("");
+  const [search, setSearch] = useState("");
   const [role, setRole] = useState<"manager" | "member">("member");
   const [message, setMessage] = useState<FlashMessage | null>(null);
   const [removing, setRemoving] = useState<FactoryManagementMember | null>(null);
@@ -199,6 +317,11 @@ function FactoryMembers({
   const managers = assigned.filter(({ factoryRole }) => factoryRole === "manager");
   const current = selectable.find(({ id }) => id === memberId);
   const lastManager = managers.length === 1 && managers[0].id === memberId;
+  const updatingAccess = current !== undefined && current.factoryRole !== role;
+  const filter = search.trim().toLowerCase();
+  const memberOptions = selectable
+    .filter(({ label }) => label.toLowerCase().includes(filter))
+    .map(({ id, label }) => ({ value: id, label }));
   const mutation = useApiAction<
     {
       membership: {
@@ -227,9 +350,11 @@ function FactoryMembers({
           "Could not confirm the access change. Reload Settings before trying again.",
         );
       }
-      restoreFocus.current = memberSelect.current;
+      restoreFocus.current = null;
+      focusMember.current = true;
       setRemoving(null);
       setMemberId("");
+      setSearch("");
       setRole("member");
       startRefresh(() => router.refresh());
     },
@@ -237,7 +362,25 @@ function FactoryMembers({
     successText: (_payload, [, role]) =>
       role ? "Factory access saved." : "Factory access removed.",
   });
-  const busy = mutation.isBusy || refreshing;
+  const navigating = useFactoryManagementGuard(updatingAccess, mutation.isBusy || refreshing);
+  const busy = mutation.isBusy || refreshing || navigating;
+  useEffect(() => {
+    const input = document.getElementById(memberInputId);
+    if (input instanceof HTMLInputElement) {
+      input.setCustomValidity(search && !current ? "Choose a workspace member from the list." : "");
+    }
+  }, [archived, current, memberInputId, search]);
+  useEffect(() => {
+    if (busy || !focusMember.current) return;
+    const input = document.getElementById(memberInputId);
+    if (
+      input instanceof HTMLInputElement &&
+      (document.activeElement === document.body || input.form?.contains(document.activeElement))
+    ) {
+      input.focus({ preventScroll: true });
+    }
+    focusMember.current = false;
+  }, [busy, memberInputId]);
 
   function saveAccess(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -255,7 +398,7 @@ function FactoryMembers({
 
   return (
     <div className="space-y-3 border-t border-border pt-4">
-      <h4 className="type-label">Factory members</h4>
+      <h3 className="type-label">Factory members</h3>
       <p className="type-secondary text-muted">Workspace owners and admins already have access.</p>
       {assigned.length ? (
         <ul className="divide-y divide-border rounded border border-border">
@@ -298,52 +441,61 @@ function FactoryMembers({
           className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(7rem,1fr)_auto]"
           onSubmit={saveAccess}
         >
+          <input disabled={busy} name="memberId" type="hidden" value={current?.id ?? ""} />
           <div className="col-span-2 min-w-0 space-y-1.5 sm:col-span-1">
-            <label className="block type-label" htmlFor={`${id}-member`}>
+            <label className="block type-label" htmlFor={memberInputId}>
               Workspace member
             </label>
-            <select
-              className="ui-input min-h-11 sm:min-h-9"
-              id={`${id}-member`}
-              disabled={mutation.isBusy}
-              name="memberId"
-              onChange={(event) => {
-                const value = event.currentTarget.value;
+            <EditableCombobox
+              className="min-h-11 sm:min-h-9"
+              disabled={busy}
+              id={memberInputId}
+              listboxLabel="Workspace members"
+              onBlur={() => setSearch("")}
+              onFocus={(event) => {
+                if (focusMember.current) event.preventDefault();
+              }}
+              onOptionSelect={({ value }) => {
                 setMemberId(value);
+                setSearch("");
                 setRole(selectable.find(({ id }) => id === value)?.factoryRole ?? "member");
               }}
+              onValueChange={(value) => {
+                setMemberId("");
+                setRole("member");
+                setSearch(value);
+              }}
+              options={memberOptions}
+              placeholder="Search or select…"
+              preventUnmatchedEnter
               required
-              ref={memberSelect}
-              value={memberId}
-            >
-              <option value="">Select a member</option>
-              {selectable.map((member) => (
-                <option key={member.id} value={member.id}>
-                  {member.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="min-w-0 space-y-1.5">
-            <label className="block type-label" htmlFor={`${id}-role`}>
-              Factory role
-            </label>
-            <select
-              className="ui-input min-h-11 sm:min-h-9"
-              disabled={busy}
-              id={`${id}-role`}
-              name="role"
-              onChange={(event) =>
-                setRole(event.currentTarget.value === "manager" ? "manager" : "member")
+              selectedValue={current?.id}
+              spellCheck={false}
+              status={
+                memberOptions.length === 0
+                  ? selectable.length === 0
+                    ? "No eligible workspace members."
+                    : "No matching members."
+                  : undefined
               }
-              value={role}
-            >
-              <option disabled={lastManager} value="member">
-                Member
-              </option>
-              <option value="manager">Manager</option>
-            </select>
+              value={current?.label ?? search}
+            />
           </div>
+          <SelectField
+            disabled={busy}
+            label="Factory role"
+            labelClassName="type-label"
+            name="role"
+            onValueChange={(value) => {
+              if (value === "manager" || (value === "member" && !lastManager)) setRole(value);
+            }}
+            options={[
+              { label: "Member", value: "member", disabled: lastManager },
+              { label: "Manager", value: "manager" },
+            ]}
+            triggerClassName="min-h-11 sm:min-h-9"
+            value={role}
+          />
           <button
             className="ui-button min-h-11 sm:min-h-9"
             disabled={busy || !current || current.factoryRole === role}

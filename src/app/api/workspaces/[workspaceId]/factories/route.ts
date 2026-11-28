@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import { createFactorySchema, FACTORY_SLUG_TAKEN } from "@/lib/factories/contracts";
+import {
+  createFactorySchema,
+  FACTORY_SLUG_TAKEN,
+  FACTORY_SLUG_TAKEN_MESSAGE,
+} from "@/lib/factories/contracts";
 import { createFactory, factoryErrorStatus, listFactoryScope } from "@/lib/factories/scope";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
@@ -57,7 +61,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     const code = (error as { code?: string } | null)?.code;
     if (code === "23505") {
       return Response.json(
-        { code: FACTORY_SLUG_TAKEN, error: "That factory slug is already used in this workspace." },
+        { code: FACTORY_SLUG_TAKEN, error: FACTORY_SLUG_TAKEN_MESSAGE },
         { status: 409, headers },
       );
     }

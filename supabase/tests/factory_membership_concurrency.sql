@@ -123,6 +123,29 @@ select ok(extensions.dblink_error_message('factory_member_contender') like '%Fac
   'the queued command rechecks the delegated grant after the lock');
 select count(*) from extensions.dblink_get_result('factory_member_contender', false) as result(id uuid);
 
+select extensions.dblink_exec('factory_member_owner', 'begin');
+select * from extensions.dblink('factory_member_owner', $sql$
+  select id from public.set_factory_slug(
+    '55a00000-0001-4000-8000-000000000001',
+    (select id from public.factories where workspace_id = '55a00000-0001-4000-8000-000000000001' and slug = 'delegation'),
+    '55a00000-0000-4000-8000-000000000001', 'delegation', 'new-delegation'
+  )
+$sql$) as result(id uuid);
+select extensions.dblink_send_query('factory_member_contender', $sql$
+  select id from public.set_factory_slug(
+    '55a00000-0001-4000-8000-000000000001',
+    (select id from public.factories where workspace_id = '55a00000-0001-4000-8000-000000000001' and slug = 'delegation'),
+    '55a00000-0000-4000-8000-000000000001', 'delegation', 'stale-delegation'
+  )
+$sql$);
+select pg_temp.wait_factory_membership_lock();
+select extensions.dblink_exec('factory_member_owner', 'commit');
+select is((select count(*) from extensions.dblink_get_result('factory_member_contender', false) as result(id uuid)),
+  0::bigint, 'concurrent writes against the same displayed slug cannot both succeed');
+select ok(extensions.dblink_error_message('factory_member_contender') like '%The factory slug changed.%',
+  'the queued slug update compares against the committed winner');
+select count(*) from extensions.dblink_get_result('factory_member_contender', false) as result(id uuid);
+
 select extensions.dblink_disconnect('factory_member_owner');
 select extensions.dblink_disconnect('factory_member_contender');
 
