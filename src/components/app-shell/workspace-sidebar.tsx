@@ -17,7 +17,7 @@ export type ShellNavItem = {
 const navIconPaths = {
   sessions: "M5 4h8M5 8h8m-8 4h8M2.5 4h.1m-.1 4h.1m-.1 4h.1",
   inbox: "M2.5 8.5 4.5 3.5h7l2 5v4h-11zM2.5 8.5h3l1 1.5h3l1-1.5h3",
-  activity: "M3 12V8m5 4V4m5 8V6M2 13.5h12",
+  runs: "M3 12V8m5 4V4m5 8V6M2 13.5h12",
   insights: "M3 3.5v9h10.5M5.5 10l2.3-3 2 1.5 3.2-4",
   factory: "M2.5 13V6.5L6 8V5l3.5 2 1-4h2l1 10zM5 10h.1m2.9 0h.1m2.9 0h.1",
   settings: "M3 4.5h10m-10 7h10M6 3v3m4 4v3",

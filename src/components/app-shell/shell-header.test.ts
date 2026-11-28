@@ -310,7 +310,6 @@ describe("ShellHeader", () => {
 
   it.each([
     ["Inbox", "/w/acme-corp/inbox"],
-    ["Activity", "/w/acme-corp/activity"],
     ["Governance", "/w/acme-corp/governance"],
     ["Context", "/w/acme-corp/context"],
     ["Memory", "/w/acme-corp/memory"],
@@ -435,7 +434,7 @@ describe("ShellHeader", () => {
   });
 
   it("restores the launch page, query, anchor and launcher focus on cancel", async () => {
-    const origin = "/w/acme-corp/activity?factory=all&actor=example#recent";
+    const origin = "/w/acme-corp/runs?status=error&factory=all#main-content";
     mocked.pathname = "/w/acme-corp/sessions";
     mocked.searchParams = new URLSearchParams({
       factory: "factory-1",
@@ -448,8 +447,8 @@ describe("ShellHeader", () => {
     fireEvent.keyDown(dialog, { key: "Escape" });
     await waitFor(() => expect(mocked.replace).toHaveBeenCalledWith(origin, { scroll: true }));
 
-    mocked.pathname = "/w/acme-corp/activity";
-    mocked.searchParams = new URLSearchParams("factory=all&actor=example");
+    mocked.pathname = "/w/acme-corp/runs";
+    mocked.searchParams = new URLSearchParams("status=error&factory=all");
     rerender(shellElement());
     await waitFor(() => expect(screen.getByRole("main")).toHaveFocus());
   });
@@ -1062,7 +1061,8 @@ describe("ShellHeader", () => {
     ["/w/acme-corp/inbox", "Inbox"],
     ["/w/acme-corp/analytics", "Insights"],
     ["/w/acme-corp/settings/profile", "Settings"],
-    ["/w/acme-corp/runs/run-id", "Activity"],
+    ["/w/acme-corp/runs", "Runs"],
+    ["/w/acme-corp/runs/run-id", "Runs"],
   ])("names the drawer trigger after the current destination at %s", (pathname, label) => {
     mocked.pathname = pathname;
 
@@ -1117,7 +1117,7 @@ describe("ShellHeader", () => {
     const nav = within(screen.getByRole("navigation", { name: "Workspace navigation" }));
     for (const [name, href] of [
       ["Sessions", "/w/acme-corp?factory=all"],
-      ["Activity", "/w/acme-corp/runs?factory=all"],
+      ["Runs", "/w/acme-corp/runs?factory=all"],
       ["Inbox", "/w/acme-corp/inbox?factory=all"],
       ["Settings", "/w/acme-corp/settings"],
       ["Insights", "/w/acme-corp/analytics?factory=all"],
@@ -1126,30 +1126,33 @@ describe("ShellHeader", () => {
   });
 
   it.each([
-    ["Activity", ""],
-    ["Inbox", ""],
-    ["Inbox", "factory=all"],
-  ])("keeps the effective aggregate scope from %s in rail and drawer", async (label, search) => {
-    mocked.pathname = `/w/acme-corp/${label.toLowerCase()}`;
-    mocked.searchParams = new URLSearchParams(search);
-    mountShell();
+    ["inbox", "Inbox", ""],
+    ["inbox", "Inbox", "factory=all"],
+    ["runs", "Runs", "factory=all"],
+  ])(
+    "keeps the effective aggregate scope from %s in rail and drawer",
+    async (path, label, search) => {
+      mocked.pathname = `/w/acme-corp/${path}`;
+      mocked.searchParams = new URLSearchParams(search);
+      mountShell();
 
-    expect(screen.getByRole("link", { name: "Sessions" })).toHaveAttribute(
-      "href",
-      "/w/acme-corp/sessions?factory=all",
-    );
-    fireEvent.click(screen.getByRole("button", { name: `Workspace navigation: ${label}` }));
-    const drawer = await screen.findByRole("dialog", { name: "Workspace pages" });
-    expect(within(drawer).getByRole("link", { name: "Sessions" })).toHaveAttribute(
-      "href",
-      "/w/acme-corp/sessions?factory=all",
-    );
-    expect(within(drawer).queryByRole("link", { name: "Overview" })).toBeNull();
-    expect(within(drawer).getByRole("link", { name: "Insights" })).toHaveAttribute(
-      "href",
-      "/w/acme-corp/analytics?factory=all",
-    );
-  });
+      expect(screen.getByRole("link", { name: "Sessions" })).toHaveAttribute(
+        "href",
+        "/w/acme-corp/sessions?factory=all",
+      );
+      fireEvent.click(screen.getByRole("button", { name: `Workspace navigation: ${label}` }));
+      const drawer = await screen.findByRole("dialog", { name: "Workspace pages" });
+      expect(within(drawer).getByRole("link", { name: "Sessions" })).toHaveAttribute(
+        "href",
+        "/w/acme-corp/sessions?factory=all",
+      );
+      expect(within(drawer).queryByRole("link", { name: "Overview" })).toBeNull();
+      expect(within(drawer).getByRole("link", { name: "Insights" })).toHaveAttribute(
+        "href",
+        "/w/acme-corp/analytics?factory=all",
+      );
+    },
+  );
 
   it("keeps the desktop sidebar always expanded without a collapse control", () => {
     window.localStorage.setItem("wallie-sidebar:v1", "collapsed");
@@ -1158,7 +1161,7 @@ describe("ShellHeader", () => {
     expect(screen.queryByRole("button", { name: "Collapse sidebar" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Expand sidebar" })).toBeNull();
     expect(document.querySelector("[data-shell-rail]")).not.toHaveAttribute("data-collapsed");
-    expect(screen.getByRole("link", { name: "Activity" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Runs" })).toBeVisible();
   });
 
   it("prefetches desktop navigation links on mouse/pen hover or focus and skips touch pointers", () => {
@@ -1218,7 +1221,8 @@ describe("ShellHeader", () => {
   });
 
   it("switches by name without carrying the old scope, while the current Pipeline link keeps it", async () => {
-    mocked.pathname = "/w/acme-corp/activity";
+    mocked.pathname = "/w/acme-corp/runs";
+    mocked.searchParams = new URLSearchParams("factory=all");
     mountShell({
       workspaceOptions: [
         { name: "Acme Corp", slug: "acme-corp" },

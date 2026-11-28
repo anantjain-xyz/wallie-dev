@@ -294,7 +294,7 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
     await delegatedLink.press("Enter");
     await expect(page).toHaveURL(aggregateReview.href);
     await expect(inbox).toHaveAttribute("href", allInboxHref);
-    await expect(rail.getByRole("link", { name: "Activity", exact: true })).toHaveAttribute(
+    await expect(rail.getByRole("link", { name: "Runs", exact: true })).toHaveAttribute(
       "href",
       `${workspacePath}/runs?factory=${delegated.id}`,
     );

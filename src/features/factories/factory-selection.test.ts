@@ -57,7 +57,6 @@ describe("factory scope and selection", () => {
     expect(isFactoryAggregatePath("/w/acme", "acme")).toBe(true);
     expect(isFactoryAggregatePath("/w/acme/sessions", "acme")).toBe(true);
     expect(isFactoryAggregatePath("/w/acme/runs", "acme")).toBe(true);
-    expect(isFactoryAggregatePath("/w/acme/activity", "acme")).toBe(true);
     expect(isFactoryAggregatePath("/w/acme/inbox", "acme")).toBe(true);
     expect(isFactoryAggregatePath("/w/acme/agents", "acme")).toBe(false);
     expect(isFactoryAggregatePath("/w/acme/analytics", "acme")).toBe(false);
@@ -76,9 +75,9 @@ describe("factory scope and selection", () => {
     expect(isManagedFactoryPath("/w/acme/agents", "acme")).toBe(false);
   });
 
-  it("defaults Inbox and Activity to every permitted factory and drops base pagination cursors", () => {
+  it("defaults Inbox to every permitted factory and drops base pagination cursors", () => {
     expect(defaultsToAllFactories("/w/acme/inbox", "acme")).toBe(true);
-    expect(defaultsToAllFactories("/w/acme/activity", "acme")).toBe(true);
+    expect(defaultsToAllFactories("/w/acme/runs", "acme")).toBe(false);
     expect(defaultsToAllFactories("/w/acme/sessions", "acme")).toBe(false);
     expect(factorySwitchHref("/w/acme/inbox", "cursor=old", secondary.id)).toBe(
       "/w/acme/inbox?factory=secondary-id",

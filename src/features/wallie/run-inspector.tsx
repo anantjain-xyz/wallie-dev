@@ -30,7 +30,7 @@ import { RUN_PROVIDER_LABELS, runCatalogCostLabel } from "@/features/wallie/runs
 import type { RunInspectorNames } from "@/features/wallie/run-inspector-names";
 import { RunTechnicalDetails } from "@/features/wallie/run-technical-details";
 import type { WorkflowInspectionHeader } from "@/lib/factory-workflows/inspection-contracts";
-import { workspaceActivityPath, workspaceAgentDetailPath, workspaceRunsPath } from "@/lib/routes";
+import { workspaceAgentDetailPath, workspaceRunsPath } from "@/lib/routes";
 
 export function RunInspector({
   run,
@@ -423,17 +423,9 @@ export function RunInspector({
                 <MetadataItem
                   label="Invoking member"
                   value={
-                    recorded.invokingMemberId ? (
-                      <RecordedRunActor
-                        member={names?.members[recorded.invokingMemberId]}
-                        action="View invoking member activity"
-                        workspaceSlug={workspaceSlug}
-                        factoryId={recorded.factoryId}
-                        memberId={recorded.invokingMemberId}
-                      />
-                    ) : (
-                      "Unrecorded"
-                    )
+                    recorded.invokingMemberId
+                      ? (names?.members[recorded.invokingMemberId] ?? "Member details unavailable")
+                      : "Unrecorded"
                   }
                 />
                 {recorded.triggeredByMemberId &&
@@ -441,13 +433,7 @@ export function RunInspector({
                     <MetadataItem
                       label="Triggered by"
                       value={
-                        <RecordedRunActor
-                          member={names?.members[recorded.triggeredByMemberId]}
-                          action="View triggering member activity"
-                          workspaceSlug={workspaceSlug}
-                          factoryId={recorded.factoryId}
-                          memberId={recorded.triggeredByMemberId}
-                        />
+                        names?.members[recorded.triggeredByMemberId] ?? "Member details unavailable"
                       }
                     />
                   )}
@@ -455,8 +441,7 @@ export function RunInspector({
                   <MetadataItem
                     label="Credential owner"
                     value={
-                      names?.members[recorded.authority.memberId]?.label ??
-                      "Member details unavailable"
+                      names?.members[recorded.authority.memberId] ?? "Member details unavailable"
                     }
                   />
                 ) : recorded.authority.kind === "service" ? (
@@ -582,33 +567,6 @@ export function RunInspector({
         {evaluations}
       </div>
     </PageContainer>
-  );
-}
-
-function RecordedRunActor({
-  workspaceSlug,
-  factoryId,
-  memberId,
-  member,
-  action,
-}: {
-  workspaceSlug: string;
-  factoryId: string;
-  memberId: string;
-  member?: RunInspectorNames["members"][string];
-  action: string;
-}) {
-  if (!member) return "Member details unavailable";
-  if (!member.active) return member.label;
-  return (
-    <Link
-      aria-label={`${action}: ${member.label}`}
-      className="break-words text-foreground underline underline-offset-4"
-      href={workspaceActivityPath(workspaceSlug, { factory: factoryId, actor: memberId })}
-      prefetch={false}
-    >
-      {member.label}
-    </Link>
   );
 }
 

@@ -5,7 +5,6 @@ import {
   type FactorySelectionOption,
 } from "@/features/factories/factory-selection";
 import {
-  workspaceActivityPath,
   workspaceAgentsPath,
   workspaceAnalyticsPath,
   workspaceAutomationPreviewPath,
@@ -29,7 +28,7 @@ import { SESSION_SEARCH_RESUME_PARAM } from "@/lib/workspace-list-return-path";
 export type WorkspaceDestination =
   | "inbox"
   | "sessions"
-  | "activity"
+  | "runs"
   | "insights"
   | "factory"
   | "settings";
@@ -57,18 +56,10 @@ const routes = {
     details: true,
   },
   runs: {
-    destination: "activity",
+    destination: "runs",
     path: workspaceRunsPath,
     mode: "aggregate",
-    tab: "Runs",
     details: true,
-  },
-  feed: {
-    destination: "activity",
-    path: workspaceActivityPath,
-    mode: "aggregate",
-    tab: "Feed",
-    defaultToAll: true,
   },
   analytics: {
     destination: "insights",
@@ -176,10 +167,8 @@ export function workspaceFactorySwitchHref(
     ...resetParams,
   ]);
   const knownAnchor =
-    (/^\/w\/[^/]+\/activity\/?$/u.test(pathname) &&
-      (hash === "#activity-sessions" || hash === "#activity-runs")) ||
-    (/^\/w\/[^/]+\/settings\/factory-definition\/?$/u.test(pathname) &&
-      (hash === "#factory-setup" || hash === "#definition-field-stages"));
+    /^\/w\/[^/]+\/settings\/factory-definition\/?$/u.test(pathname) &&
+    (hash === "#factory-setup" || hash === "#definition-field-stages");
   return knownAnchor ? href + hash : href;
 }
 

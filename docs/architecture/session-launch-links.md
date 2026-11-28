@@ -8,7 +8,7 @@ name to display; name the target factory on a link that takes people out of thei
 Call `sessionLaunchHref(workspaceSlug, factoryId, returnTo)` from
 `src/components/app-shell/shell-navigation.ts` to add an optional cancel destination. Pass the
 origin's workspace-relative pathname, query, and anchor, for example
-`/w/acme/activity?factory=all&actor=me#recent`. Cancel accepts only an app-relative URL within
+`/w/acme/runs?status=error&factory=all#main-content`. Cancel accepts only an app-relative URL within
 the same workspace, strips nested launch parameters, and otherwise falls back to Sessions.
 The return target does not grant access to the page or factory it names.
 

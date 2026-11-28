@@ -48,8 +48,8 @@ describe("workspace location contract", () => {
   it.each([
     ["", "sessions", "Board", false],
     ["/sessions/112", "sessions", "List", true],
-    ["/runs/run", "activity", "Runs", true],
-    ["/activity", "activity", "Feed", false],
+    ["/runs", "runs", undefined, false],
+    ["/runs/run", "runs", undefined, true],
     ["/analytics", "insights", "Analytics", false],
     ["/improvements/proposal", "insights", "Failures", true],
     ["/benchmarks/suite/comparisons/comparison/trials/trial", "insights", "Benchmarks", true],
@@ -64,6 +64,11 @@ describe("workspace location contract", () => {
       detail,
     });
     expect(matchWorkspaceLocation(`/w/${slug}${suffix}`, slug)?.tab).toBe(tab);
+  });
+
+  it("does not resolve retired Activity routes as scoped views", () => {
+    expect(matchWorkspaceLocation(`/w/${slug}/activity`, slug)).toBeUndefined();
+    expect(matchWorkspaceLocation(`/w/${slug}/activity/actors`, slug)).toBeUndefined();
   });
 
   it("does not interpret neighboring workspaces, onboarding, or prefix collisions as scoped views", () => {
@@ -97,8 +102,8 @@ describe("workspace location contract", () => {
     );
   });
 
-  it("supports All only on Inbox, Sessions and Activity lists", () => {
-    for (const route of ["inbox", "board", "sessions", "runs", "feed"] as const) {
+  it("supports All only on Inbox, Sessions and Runs lists", () => {
+    for (const route of ["inbox", "board", "sessions", "runs"] as const) {
       expect(browse(route, "all")).toEqual({ kind: "all" });
     }
     for (const route of [
@@ -125,7 +130,6 @@ describe("workspace location contract", () => {
     expect(browse("sessions")).toEqual(chosen(platform));
     expect(browse("runs")).toEqual(chosen(platform));
     expect(browse("inbox")).toEqual({ kind: "all" });
-    expect(browse("feed")).toEqual({ kind: "all" });
     const noDefault = [mobile, { ...platform, isDefault: false }];
     expect(browse("sessions", undefined, noDefault)).toEqual(chosen(mobile));
     expect(browse("board", undefined, noDefault)).toEqual({

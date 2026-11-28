@@ -47,8 +47,6 @@ async function seedFactoryWork(
     count,
     firstNumber,
     actorMemberId,
-    runActorMemberId = actorMemberId,
-    runStatus = () => "success",
   }: {
     workspaceId: string;
     factoryId: string;
@@ -57,8 +55,6 @@ async function seedFactoryWork(
     count: number;
     firstNumber: number;
     actorMemberId?: string;
-    runActorMemberId?: string;
-    runStatus?: (index: number) => Database["public"]["Enums"]["agent_run_status"];
   },
 ) {
   const pipeline = isDefault
@@ -127,17 +123,17 @@ async function seedFactoryWork(
   );
   await write(
     admin.from("agent_runs").insert(
-      sessions.map((session, index): Database["public"]["Tables"]["agent_runs"]["Insert"] => ({
+      sessions.map((session): Database["public"]["Tables"]["agent_runs"]["Insert"] => ({
         agent_id: implementation.agent_id,
         agent_prompt_revision_id: implementation.id,
         workspace_id: workspaceId,
         session_id: session.id,
         stage_id: stage.id,
-        triggered_by_member_id: runActorMemberId,
+        triggered_by_member_id: actorMemberId,
         model_name: "gpt-5.5",
         model_provider: "codex",
         run_type: "research",
-        status: runStatus(index),
+        status: "success",
       })),
     ),
   );
@@ -348,178 +344,6 @@ test("a factory switch wins before its route commits and an unconfirmed draft re
       failures.map(({ error }) => error),
       messages.join("\n"),
     );
-  }
-});
-
-test("Activity searches actors and pages filtered results within factory access", async ({
-  page,
-  baseURL,
-}, info) => {
-  test.skip(
-    process.env.WALLIE_FACTORY_QUALIFICATION !== "1",
-    "Requires a disposable local Supabase stack.",
-  );
-  const app = localUrl(baseURL);
-  const url = localUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
-  const key = process.env.SUPABASE_SECRET_KEY;
-  if (!key) throw new Error("Export the disposable local Supabase keys.");
-  const admin = createClient<Database>(url, key, { auth: { persistSession: false } });
-  const slug = `activity-nav-${randomUUID().slice(0, 8)}`;
-  const ownerEmail = `${slug}-owner@example.test`;
-  const memberEmail = `${slug}-member@example.test`;
-  const ownerId = await createUser(admin, ownerEmail);
-  let memberId: string | undefined;
-  let workspaceId: string | undefined;
-  try {
-    memberId = await createUser(admin, memberEmail);
-    const workspace = await read(
-      admin.rpc("create_workspace", {
-        actor_user_id: ownerId,
-        actor_email: ownerEmail,
-        requested_slug: slug,
-        workspace_name: "Activity qualification",
-      }),
-    );
-    workspaceId = workspace.id;
-    const [actor, hiddenActor] = await read(
-      admin
-        .from("workspace_members")
-        .insert([
-          {
-            workspace_id: workspace.id,
-            user_id: memberId,
-            email: memberEmail,
-            full_name: "Jamie Sample",
-            username: "jamie",
-            kind: "human",
-            role: "member",
-          },
-          {
-            workspace_id: workspace.id,
-            full_name: "Private automation",
-            kind: "system",
-            role: "agent",
-          },
-        ])
-        .select("id,kind"),
-    );
-    if (actor?.kind !== "human" || hiddenActor?.kind !== "system")
-      throw new Error("Missing Activity actors.");
-    await write(
-      admin
-        .from("workspace_onboarding")
-        .update({ status: "completed", completed_at: new Date().toISOString() })
-        .eq("workspace_id", workspace.id),
-    );
-    const visible = await read(
-      admin
-        .from("factories")
-        .select("id")
-        .eq("workspace_id", workspace.id)
-        .eq("is_default", true)
-        .single(),
-    );
-    const restricted = await read(
-      admin.rpc("create_factory", {
-        p_workspace_id: workspace.id,
-        p_actor_user_id: ownerId,
-        p_name: "Restricted factory",
-        p_slug: "restricted-factory",
-      }),
-    );
-    await seedFactoryWork(admin, {
-      workspaceId: workspace.id,
-      factoryId: visible.id,
-      isDefault: true,
-      title: "Activity fixture",
-      count: 13,
-      firstNumber: 1,
-      actorMemberId: actor.id,
-      runStatus: (index) => (index === 0 ? "success" : "error"),
-    });
-    await seedFactoryWork(admin, {
-      workspaceId: workspace.id,
-      factoryId: restricted.id,
-      isDefault: false,
-      title: "Restricted record",
-      count: 1,
-      firstNumber: 14,
-      runActorMemberId: hiddenActor.id,
-    });
-
-    const activityPath = `/w/${workspace.slug}/activity`;
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
-    await signInViaMagicLink(page, `${activityPath}?factory=${visible.id}`, {
-      baseURL: app,
-      email: memberEmail,
-    });
-    const actorTrigger = page.getByRole("button", { name: /^Actor:/ });
-    await actorTrigger.press("Enter");
-    const dialog = page.getByRole("dialog", { name: "Filter by actor" });
-    const search = dialog.getByRole("searchbox", { name: "Search actors" });
-    await expect(search).toBeFocused();
-    await search.fill("@jamie");
-    await dialog.getByRole("link", { name: "Jamie Sample (@jamie)" }).press("Enter");
-    await expect(actorTrigger).toHaveText("Jamie Sample (@jamie)");
-    const runs = page.getByRole("region", { name: "Runs", exact: true });
-    const sessions = page.getByRole("region", { name: "Sessions", exact: true });
-    const statusFilter = page.getByRole("combobox", { name: "Run status" });
-    await selectDropdownOption(statusFilter, "error");
-    await expect(runs.getByText(/12 runs match/)).toBeVisible();
-    await expect(sessions.getByText(/13 sessions match/)).toBeVisible();
-    await expect(runs.getByText("Failed", { exact: true })).toHaveCount(10);
-    await expect(runs.getByText("Complete", { exact: true })).toHaveCount(0);
-    await capture(page, info, "activity-desktop-filtered");
-
-    const runTitles = () =>
-      runs
-        .locator("li a")
-        .filter({ hasText: /^Activity fixture session/ })
-        .allTextContents();
-    const latestTitles = await runTitles();
-    await runs.getByRole("link", { name: "Older runs" }).press("Enter");
-    await expect(page).toHaveURL(/runsBefore=/);
-    expect(new URL(page.url()).searchParams.get("actor")).toBe(actor.id);
-    expect(new URL(page.url()).searchParams.get("factory")).toBe(visible.id);
-    expect(new URL(page.url()).searchParams.get("status")).toBe("error");
-    await expect(runs.getByText("12 runs match", { exact: true })).toBeVisible();
-    await expect(runs.getByRole("listitem")).toHaveCount(2);
-    await expect(sessions.getByText("13 sessions match", { exact: true })).toBeVisible();
-    await expect(sessions.getByRole("listitem")).toHaveCount(10);
-    expect((await runTitles()).every((title) => !latestTitles.includes(title))).toBe(true);
-    await page.goBack();
-    await expect(runs.getByText("12 runs match", { exact: true })).toBeVisible();
-    await expect(runs.getByRole("listitem")).toHaveCount(10);
-
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.emulateMedia({ colorScheme: "dark" });
-    await page.reload();
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-    await capture(page, info, "activity-mobile-filtered");
-    await selectDropdownOption(statusFilter, "canceled");
-    await expect(runs.getByText("No runs match these filters.")).toBeVisible();
-    await expect(actorTrigger).toHaveText("Jamie Sample (@jamie)");
-    await page.getByRole("link", { name: "Clear filters" }).press("Enter");
-    await expect(page).toHaveURL(`${activityPath}?factory=${visible.id}`);
-    await expect(actorTrigger).toHaveText("All actors");
-    await expect(runs.getByText("13 runs", { exact: true })).toBeVisible();
-
-    await page.goto(`${activityPath}?factory=${restricted.id}`);
-    await expect(page.getByRole("heading", { name: "Factory unavailable" })).toBeVisible();
-    await page.getByRole("link", { name: "Show activity for all accessible factories" }).click();
-    await actorTrigger.press("Enter");
-    await search.fill("Private automation");
-    await expect(dialog.getByText("No named actors match.")).toBeVisible();
-    await search.press("Escape");
-    await expect(actorTrigger).toBeFocused();
-    await page.goto(`${activityPath}?actor=${hiddenActor.id}`);
-    await expect(actorTrigger).toHaveText("Actor unavailable");
-    await expect(runs.getByText("No runs match these filters.")).toBeVisible();
-  } finally {
-    if (workspaceId) await write(admin.from("workspaces").delete().eq("id", workspaceId));
-    if (memberId) await write(admin.auth.admin.deleteUser(memberId));
-    await write(admin.auth.admin.deleteUser(ownerId));
   }
 });
 
@@ -737,12 +561,24 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     await expect(page.getByText(/Restricted/u)).toHaveCount(0);
     await capture(page, info, "04-restricted-factory-unavailable");
 
+    await page.goto(`${sessionsPath}?factory=${visibleFactory.id}`);
+    const runsEntry = page
+      .getByRole("navigation", { name: "Workspace navigation", exact: true })
+      .getByRole("link", { name: "Runs", exact: true });
+    const scopedRuns = `${runsPath}?factory=${visibleFactory.id}`;
+    await expect(runsEntry).toHaveAttribute("href", scopedRuns);
+    await runsEntry.press("Enter");
+    await expect(page).toHaveURL(scopedRuns);
+    await expect(runsEntry).toHaveAttribute("aria-current", "page");
+    const runs = page.getByRole("list", { name: /^Runs/ });
+    await expect(runs.getByRole("listitem")).toHaveCount(1);
+    await expect(runs).toContainText("Customer tools session 1");
+
     const defaultSession = initial.sessions[0];
     if (!defaultSession) throw new Error("Missing the default session fixture.");
     await page.goto(
       `${runsPath}?factory=${defaultFactory.id}&sessionId=${defaultSession.id}&stageId=${initial.stage.id}`,
     );
-    const runs = page.getByRole("list", { name: /^Runs/ });
     await expect(runs.getByRole("listitem")).toHaveCount(1);
     await selectFactory(page, "Customer tools");
     await expect(runs).toContainText("Customer tools session 1");
@@ -769,6 +605,10 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     await page.getByRole("link", { name: "Evidence", exact: true }).press("Enter");
     await expect(page).toHaveURL(/#run-evidence$/u);
     await expect(page.getByRole("region", { name: "Evidence", exact: true })).toBeFocused();
+
+    await page.goto(`${runsPath}?factory=${restrictedFactory.id}`);
+    await expect(page.getByRole("heading", { name: "Factory unavailable" })).toBeVisible();
+    await expect(runs).toHaveCount(0);
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.emulateMedia({ colorScheme: "dark" });
@@ -809,57 +649,10 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     if (!visibleSession) throw new Error("Missing the delegated factory session fixture.");
     await page.goto(`${sessionsPath}/${visibleSession.number}`);
     await expect(page.getByRole("heading", { level: 1, name: visibleSession.title })).toBeVisible();
-    await seedFactoryWork(admin, {
-      workspaceId: workspace.id,
-      factoryId: defaultFactory.id,
-      isDefault: true,
-      title: "Older activity",
-      count: 30,
-      firstNumber: 5,
-    });
-    const selectedRun = await read(
-      admin.from("agent_runs").select("id").eq("session_id", visibleSession.id).single(),
-    );
-    const activityPath = `${workspacePath}/activity`;
+    const main = page.getByRole("main");
     const governancePath = `${workspacePath}/governance`;
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.emulateMedia({ colorScheme: "light" });
-    await page.goto(activityPath);
-    await expect(page.getByRole("heading", { level: 1, name: "Activity" })).toBeVisible();
-    await expect(factory).toHaveText("All factories");
-    await expect(factory).toHaveAttribute("data-value", "all");
-    await expect(page.getByRole("main").getByText(/Restricted/u)).toHaveCount(0);
-    await expect(page.getByRole("link", { name: "Governance", exact: true })).toHaveCount(0);
-    // The total reflects all authorized rows even when only a bounded preview is visible.
-    await expect(page.getByRole("main")).toContainText(/32 sessions/i);
-    await expect(page.getByRole("main")).toContainText(/32 runs/i);
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-    await capture(page, info, "06-activity-desktop-light");
-
-    await selectFactory(page, "Customer tools");
-    const main = page.getByRole("main");
-    await expect(
-      main
-        .getByRole("region", { name: "Sessions", exact: true })
-        .getByRole("link", { name: visibleSession.title, exact: true }),
-    ).toHaveAttribute("href", `${sessionsPath}/${visibleSession.number}`);
-    await expect(main.locator(`a[href="${runsPath}/${selectedRun.id}"]`)).toBeVisible();
-    const actor = main.getByRole("link", { name: "Jamie Sample", exact: true }).first();
-    await actor.press("Enter");
-    await expect(page).toHaveURL(new RegExp(`[?&]actor=${current.id}(?:&|$)`));
-    await expect(main.getByText("Older activity", { exact: false })).toHaveCount(0);
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.emulateMedia({ colorScheme: "dark" });
-    await page.reload();
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-    await capture(page, info, "07-activity-mobile-dark");
-
-    await page.goto(`${activityPath}?factory=all&actor=${randomUUID()}`);
-    await expect(main.getByText("No sessions match these filters.", { exact: true })).toBeVisible();
-    await expect(main.getByText("No runs match these filters.", { exact: true })).toBeVisible();
-
-    await page.goto(`${activityPath}?factory=${restrictedFactory.id}`);
-    await expect(page.getByRole("heading", { name: "Factory unavailable" })).toBeVisible();
     await page.goto(`${governancePath}?factory=${visibleFactory.id}`);
     await expect(
       page.getByRole("heading", { name: "Factory manager access required" }),

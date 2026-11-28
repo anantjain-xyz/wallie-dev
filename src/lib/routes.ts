@@ -8,7 +8,6 @@ export type WorkspaceNavItem = {
     | "sessions"
     | "inbox"
     | "runs"
-    | "activity"
     | "analytics"
     | "benchmarks"
     | "failure-groups"
@@ -93,10 +92,6 @@ export function workspaceRunDetailPath(
     `${workspaceRunsPath(workspaceSlug)}/${encodeURIComponent(runId)}`,
     query,
   );
-}
-
-export function workspaceActivityPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
-  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/activity`, query);
 }
 
 export function workspaceAnalyticsPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
@@ -333,12 +328,6 @@ export function getWorkspaceNavItems(
     },
     { id: "inbox", href: workspaceInboxPath(workspaceSlug), label: "Inbox", section: "Work" },
     { id: "runs", href: workspaceRunsPath(workspaceSlug), label: "Runs", section: "Work" },
-    {
-      id: "activity",
-      href: workspaceActivityPath(workspaceSlug),
-      label: "Activity",
-      section: "Work",
-    },
     {
       id: "analytics",
       href: workspaceAnalyticsPath(workspaceSlug),

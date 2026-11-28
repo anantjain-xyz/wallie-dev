@@ -1,5 +1,4 @@
 import {
-  workspaceActivityPath,
   workspaceAutomationPreviewPath,
   workspaceBasePath,
   workspaceContextPath,
@@ -71,16 +70,12 @@ export function isFactoryAggregatePath(pathname: string, workspaceSlug: string) 
     pathname === workspaceBasePath(workspaceSlug) ||
     pathname === workspaceSessionsPath(workspaceSlug) ||
     pathname === workspaceRunsPath(workspaceSlug) ||
-    pathname === workspaceInboxPath(workspaceSlug) ||
-    pathname === workspaceActivityPath(workspaceSlug)
+    pathname === workspaceInboxPath(workspaceSlug)
   );
 }
 
 export function defaultsToAllFactories(pathname: string, workspaceSlug: string) {
-  return (
-    pathname === workspaceActivityPath(workspaceSlug) ||
-    pathname === workspaceInboxPath(workspaceSlug)
-  );
+  return pathname === workspaceInboxPath(workspaceSlug);
 }
 
 export function isManagedFactoryPath(pathname: string, workspaceSlug: string) {

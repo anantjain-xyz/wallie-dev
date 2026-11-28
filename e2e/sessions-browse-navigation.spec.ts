@@ -409,10 +409,10 @@ test("Inbox still opens the exact review and Runs remains a separate attempt rou
   ).toBeVisible();
   await expect(inbox).toHaveAttribute("href", inboxHref);
 
-  const activity = rail.getByRole("link", { name: "Activity", exact: true });
+  const runs = rail.getByRole("link", { name: "Runs", exact: true });
   const runsHref = `${boardPath}/runs?factory=${firstReviewFactoryId}`;
-  await expect(activity).toHaveAttribute("href", runsHref);
-  await activity.click();
+  await expect(runs).toHaveAttribute("href", runsHref);
+  await runs.click();
   await expect(page).toHaveURL(runsHref);
   await expect(factory(page)).toHaveCount(0);
   const inspect = page
@@ -427,7 +427,7 @@ test("Inbox still opens the exact review and Runs remains a separate attempt rou
   );
   await inspect.click();
   await expect(page).toHaveURL(runUrl.href);
-  await expect(activity).toHaveAttribute("aria-current", "page");
+  await expect(runs).toHaveAttribute("aria-current", "page");
   runUrl.searchParams.set("attempt", "1");
   const attempt = await page.goto(runUrl.href);
   expect(attempt?.ok()).toBe(true);

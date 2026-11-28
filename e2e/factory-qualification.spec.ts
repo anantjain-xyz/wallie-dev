@@ -698,7 +698,7 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
       userId: user.id,
       connectionRevision,
     });
-    const editor = `/w/${workspace.slug}/settings/factory-definition`;
+    const editor = `/w/${workspace.slug}/settings/factory-definition?factory=${factory.id}`;
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
     await signInViaMagicLink(page, editor, { baseURL: app, email });
@@ -813,6 +813,7 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     const owner = await checked(
       admin
         .from("workspace_members")
+        .update({ full_name: "Qualification Owner" })
         .select("id")
         .eq("workspace_id", workspace.id)
         .eq("user_id", user.id)
@@ -1292,25 +1293,36 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     ).toBeVisible();
     await expect(recordedProfile.getByText(secondModel, { exact: true })).toBeVisible();
     await expect(recordedProfile.getByText("Node.js", { exact: true })).toBeVisible();
-    await expect(recordedProfile.getByText(connectionRevision, { exact: true })).toBeVisible();
-    await expect(recordedProfile.getByText(changed, { exact: true })).toBeVisible();
     await expect(recordedProfile.getByText("E2B", { exact: true })).toBeVisible();
     await expect(recordedProfile.getByText("Implementation agent", { exact: true })).toBeVisible();
     await expect(
-      recordedProfile.getByRole("link", { name: firstAgentPrompt.agent_id, exact: true }),
+      recordedProfile.getByText("Implementation reviewer", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      recordedProfile.getByRole("link", { name: "Open prompt revision 2", exact: true }),
     ).toHaveAttribute("href", `${agentPage}&revision=${secondAgentPrompt.id}`);
     await expect(recordedProfile.getByText("Agent prompt revision", { exact: true })).toBeVisible();
-    await expect(recordedProfile.getByText(secondAgentPrompt.id, { exact: true })).toBeVisible();
     await expect(recordedProfile.getByText("Invoking member", { exact: true })).toBeVisible();
-    await expect(
-      recordedProfile.getByRole("link", { name: owner.id, exact: true }),
-    ).toHaveAttribute(
-      "href",
-      `/w/${workspace.slug}/activity?factory=${factory.id}&actor=${owner.id}`,
+    await expect(recordedProfile.getByText("Qualification Owner · Member")).toBeVisible();
+    await expect(recordedProfile.getByRole("link", { name: /Qualification Owner/u })).toHaveCount(
+      0,
     );
-    await expect(recordedProfile).toContainText(service.principalId);
-    await expect(recordedProfile).toContainText(`${service.grant.id} · v${service.grant.version}`);
-    await expect(recordedProfile).toContainText(`${service.bindingId} · v1`);
+    await expect(
+      recordedProfile.getByText(`Service execution grant · Version ${service.grant.version}`),
+    ).toBeVisible();
+    await expect(recordedProfile.getByText("Recorded service binding · Version 1")).toBeVisible();
+    const technical = recordedProfile.locator("details");
+    await technical.getByText("Technical details", { exact: true }).press("Enter");
+    for (const id of [
+      connectionRevision,
+      changed,
+      secondAgentPrompt.id,
+      service.principalId,
+      service.grant.id,
+      service.bindingId,
+    ]) {
+      await expect(technical.getByText(id, { exact: true })).toBeVisible();
+    }
     await expect(page.getByRole("heading", { name: "Pinned MCP manifest" })).toBeVisible();
     await expect(page.getByText("release-evidence · Revision 1", { exact: true })).toBeVisible();
     await expect(page.getByText(toolOperation, { exact: true })).toBeVisible();

@@ -8,7 +8,7 @@ const workspacePath = "/w/acme-corp";
 test("cancel and browser Back return from a direct launch to the original factory view", async ({
   page,
 }) => {
-  const origin = `${workspacePath}/activity?factory=all#main-content`;
+  const origin = `${workspacePath}/runs?status=success&factory=all#main-content`;
   const launch = `${workspacePath}/sessions?${new URLSearchParams({ create: "1", returnTo: origin })}`;
   await page.goto(origin);
   await page.goto(launch);

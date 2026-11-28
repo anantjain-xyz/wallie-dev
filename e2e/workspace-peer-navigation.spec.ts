@@ -10,7 +10,7 @@ const automations = `${settings}/automations`;
 const definition = `${settings}/factory-definition`;
 
 const destinations = [
-  { title: "Runs", path: runs, group: "Activity", oldLink: "Sessions" },
+  { title: "Runs", path: runs, group: "Runs", oldLink: "Sessions" },
   { title: "Pipeline", path: definition, group: "Factory", oldLink: "Settings" },
   { title: "Automations", path: automations, group: "Factory", oldLink: "Back to Settings" },
 ] as const;
@@ -24,6 +24,9 @@ async function expectPeerHeader(
   const header = page.getByRole("main").locator("header").filter({ has: heading });
   await expect(header).toBeVisible();
   await expect(header.getByRole("link", { name: oldLink, exact: true })).toHaveCount(0);
+  if (path === runs) {
+    await expect(page.getByRole("navigation", { name: /^(Activity|Runs) views$/u })).toHaveCount(0);
+  }
 }
 
 for (const width of [1440, 390]) {
@@ -59,6 +62,7 @@ for (const width of [1440, 390]) {
           "page",
         );
       }
+      await expect(navigation.getByRole("link", { name: /^(Activity|Feed)$/u })).toHaveCount(0);
       const link = navigation.getByRole("link", { name: destination.group, exact: true });
       await link.press("Enter");
       await expectPeerHeader(page, destination);
@@ -97,24 +101,36 @@ test("Settings and Sessions launches keep scoped recovery and exact run returns"
     .click();
   await expect(page).toHaveURL((url) => url.pathname === definition);
 
-  await page.goto(sessions);
+  await page.goto(`${sessions}?factory=all`);
   await page
     .getByRole("navigation", { name: "Workspace navigation" })
-    .getByRole("link", { name: "Activity", exact: true })
+    .getByRole("link", { name: "Runs", exact: true })
     .click();
-  await expect(page).toHaveURL((url) => url.pathname === runs);
-  const filteredRuns = `${runs}?status=success&factory=all`;
+  await expect(page).toHaveURL(`${runs}?factory=all`);
+  const filteredRuns = `${runs}?status=success&limit=1&factory=all`;
   await page.goto(filteredRuns);
+  await main.getByRole("link", { name: "Older runs", exact: true }).press("Enter");
+  await expect(page).toHaveURL((url) => url.pathname === runs && url.searchParams.has("cursor"));
+  const olderPage = new URL(page.url());
   const row = main.getByRole("list", { name: "Runs", exact: true }).getByRole("listitem").first();
   const session = row.getByRole("link", { name: /^Session #\d+$/u });
   await expect(session).toHaveAttribute("href", /\/sessions\/\d+#wallie-run-[\da-f-]+$/u);
   await row.getByRole("link", { name: /— .*?(?:attempt \d+|created )/u }).press("Enter");
   await expect(page).toHaveURL((url) => url.pathname.startsWith(`${runs}/`));
   const back = main.getByRole("link", { name: "Back to filtered runs", exact: true });
-  await expect(back).toHaveAttribute("href", filteredRuns);
+  await expect(back).toBeVisible();
+  const fromRuns = new URL(page.url()).searchParams.get("fromRuns");
+  expect(Object.fromEntries(new URLSearchParams(fromRuns ?? ""))).toEqual(
+    Object.fromEntries(olderPage.searchParams),
+  );
+  await expect(back).toHaveAttribute("href", `${runs}?${fromRuns}`);
   await expect(back.locator('svg[aria-hidden="true"]')).toBeVisible();
   await back.click();
-  await expect(page).toHaveURL(filteredRuns);
+  await expect(page).toHaveURL(`${runs}?${fromRuns}`);
+  await expect(main.getByRole("link", { name: "Latest runs", exact: true })).toHaveAttribute(
+    "href",
+    filteredRuns,
+  );
 });
 
 test("unavailable selections still offer scoped recovery", async ({ page }) => {
@@ -131,5 +147,33 @@ test("unavailable selections still offer scoped recovery", async ({ page }) => {
       "href",
       `${sessions}?factory=all`,
     );
+  }
+
+  const fromRuns = "status=success&limit=1&factory=all";
+  await page.goto(
+    `${runs}/00000000-0000-4000-8000-000000000001?${new URLSearchParams({ fromRuns })}`,
+  );
+  await expect(main.getByRole("heading", { name: "This page isn’t available" })).toBeVisible();
+  await expect(
+    page
+      .getByRole("navigation", { name: "Workspace navigation" })
+      .getByRole("link", { name: "Runs", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(main.getByRole("link", { name: "Back to filtered runs" })).toHaveAttribute(
+    "href",
+    `${runs}?${fromRuns}`,
+  );
+});
+
+test("the retired Activity and actor routes do not redirect or render a Feed", async ({ page }) => {
+  await signIn(page, runs);
+  const activity = `${workspace}/activity`;
+  for (const path of [
+    activity,
+    `${activity}?factory=all&actor=00000000-0000-4000-8000-000000000001`,
+    `${activity}/actors?factory=all&q=sample`,
+  ]) {
+    const response = await page.request.get(path, { maxRedirects: 0 });
+    expect(response.status(), path).toBe(404);
   }
 });
