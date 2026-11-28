@@ -435,7 +435,7 @@ select is(
 );
 select is(
   (select count(*) from jsonb_array_elements(
-    public.get_pipeline_dashboard_page('55000000-0000-4000-8000-000000000001') -> 'lanes'
+    public.get_filtered_pipeline_dashboard_page('55000000-0000-4000-8000-000000000001') -> 'lanes'
   ) lane
   cross join lateral jsonb_array_elements(lane -> 'cards') card
   where card ->> 'id' = '55000000-1400-4000-8000-000000000001'),
@@ -444,7 +444,7 @@ select is(
 );
 select is(
   (select count(*) from jsonb_array_elements(
-    public.get_pipeline_dashboard_page('55000000-0000-4000-8000-000000000001') -> 'lanes'
+    public.get_filtered_pipeline_dashboard_page('55000000-0000-4000-8000-000000000001') -> 'lanes'
   ) lane
   cross join lateral jsonb_array_elements(lane -> 'cards') card
   where card ->> 'id' = '55000000-1400-4000-8000-000000000002'),
@@ -459,7 +459,7 @@ select is(
   'an explicitly restricted factory has no session facet counts'
 );
 select is(
-  public.get_pipeline_dashboard_page('55000000-0000-4000-8000-000000000001',
+  public.get_filtered_pipeline_dashboard_page('55000000-0000-4000-8000-000000000001',
     target_factory_id => (select factory_id from scope_fixtures where slug = 'payments')
   ) -> 'lanes',
   '[]'::jsonb,
@@ -559,7 +559,7 @@ select is(
 );
 select is(
   (select sum((lane ->> 'totalCount')::integer) from jsonb_array_elements(
-    public.get_pipeline_dashboard_page('55000000-0000-4000-8000-000000000001',
+    public.get_filtered_pipeline_dashboard_page('55000000-0000-4000-8000-000000000001',
       target_factory_id => (select factory_id from scope_fixtures where slug = 'payments')
     ) -> 'lanes'
   ) lane),
