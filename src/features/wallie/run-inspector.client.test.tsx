@@ -159,8 +159,8 @@ function show(
       names={{
         agents: { [run.id]: "Release agent" },
         members: {
-          [run.sessionId]: { label: "Riley · Member", active: true },
-          [workspaceId]: { label: "Morgan · Former member", active: false },
+          [run.sessionId]: "Riley · Member",
+          [workspaceId]: "Morgan · Former member",
         },
         principals: {},
         promptRevisionNumber: 3,
@@ -342,23 +342,23 @@ describe("RunInspector", () => {
         agentId: run.id,
         promptRevisionId: artifact.id,
         invokingMemberId: run.sessionId,
-        triggeredByMemberId: null,
+        triggeredByMemberId: workspaceId,
         authority: { kind: "human", memberId: workspaceId },
       },
     });
     expect(screen.getByRole("heading", { name: "Recorded execution profile" })).toBeTruthy();
     expect(screen.getByText("claude-sonnet-4-5")).toBeTruthy();
     expect(screen.getByText("Workerd")).toBeTruthy();
-    expect(screen.getByText("Morgan · Former member")).toBeTruthy();
+    const credentialOwner = screen.getByText("Credential owner").parentElement!;
+    expect(within(credentialOwner).getByText("Morgan · Former member")).toBeTruthy();
     expect(screen.getByText("Release agent")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Open prompt revision 3" }).getAttribute("href")).toBe(
       `/w/wallie/agents/${run.id}?factory=${workspaceId}&revision=${artifact.id}`,
     );
-    expect(
-      screen
-        .getByRole("link", { name: "View invoking member activity: Riley · Member" })
-        .getAttribute("href"),
-    ).toBe(`/w/wallie/activity?factory=${workspaceId}&actor=${run.sessionId}`);
+    const invokingMember = screen.getByText("Invoking member").parentElement!;
+    expect(within(invokingMember).getByText("Riley · Member").closest("a")).toBeNull();
+    const triggeringMember = screen.getByText("Triggered by").parentElement!;
+    expect(within(triggeringMember).getByText("Morgan · Former member").closest("a")).toBeNull();
     expect(screen.queryByText(/current-catalog-model/)).toBeNull();
   });
   it("shows the durable attempt, source session and exact accepted artifact link", () => {

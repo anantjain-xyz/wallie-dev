@@ -57,22 +57,20 @@ Workspace operators can still manage factories with no explicit manager.
 Factory definitions can only reference pipelines and repositories in the same
 factory. Session repository lookup and Git pinning also enforce this scope.
 
-## Activity views
+## Sessions and Runs
 
-Pipeline, Sessions, and Runs resolve the authorized default factory when a URL
-omits `factory`. A factory ID scopes rows and counts to that factory.
+With no `factory` in the URL, the Sessions Board and List and the Runs list use
+the authorized default factory when available. A factory ID scopes rows and
+counts to that factory.
 `factory=all` reads across the viewer's authorized factories. An unavailable
 scope displays an empty state with the factory selector so the viewer can
 choose their next scope. Switching factories resets stage and pagination
 filters. Session and run detail links keep their existing IDs and URLs.
 
-**Activity** opens across authorized factories. Its two lists are snapshots:
-sessions are ordered by last update and runs by creation, and each row shows the
-current status separately from its recorded actor. Actor search and selected-name
-lookup use memberships or recorded activity readable in the current factory scope.
-The factory and actor filters apply to both lists; run status applies only to
-Runs. Each list keeps its own exact filtered total, retrieval state, and bounded
-older-results cursor. Session and run links still open the canonical resource.
+Sessions is where people move and review work. Runs opens directly from the
+workspace navigation and lists execution attempts and their outcomes. Opening
+an attempt locks the scope to its factory. The inspector's Back link restores
+the list's factory, filters, and page when opened from Runs.
 
 ## Commands
 

@@ -91,7 +91,7 @@ export async function loadRunInspectorNames({
             : member.is_active
               ? "Member"
               : "Former member";
-        return [member.id, { label: name ? `${name} · ${type}` : type, active: member.is_active }];
+        return [member.id, name ? `${name} · ${type}` : type];
       }),
     ),
     promptRevisionNumber: prompt?.data?.revision_number ?? null,

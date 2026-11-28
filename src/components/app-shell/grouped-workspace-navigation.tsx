@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 const destinations = [
   { id: "inbox", label: "Inbox", entry: "inbox" },
   { id: "sessions", label: "Sessions", entry: "sessions" },
-  { id: "activity", label: "Activity", entry: "runs" },
+  { id: "runs", label: "Runs", entry: "runs" },
   { id: "insights", label: "Insights", entry: "analytics" },
   { id: "factory", label: "Factory", entry: "agents" },
   { id: "settings", label: "Settings", entry: "settings" },
@@ -91,9 +91,7 @@ export function getGroupedWorkspaceNavigation({
 
   let tabs: NavigationLink[] = [];
   let sections: NavigationLink[] = [];
-  if (destination === "activity") {
-    tabs = [tab("runs", "Runs"), tab("feed", "Feed")];
-  } else if (destination === "insights") {
+  if (destination === "insights") {
     tabs = [
       tab("analytics", "Analytics"),
       tab("failures", "Failures"),

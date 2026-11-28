@@ -139,9 +139,7 @@ export function RunRoutingDecisionInspection({
               <MetadataItem label="Reason" value={override.reason} />
               <MetadataItem
                 label="Override by"
-                value={
-                  names?.members[override.actorMemberId]?.label ?? "Member details unavailable"
-                }
+                value={names?.members[override.actorMemberId] ?? "Member details unavailable"}
               />
               <MetadataItem label="Selected target" value={selectedSourceLabels[override.target]} />
               <MetadataItem label="Model" value={override.configuration.modelKey} />

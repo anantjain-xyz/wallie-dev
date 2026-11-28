@@ -30,7 +30,7 @@ describe("grouped workspace navigation", () => {
     expect(nav().sidebar.map(({ label }) => label)).toEqual([
       "Inbox",
       "Sessions",
-      "Activity",
+      "Runs",
       "Insights",
       "Factory",
       "Settings",
@@ -45,13 +45,24 @@ describe("grouped workspace navigation", () => {
     ]);
   });
 
-  it("preserves current Activity and Insights tabs on their existing URLs", () => {
-    const feed = nav({ pathname: "/w/tandem/activity", scope: { kind: "all" } });
-    expect(feed.activeItem?.id).toBe("activity");
-    expect(feed.tabs).toEqual([
-      { active: false, href: "/w/tandem/runs?factory=all", label: "Runs" },
-      { active: true, href: "/w/tandem/activity?factory=all", label: "Feed" },
-    ]);
+  it.each([
+    ["/runs", { kind: "all" }, "?factory=all"],
+    ["/runs", { kind: "unavailable" }, "?factory=unavailable"],
+    ["/runs/run-id", { kind: "factory", factory: mobile }, "?factory=mobile"],
+    ["/runs/run-id", { kind: "resource-pending" }, ""],
+  ] as const)("selects direct Runs at %s with %j and no sub-navigation", (path, scope, query) => {
+    const runs = nav({ pathname: `/w/tandem${path}`, scope });
+    expect(runs.activeItem).toEqual({
+      active: true,
+      href: `/w/tandem/runs${query}`,
+      id: "runs",
+      label: "Runs",
+    });
+    expect(runs.tabs).toEqual([]);
+    expect(runs.sections).toEqual([]);
+  });
+
+  it("preserves current Insights tabs on their existing URLs", () => {
     const improvement = nav({ pathname: "/w/tandem/improvements/proposal" });
     expect(improvement.activeItem?.id).toBe("insights");
     expect(improvement.tabs.filter(({ active }) => active).map(({ label }) => label)).toEqual([

@@ -42,9 +42,9 @@ function navigation(
 
 describe("navigation factory scope", () => {
   it.each([
-    ["activity", []],
     ["inbox", []],
-    ["activity", ["all"]],
+    ["inbox", ["all"]],
+    ["runs", ["all"]],
   ] as const)("retains All factories from %s between aggregate destinations", (source, query) => {
     expect(navigation(source, "sessions", [...query]).href).toBe(
       "/w/northwind/sessions?factory=all",
@@ -63,14 +63,12 @@ describe("navigation factory scope", () => {
   });
 
   it("keeps an implicit default when the destination normally aggregates", () => {
-    expect(navigation("sessions", "activity", []).href).toBe(
-      "/w/northwind/activity?factory=default",
-    );
+    expect(navigation("sessions", "inbox", []).href).toBe("/w/northwind/inbox?factory=default");
     expect(navigation("sessions", "runs", []).href).toBe("/w/northwind/runs");
   });
 
   it("names the factory when a destination cannot use the current scope", () => {
-    expect(navigation("activity", "analytics", [])).toEqual({
+    expect(navigation("inbox", "analytics", [])).toEqual({
       href: "/w/northwind/analytics?factory=default",
       scopeNote: "Opens in Central",
     });
@@ -84,14 +82,14 @@ describe("navigation factory scope", () => {
   });
 
   it("preserves an unavailable scope instead of broadening or choosing another factory", () => {
-    expect(navigation("sessions", "activity", ["hidden"]).href).toBe(
-      "/w/northwind/activity?factory=hidden",
+    expect(navigation("sessions", "runs", ["hidden"]).href).toBe(
+      "/w/northwind/runs?factory=hidden",
     );
-    expect(navigation("sessions", "activity", ["default", "hidden"]).href).toBe(
-      "/w/northwind/activity?factory=default&factory=hidden",
+    expect(navigation("sessions", "runs", ["default", "hidden"]).href).toBe(
+      "/w/northwind/runs?factory=default&factory=hidden",
     );
-    expect(navigation("sessions", "activity", [], [secondary]).href).toBe(
-      "/w/northwind/activity?factory=unavailable",
+    expect(navigation("sessions", "inbox", [], [secondary]).href).toBe(
+      "/w/northwind/inbox?factory=unavailable",
     );
     expect(navigation("governance", "sessions", ["default"]).href).toBe(
       "/w/northwind/sessions?factory=unavailable",
@@ -109,8 +107,8 @@ describe("navigation factory scope", () => {
       query: [],
       slug,
     });
-    expect(shellNavDestination(item("activity"), slug, factories, scope).href).toBe(
-      "/w/northwind/activity",
+    expect(shellNavDestination(item("runs"), slug, factories, scope).href).toBe(
+      "/w/northwind/runs",
     );
   });
 });

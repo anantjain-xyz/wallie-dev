@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { renderToReadableStream, renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import ActivityPage from "@/app/w/[workspaceSlug]/(app)/activity/page";
 import FailureGroupPage from "@/app/w/[workspaceSlug]/(app)/failure-groups/[cohortId]/page";
 import FailureValidationPage from "@/app/w/[workspaceSlug]/(app)/failure-groups/[cohortId]/validation/[memberId]/page";
 import ImprovementPage from "@/app/w/[workspaceSlug]/(app)/improvements/[proposalId]/page";
@@ -26,7 +25,6 @@ const mocks = vi.hoisted(() => ({
   inbox: vi.fn(),
   inboxView: vi.fn(),
   runs: vi.fn(),
-  activity: vi.fn(),
   automationList: vi.fn(),
   automationRead: vi.fn(),
   automationSetup: vi.fn(),
@@ -61,15 +59,6 @@ vi.mock("@/features/factory-inbox/inbox-page", () => ({
 }));
 vi.mock("@/features/wallie/runs-list-data", () => ({ loadRunsListData: mocks.runs }));
 vi.mock("@/features/wallie/runs-list", () => ({ RunsList: () => "Runs list" }));
-vi.mock("@/features/factory-activity/activity-data", () => ({
-  loadFactoryActivityData: mocks.activity,
-}));
-vi.mock("@/features/factory-activity/activity-actors-data", () => ({
-  loadSelectedActivityActor: () => undefined,
-}));
-vi.mock("@/features/factory-activity/activity-page", () => ({
-  FactoryActivityPage: () => "Activity feed",
-}));
 vi.mock("@/lib/factory-automations/service", () => ({
   listFactoryAutomations: mocks.automationList,
   readFactoryAutomation: mocks.automationRead,
@@ -164,16 +153,16 @@ describe("workspace scope route wiring", () => {
   });
 
   it("keeps the real Runs route and feeds only valid catalog fields into its strict parser", async () => {
-    const tabs = getGroupedWorkspaceNavigation({
+    const { sidebar } = getGroupedWorkspaceNavigation({
       canManageDefinition: true,
       factories: [platform, mobile],
-      pathname: "/w/tandem/activity",
+      pathname: "/w/tandem/sessions",
       scope: { kind: "factory", factory: mobile },
       workspaceSlug: slug,
-    }).tabs;
-    const address = new URL(tabs[0].href, "https://example.test");
-    expect(address.pathname).toBe("/w/tandem/runs");
-    expect(address.searchParams.has("tab")).toBe(false);
+    });
+    const runs = sidebar.find(({ id }) => id === "runs");
+    expect(runs?.href).toBe(`/w/tandem/runs?factory=${mobile.id}`);
+    const address = new URL(runs!.href, "https://example.test");
     address.searchParams.set("status", "success");
     address.searchParams.set("limit", "13");
     address.searchParams.set("cursor", "older");
@@ -194,6 +183,7 @@ describe("workspace scope route wiring", () => {
     expect(backUrl.searchParams.get("factory")).toBe(mobile.id);
     expect(backUrl.searchParams.get("status")).toBe("success");
     expect(backUrl.searchParams.get("cursor")).toBe("older");
+    expect(backUrl.searchParams.get("limit")).toBe("13");
   });
 
   it("keeps Inbox All aggregate and scopes explicit reviews without downgrading denied details", async () => {
@@ -209,29 +199,6 @@ describe("workspace scope route wiring", () => {
     expect(mocks.inbox).toHaveBeenLastCalledWith(expect.objectContaining({ factoryId: mobile.id }));
     await InboxPage(props({ factory: [mobile.id, platform.id] }));
     expect(mocks.inbox).toHaveBeenCalledTimes(2);
-  });
-
-  it("resets both Activity cursors on a scope change without inventing another filter", async () => {
-    const result = await ActivityPage(
-      props({ factory: mobile.id, status: "success", actor: platform.id }),
-    );
-    const snapshot = Array.isArray(result.props.children)
-      ? result.props.children[0].props.snapshot
-      : undefined;
-    expect(mocks.activity).toHaveBeenCalledWith(
-      expect.objectContaining({
-        query: { factory: mobile.id, status: "success", actor: platform.id },
-      }),
-    );
-    expect(
-      workspaceFactorySwitchHref(
-        "/w/tandem/activity",
-        `factory=${mobile.id}&sessionsBefore=older&runsBefore=older&status=success&actor=${platform.id}`,
-        "all",
-        snapshot.resetParams,
-        "#activity-runs",
-      ),
-    ).toBe(`/w/tandem/activity?factory=all&status=success&actor=${platform.id}#activity-runs`);
   });
 
   it("does not render a factory-only body until the server has authorized a specific factory", async () => {
