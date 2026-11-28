@@ -1,8 +1,6 @@
-import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 
 import { compileFactoryDefinition } from "./compiler";
-import { projectSerialWorkflow } from "./workflow-compiler";
 
 it("keeps the native serial parity fixture bound to the production compiler", async () => {
   const id = (slot: number) => `65700000-0000-4000-8000-${String(slot).padStart(12, "0")}`;
@@ -58,15 +56,11 @@ it("keeps the native serial parity fixture bound to the production compiler", as
 
   if (!result.ok) throw new Error(JSON.stringify(result.diagnostics));
 
-  const workflowJson = JSON.stringify(projectSerialWorkflow(result.bundle));
-  const workflowDigest = createHash("sha256").update(workflowJson).digest("hex");
   const fixture = [
     "-- Update with pnpm test src/lib/factory-definitions/workflow-serial-qualification.test.ts -u",
     "create temp table compiled_serial_bundle as",
     `select $op657$${result.definitionJson}$op657$::text as definition_json,`,
-    `  '${result.canonicalDigest}'::text as definition_digest,`,
-    `  $op657$${workflowJson}$op657$::text as workflow_json,`,
-    `  '${workflowDigest}'::text as workflow_digest;`,
+    `  '${result.canonicalDigest}'::text as definition_digest;`,
     "",
   ].join("\n");
 

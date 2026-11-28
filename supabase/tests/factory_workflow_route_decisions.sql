@@ -233,8 +233,9 @@ select is(public.read_factory_workflow_execution(session_id, workspace_id, facto
 from op646_route_owners where scenario in ('choice', 'entry-forward-cap', 'clarification');
 
 create temp table op646_choice_handoff as
-select advanced.* from op646_route_owners owner cross join lateral public.advance_factory_workflow_generation(
-  owner.session_id, owner.workspace_id, owner.factory_id, owner.execution_generation) advanced where owner.scenario = 'choice';
+select acquired.* from op646_route_owners owner cross join lateral public.acquire_factory_workflow_ownership(
+  owner.session_id, owner.workspace_id, owner.factory_id, owner.execution_generation,
+  gen_random_uuid()) acquired where owner.scenario = 'choice';
 select throws_ok($$select pg_temp.op646_propose('choice', 'policy.finish', 'Old generation', 0.9)$$,
   'PT409', 'Workflow generation is stale.', 'an old generation cannot submit a route decision');
 select throws_ok($$select public.admit_factory_workflow_route_decision(owner.session_id, owner.workspace_id, owner.factory_id,
@@ -280,8 +281,9 @@ select ok((select not replay.created and (replay.decision_id, replay.transition_
   from op646_choice admitted cross join pg_temp.op646_propose('choice', 'policy.finish', 'Ready to finish', 0.9) replay),
   'an exact replay returns the original decision and successor');
 create temp table op646_choice_next_owner as
-select advanced.* from op646_route_owners owner cross join lateral public.advance_factory_workflow_generation(
-  owner.session_id, owner.workspace_id, owner.factory_id, owner.execution_generation) advanced where owner.scenario = 'choice';
+select acquired.* from op646_route_owners owner cross join lateral public.acquire_factory_workflow_ownership(
+  owner.session_id, owner.workspace_id, owner.factory_id, owner.execution_generation,
+  gen_random_uuid()) acquired where owner.scenario = 'choice';
 update op646_route_owners owner set (execution_generation, ownership_token) = (handoff.execution_generation, handoff.ownership_token)
 from op646_choice_next_owner handoff where owner.scenario = 'choice';
 select ok((select not replay.created and (replay.decision_id, replay.transition_id, replay.target_occurrence_id) =

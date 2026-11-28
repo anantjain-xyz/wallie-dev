@@ -209,8 +209,9 @@ select ok((select snapshot.value->'results' = '[]'::jsonb and snapshot.value->'r
   from op645_started cross join lateral (select public.read_factory_workflow_execution(root_session_id, workspace_id, factory_id) as value) snapshot),
   'a pending policy observation produces no result or runnable edge');
 create temp table op645_handoff as
-select advanced.* from op645_started started cross join lateral public.advance_factory_workflow_generation(
-  started.root_session_id, started.workspace_id, started.factory_id, started.execution_generation) advanced;
+select acquired.* from op645_started started cross join lateral public.acquire_factory_workflow_ownership(
+  started.root_session_id, started.workspace_id, started.factory_id, started.execution_generation,
+  pg_temp.op645_id(79)) acquired;
 select ok((select handoff.execution_generation = 2 and handoff.ownership_token is not null
     and handoff.ownership_token is distinct from started.ownership_token
   from op645_started started cross join op645_handoff handoff), 'handoff advances the generation and rotates the token');
