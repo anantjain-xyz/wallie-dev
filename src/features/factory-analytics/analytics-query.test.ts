@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { parseAnalyticsQuery, resolveAnalyticsFactory } from "./analytics-query";
+import { resolveAnalyticsFactory } from "@/features/factories/factory-selection";
+
+import { parseAnalyticsQuery } from "./analytics-query";
 import { analyticsCohortHref } from "./analytics-view-shared";
 
 describe("analytics query", () => {

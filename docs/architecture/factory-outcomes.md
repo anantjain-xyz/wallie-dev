@@ -51,9 +51,9 @@ Replaying a batch is safe. A null cursor means that the bounded scan is complete
   Delivery samples use current verified linkage, so late deployments and
   corrections are reflected on the next read.
 
-Overview reads the same Analytics cohort and links to its evidence. Projection
-health shows the latest successful snapshot, pending work and its age, and
-the status of any rebuild.
+In [Analytics](#reading-analytics), open a metric’s evidence to inspect the
+selected cohort. Reporting health shows the latest successful snapshot,
+pending work and its age, and the status of any rebuild.
 
 | Factory manager action | Effect                                                                                         |
 | ---------------------- | ---------------------------------------------------------------------------------------------- |

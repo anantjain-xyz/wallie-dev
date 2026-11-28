@@ -252,7 +252,7 @@ WALLIE_FACTORY_OUTCOMES_E2E=1 pnpm exec playwright test e2e/factory-outcome-rele
 | Evidence          | What the qualification verifies                                                                                                                                                       |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Outcome facts     | Retry and cancellation observations, duplicate and late merge evidence, corrected deployments, and measured, estimated, and missing costs                                             |
-| Reported cohorts  | Exact Overview and Analytics filters, no-merge periods, mature and incomplete revert windows, and source drilldowns                                                                   |
+| Reported cohorts  | Exact Analytics filters, no-merge periods, mature and incomplete revert windows, and source drilldowns                                                                                |
 | Export snapshots  | CSV and JSON membership, frozen facts after a late correction, and a reconciliation that recomputes durations, distributions, counts, and ratios from the exact exported observations |
 | Runtime recovery  | Projection pause, replay, rebuild, and convergence through the Node daemon and native Workerd maintenance                                                                             |
 | Access boundaries | Signed-in requests and exports stay scoped to the authorized workspace and factory                                                                                                    |

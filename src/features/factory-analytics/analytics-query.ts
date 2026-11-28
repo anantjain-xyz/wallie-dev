@@ -1,7 +1,5 @@
 import { z } from "zod";
 
-export { resolveAnalyticsFactory } from "@/features/factories/factory-selection";
-
 const DAY_MS = 86_400_000;
 const DEFAULT_DAYS = 30;
 const MAX_DAYS = 366;
