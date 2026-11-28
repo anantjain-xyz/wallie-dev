@@ -22,6 +22,10 @@ import {
   AgentDirectoryFactorySelector,
   useDirectoryDraftStatus,
 } from "@/features/factory-agents/agent-directory-draft";
+import {
+  AutomationDraftNavigation,
+  AutomationFactoryPicker,
+} from "@/features/factory-automations/automation-draft-navigation";
 import { FactoryDefinitionSwitch } from "@/features/factory-definition/factory-definition-switch";
 import { ScorerDraftGuard } from "@/features/factory-scorers/scorer-draft-guard";
 import { ScorerFactorySelector } from "@/features/factory-scorers/scorer-factory-selector";
@@ -238,6 +242,44 @@ describe("scoped application shell", () => {
     fireEvent.click(chooser);
     expect(screen.getByRole("option", { name: "Mobile app" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "All factories" })).toBeNull();
+  });
+
+  it("mounts Automations only in the guarded header after its receipt, and stays quiet with one choice", async () => {
+    router.path = "/w/tandem/settings/automations";
+    function setup(
+      options: FactorySelectionOption[] = factories,
+      snapshot?: WorkspaceScopeSnapshot,
+    ) {
+      return shell({
+        snapshot,
+        options,
+        children: (
+          <AutomationDraftNavigation>
+            <AutomationFactoryPicker
+              factories={options.filter(({ canManage }) => canManage)}
+              factoryId={mobile.id}
+            />
+          </AutomationDraftNavigation>
+        ),
+      });
+    }
+    const view = render(setup());
+    expect(screen.queryByRole("combobox", { name: "Factory" })).toBeNull();
+
+    view.rerender(setup(factories, { ...receipt(), picker: "guarded" }));
+    const trigger = await header().findByRole("combobox", { name: "Factory" });
+    expect(screen.getAllByRole("combobox", { name: "Factory" })).toEqual([trigger]);
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("option", { name: "Platform" }));
+    expect(router.push).toHaveBeenCalledExactlyOnceWith(
+      "/w/tandem/settings/automations?factory=platform",
+      { scroll: false },
+    );
+
+    const oneEligible = [{ ...platform, canManage: false }, mobile];
+    view.rerender(setup(oneEligible, { ...receipt(oneEligible), picker: "guarded" }));
+    expect(screen.queryByRole("combobox", { name: "Factory" })).toBeNull();
+    expect(header().queryByText("Mobile app")).toBeNull();
   });
 
   it.each([

@@ -3,15 +3,19 @@
 import { useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
+import { WorkspaceScopeContext } from "@/components/app-shell/workspace-scope-context";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { SelectField } from "@/components/ui/select";
 import type { FactorySelectionOption } from "@/features/factories/factory-selection";
+import { FactorySelector } from "@/features/factories/factory-selector";
 import { workspaceAutomationPreviewPath } from "@/lib/routes";
 
 const DraftNavigation = createContext<{
+  guard: (navigate: () => void, trigger: HTMLElement | null) => void;
   setDirty: (value: boolean) => void;
   navigate: (href: string) => void;
 }>({
+  guard: () => undefined,
   setDirty: () => undefined,
   navigate: () => undefined,
 });
@@ -19,11 +23,15 @@ const DraftNavigation = createContext<{
 export const useAutomationDraftNavigation = () => useContext(DraftNavigation);
 
 type HistoryEntry = { key: string; url: string | null };
+type HistoryNavigationEvent = Event & {
+  destination?: HistoryEntry & { sameDocument: boolean };
+  navigationType?: string;
+};
 type NavigationHistory = EventTarget & {
   currentEntry: HistoryEntry | null;
   traverseTo: (key: string) => { committed: Promise<unknown>; finished: Promise<unknown> };
 };
-type Destination = { href: string } | { traverse: () => Promise<void> };
+type Destination = { href: string } | { navigate: () => void } | { traverse: () => Promise<void> };
 
 function navigationHistory() {
   const history = (window as Window & { navigation?: NavigationHistory }).navigation;
@@ -69,15 +77,21 @@ export function AutomationDraftNavigation({ children }: { children: ReactNode })
     }
   }
 
-  function navigate(href: string) {
-    if (new URL(href, window.location.href).href === window.location.href) return;
+  function guard(continueNavigation: () => void, trigger: HTMLElement | null) {
     if (!dirtyRef.current) {
-      go(href);
+      continueNavigation();
       return;
     }
-    restoreFocus.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setDestination({ href });
+    restoreFocus.current = trigger;
+    setDestination({ navigate: continueNavigation });
+  }
+
+  function navigate(href: string) {
+    if (new URL(href, window.location.href).href === window.location.href) return;
+    guard(
+      () => go(href),
+      document.activeElement instanceof HTMLElement ? document.activeElement : null,
+    );
   }
 
   useEffect(() => {
@@ -135,6 +149,26 @@ export function AutomationDraftNavigation({ children }: { children: ReactNode })
       }
     }
 
+    function holdHistory(event: HistoryNavigationEvent) {
+      const { destination: target } = event;
+      if (
+        !dirtyRef.current ||
+        !history ||
+        !draftEntry ||
+        returning ||
+        !event.cancelable ||
+        event.navigationType !== "traverse" ||
+        !target?.sameDocument ||
+        sameRoute(draftEntry, target)
+      )
+        return;
+      event.preventDefault();
+      restoreFocus.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setHistoryNotice("");
+      setDestination({ traverse: () => traverse(history, target.key) });
+    }
+
     function followHistory(event: PopStateEvent) {
       const target = history?.currentEntry;
       if (!dirtyRef.current || !history || !draftEntry || !target) return;
@@ -173,6 +207,7 @@ export function AutomationDraftNavigation({ children }: { children: ReactNode })
     window.addEventListener("beforeunload", beforeUnload);
     document.addEventListener("click", followLink, true);
     if (history) {
+      history.addEventListener("navigate", holdHistory);
       history.addEventListener("currententrychange", updateDraftEntry);
       window.addEventListener("popstate", followHistory, true);
     }
@@ -180,13 +215,14 @@ export function AutomationDraftNavigation({ children }: { children: ReactNode })
       active = false;
       window.removeEventListener("beforeunload", beforeUnload);
       document.removeEventListener("click", followLink, true);
+      history?.removeEventListener("navigate", holdHistory);
       history?.removeEventListener("currententrychange", updateDraftEntry);
       window.removeEventListener("popstate", followHistory, true);
     };
   }, [dirty]);
 
   return (
-    <DraftNavigation.Provider value={{ setDirty, navigate }}>
+    <DraftNavigation.Provider value={{ guard, setDirty, navigate }}>
       {children}
       {historyNotice ? (
         <p role="status" className="px-4 py-3 text-sm text-muted">
@@ -203,6 +239,8 @@ export function AutomationDraftNavigation({ children }: { children: ReactNode })
           setDestination(null);
           if ("href" in destination) {
             go(destination.href);
+          } else if ("navigate" in destination) {
+            destination.navigate();
           } else {
             void destination.traverse().catch(() => {
               setDirty(true);
@@ -228,24 +266,24 @@ export function AutomationDraftNavigation({ children }: { children: ReactNode })
 export function AutomationFactoryPicker({
   factoryId,
   factories,
-  workspaceSlug,
+  resetParams,
 }: {
   factoryId: string;
   factories: readonly FactorySelectionOption[];
-  workspaceSlug: string;
+  resetParams?: readonly string[];
 }) {
-  const { navigate } = useAutomationDraftNavigation();
+  const { guard } = useAutomationDraftNavigation();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const target = useContext(WorkspaceScopeContext)?.guardedPicker?.target;
+  if (!target || factories.length <= 1) return null;
+
   return (
-    <SelectField
-      className="w-48 max-w-full"
-      label="Factory"
-      onValueChange={(factory) => {
-        if (factory !== factoryId)
-          navigate(workspaceAutomationPreviewPath(workspaceSlug, { factory }));
-      }}
-      options={factories.map(({ id, name }) => ({ value: id, label: name }))}
-      value={factoryId}
-      wrap
+    <FactorySelector
+      factories={factories}
+      onSwitch={(navigate) => guard(navigate, trigger.current)}
+      resetParams={resetParams}
+      selectedValue={factoryId}
+      triggerRef={trigger}
     />
   );
 }

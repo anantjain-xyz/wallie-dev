@@ -63,7 +63,6 @@ export function scopeFactoryIndex<Search extends WorkspaceLocationQuery>(
       workspaceLocationForRoute(route, workspaceSlug),
       snapshot.factories,
     );
-    if (!choices.length && route === "automations") notFound();
     if (!choices.length && route === "governance") {
       return <Page params={params} searchParams={searchParams} />;
     }

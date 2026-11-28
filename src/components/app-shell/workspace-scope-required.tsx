@@ -37,7 +37,7 @@ export function WorkspaceScopeRequired({
         title={title}
         actionsRightOnDesktop
         actions={
-          choices.length ? (
+          !automations && choices.length ? (
             <FactorySelector
               factories={choices}
               resetParams={snapshot.resetParams}
