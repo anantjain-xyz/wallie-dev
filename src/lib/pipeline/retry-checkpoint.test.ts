@@ -32,7 +32,7 @@ const retryContext = {
 };
 
 it.each(["PGRST202", "42501"])(
-  "handles checkpoint lookup error %s without reserving or uploading source",
+  "rejects checkpoint lookup error %s without reserving or uploading source",
   async (code) => {
     const from = vi.fn();
     const rpc = vi.fn((name: string) => {
@@ -53,11 +53,7 @@ it.each(["PGRST202", "42501"])(
     };
 
     for (const operation of [restoreRetryInput, saveRetryCheckpoint]) {
-      if (code === "PGRST202") {
-        await expect(operation(context)).resolves.toBe(false);
-      } else {
-        await expect(operation(context)).rejects.toThrow("Could not read the Retry checkpoint.");
-      }
+      await expect(operation(context)).rejects.toThrow("Could not read the Retry checkpoint.");
     }
 
     expect(rpc).toHaveBeenCalledTimes(2);
@@ -65,8 +61,32 @@ it.each(["PGRST202", "42501"])(
   },
 );
 
-it.each(["canceled", "rejected", "lost response"] as const)(
-  "leaves retry upload cleanup to its durable reservation when saving is %s",
+it("continues without restoring source after a successful empty checkpoint lookup", async () => {
+  const from = vi.fn();
+  const abortSignal = vi.fn().mockResolvedValue({ data: [], error: null });
+  const rpc = vi.fn(() => ({ abortSignal }));
+  const signal = new AbortController().signal;
+
+  await expect(
+    restoreRetryInput({
+      ...retryContext,
+      admin: { rpc, storage: { from } } as never,
+      sandbox: new FakeSandbox(),
+      signal,
+    }),
+  ).resolves.toBe(false);
+
+  expect(rpc).toHaveBeenCalledExactlyOnceWith("get_session_retry_checkpoint", {
+    p_job_id: retryContext.jobId,
+    p_attempt_count: retryContext.attemptCount,
+    p_run_id: retryContext.runId,
+  });
+  expect(abortSignal).toHaveBeenCalledExactlyOnceWith(signal);
+  expect(from).not.toHaveBeenCalled();
+});
+
+it.each(["saved", "canceled", "rejected", "lost response"] as const)(
+  "keeps the timeout upload owned by its durable reservation when the save is %s",
   async (outcome) => {
     const controller = new AbortController();
     const upload = vi.fn(async (path: string) => {
@@ -86,7 +106,7 @@ it.each(["canceled", "rejected", "lost response"] as const)(
       if (name === "save_session_retry_checkpoint") {
         return {
           abortSignal: async () => ({
-            data: outcome === "rejected" ? false : null,
+            data: outcome === "lost response" ? null : outcome === "saved",
             error: outcome === "lost response" ? new Error("Database unavailable") : null,
           }),
         };
@@ -94,20 +114,21 @@ it.each(["canceled", "rejected", "lost response"] as const)(
       throw new Error(`Unexpected RPC ${name}`);
     });
     const admin = { rpc, storage: { from: vi.fn(() => ({ remove, upload })) } };
+    const deadlineAt = new Date(Date.now() + 60_000).toISOString();
     const save = saveRetryCheckpoint({
       ...retryContext,
       admin: admin as never,
-      deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+      deadlineAt,
       sandbox: new FakeSandbox(),
       signal: controller.signal,
     });
 
     if (outcome === "canceled") {
       await expect(save).rejects.toThrow("Canceled attempt");
-    } else if (outcome === "rejected") {
-      await expect(save).resolves.toBe(false);
-    } else {
+    } else if (outcome === "lost response") {
       await expect(save).rejects.toThrow("Could not record the Retry checkpoint.");
+    } else {
+      await expect(save).resolves.toBe(outcome === "saved");
     }
 
     const path = upload.mock.calls[0]?.[0];
@@ -120,13 +141,17 @@ it.each(["canceled", "rejected", "lost response"] as const)(
       ...(outcome === "canceled" ? [] : ["save_session_retry_checkpoint"]),
     ]);
     if (outcome !== "canceled") {
-      expect(rpc).toHaveBeenCalledWith(
-        "save_session_retry_checkpoint",
-        expect.objectContaining({
-          p_checkpoint_path: path,
-          p_upload_operation_id: "reservation-1",
-        }),
-      );
+      expect(rpc).toHaveBeenCalledWith("save_session_retry_checkpoint", {
+        p_attempt_count: retryContext.attemptCount,
+        p_bundle_sha256: source.bundleSha256,
+        p_checkpoint_path: path,
+        p_deadline_at: deadlineAt,
+        p_head_sha: source.headSha,
+        p_input_sha: source.baseSha,
+        p_job_id: retryContext.jobId,
+        p_run_id: retryContext.runId,
+        p_upload_operation_id: "reservation-1",
+      });
     }
     expect(remove).not.toHaveBeenCalled();
   },

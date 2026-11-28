@@ -3212,6 +3212,25 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
   });
 
+  it("fails the exact manual Retry attempt before starting the agent when its checkpoint cannot be read", async () => {
+    const { admin, rpc } = buildAdminMock({ session: baseSession() });
+    const message = "Could not read the Retry checkpoint.";
+    mocked.restoreRetryInput.mockRejectedValueOnce(new Error(message));
+    const job = baseJob({ attempt_count: 4, trigger_type: "manual_retry" });
+
+    expect((await processPipelineJob({ admin, job })).result).toBe("error");
+    expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledWith(
+      "fail_session_job_attempt",
+      expect.objectContaining({
+        p_job_id: job.id,
+        p_attempt_count: job.attempt_count,
+        p_run_id: "run-1",
+        p_error: message,
+      }),
+    );
+  });
+
   it("appends completion history after publication without refreshing an active run", async () => {
     const { admin, rpc, runRows, runUpdateFilters, insertedMessages, updatedJobs } = buildAdminMock(
       {
