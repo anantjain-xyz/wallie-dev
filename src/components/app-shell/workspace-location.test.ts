@@ -100,6 +100,9 @@ describe("workspace location contract", () => {
     expect(workspaceScopeHref("inbox", slug, browse("board", forbidden))).toBe(
       "/w/tandem/inbox?factory=unavailable",
     );
+    expect(workspaceScopeHref("runs", slug, browse("sessions", [mobile.id, forbidden]))).toBe(
+      "/w/tandem/runs?factory=unavailable",
+    );
   });
 
   it("supports All only on Inbox, Sessions and Runs lists", () => {
@@ -130,6 +133,10 @@ describe("workspace location contract", () => {
     expect(browse("sessions")).toEqual(chosen(platform));
     expect(browse("runs")).toEqual(chosen(platform));
     expect(browse("inbox")).toEqual({ kind: "all" });
+    expect(workspaceScopeHref("board", slug, browse("inbox"))).toBe("/w/tandem?factory=all");
+    expect(workspaceScopeHref("inbox", slug, browse("sessions"))).toBe(
+      `/w/tandem/inbox?factory=${platform.id}`,
+    );
     const noDefault = [mobile, { ...platform, isDefault: false }];
     expect(browse("sessions", undefined, noDefault)).toEqual(chosen(mobile));
     expect(browse("board", undefined, noDefault)).toEqual({
@@ -146,10 +153,21 @@ describe("workspace location contract", () => {
   });
 
   it("never moves a user from an explicit factory to some other factory with management access", () => {
-    expect(browse("automations", mobile.id)).toEqual({ kind: "unavailable" });
-    expect(browse("automations")).toEqual({ kind: "pick" });
-    expect(browse("automations", platform.id)).toEqual(chosen(platform));
+    for (const route of ["automations", "workflows"] as const) {
+      expect(browse(route, mobile.id)).toEqual({ kind: "unavailable" });
+      expect(browse(route, archived.id)).toEqual({ kind: "unavailable" });
+      expect(browse(route)).toEqual({ kind: "pick" });
+      expect(browse(route, platform.id)).toEqual(chosen(platform));
+    }
     expect(browse("definition", archived.id)).toEqual({ kind: "unavailable" });
+  });
+
+  it("keeps managed factory selection on Governance, Context and Memory", () => {
+    for (const route of ["governance", "context", "memory"] as const) {
+      expect(browse(route, mobile.id)).toEqual({ kind: "unavailable" });
+      expect(browse(route, archived.id)).toEqual(chosen(archived));
+    }
+    expect(browse("agents", mobile.id)).toEqual(chosen(mobile));
   });
 
   it("leaves Settings global and restores only active allowed choices within the same account and workspace", () => {

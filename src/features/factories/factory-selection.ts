@@ -1,14 +1,3 @@
-import {
-  workspaceAutomationPreviewPath,
-  workspaceBasePath,
-  workspaceContextPath,
-  workspaceGovernancePath,
-  workspaceInboxPath,
-  workspaceMemoryPath,
-  workspaceRunsPath,
-  workspaceSessionsPath,
-} from "@/lib/routes";
-
 export const FACTORY_QUERY_PARAM = "factory";
 
 export type FactorySelectionOption = {
@@ -63,28 +52,6 @@ export function resolveGovernanceFactorySelection(
       ? (managed.find(({ isDefault }) => isDefault) ?? managed[0])
       : managed.find(({ id }) => id === requestedId);
   return factory ? { kind: "factory", factory } : { kind: "unavailable" };
-}
-
-export function isFactoryAggregatePath(pathname: string, workspaceSlug: string) {
-  return (
-    pathname === workspaceBasePath(workspaceSlug) ||
-    pathname === workspaceSessionsPath(workspaceSlug) ||
-    pathname === workspaceRunsPath(workspaceSlug) ||
-    pathname === workspaceInboxPath(workspaceSlug)
-  );
-}
-
-export function defaultsToAllFactories(pathname: string, workspaceSlug: string) {
-  return pathname === workspaceInboxPath(workspaceSlug);
-}
-
-export function isManagedFactoryPath(pathname: string, workspaceSlug: string) {
-  return (
-    pathname === workspaceAutomationPreviewPath(workspaceSlug) ||
-    pathname === workspaceGovernancePath(workspaceSlug) ||
-    pathname === workspaceContextPath(workspaceSlug) ||
-    pathname === workspaceMemoryPath(workspaceSlug)
-  );
 }
 
 export const BASE_FACTORY_SWITCH_RESET_PARAMS = [

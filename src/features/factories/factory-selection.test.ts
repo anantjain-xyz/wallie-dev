@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  defaultsToAllFactories,
   factorySwitchHref,
-  isFactoryAggregatePath,
-  isManagedFactoryPath,
   resolveFactorySelection,
   resolveGovernanceFactorySelection,
   withFactoryQuery,
@@ -53,32 +50,7 @@ describe("factory scope and selection", () => {
     });
   });
 
-  it("only treats exact list/board destinations as aggregate", () => {
-    expect(isFactoryAggregatePath("/w/acme", "acme")).toBe(true);
-    expect(isFactoryAggregatePath("/w/acme/sessions", "acme")).toBe(true);
-    expect(isFactoryAggregatePath("/w/acme/runs", "acme")).toBe(true);
-    expect(isFactoryAggregatePath("/w/acme/inbox", "acme")).toBe(true);
-    expect(isFactoryAggregatePath("/w/acme/agents", "acme")).toBe(false);
-    expect(isFactoryAggregatePath("/w/acme/analytics", "acme")).toBe(false);
-    expect(isFactoryAggregatePath("/w/acme/overview", "acme")).toBe(false);
-    expect(isFactoryAggregatePath("/w/acme/governance", "acme")).toBe(false);
-    expect(isFactoryAggregatePath("/w/acme/memory", "acme")).toBe(false);
-    expect(isFactoryAggregatePath("/w/acme/sessions/42", "acme")).toBe(false);
-    expect(isFactoryAggregatePath("/w/acme/runs/c66", "acme")).toBe(false);
-    expect(isFactoryAggregatePath("/w/acme/settings", "acme")).toBe(false);
-  });
-
-  it("identifies managed factory destinations", () => {
-    expect(isManagedFactoryPath("/w/acme/governance", "acme")).toBe(true);
-    expect(isManagedFactoryPath("/w/acme/context", "acme")).toBe(true);
-    expect(isManagedFactoryPath("/w/acme/memory", "acme")).toBe(true);
-    expect(isManagedFactoryPath("/w/acme/agents", "acme")).toBe(false);
-  });
-
-  it("defaults Inbox to every permitted factory and drops base pagination cursors", () => {
-    expect(defaultsToAllFactories("/w/acme/inbox", "acme")).toBe(true);
-    expect(defaultsToAllFactories("/w/acme/runs", "acme")).toBe(false);
-    expect(defaultsToAllFactories("/w/acme/sessions", "acme")).toBe(false);
+  it("drops the Inbox pagination cursor when switching factories", () => {
     expect(factorySwitchHref("/w/acme/inbox", "cursor=old", secondary.id)).toBe(
       "/w/acme/inbox?factory=secondary-id",
     );
