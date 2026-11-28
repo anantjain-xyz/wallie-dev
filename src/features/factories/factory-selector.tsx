@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 
 import { workspaceFactorySwitchHref } from "@/components/app-shell/workspace-location";
 import { WorkspaceScopeContext } from "@/components/app-shell/workspace-scope-context";
+import { LayersIcon } from "@/components/shared/icons/layers-icon";
 import { FilterSelectTrigger } from "@/components/ui/filter-controls";
 import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
@@ -146,9 +147,18 @@ export function FactorySelector({
           </SelectItem>
         ) : null}
         {allowAll ? (
-          <SelectItem value="all" wrap>
+          <SelectItem
+            leading={
+              inHeader ? <LayersIcon className="order-last mt-0.5 ml-auto text-muted" /> : undefined
+            }
+            value="all"
+            wrap
+          >
             All factories
           </SelectItem>
+        ) : null}
+        {allowAll && inHeader && factories.length > 0 ? (
+          <div aria-hidden="true" className="my-1 h-px bg-border" />
         ) : null}
         {factories.map((factory) => (
           <SelectItem key={factory.id} value={factory.id} wrap>

@@ -207,6 +207,8 @@ test("workspace factory creation preserves the default and lands in the returned
     await expect(menu.getByRole("menuitemradio", { checked: true })).toHaveText(
       defaultFactory.name,
     );
+    await expect(menu.getByRole("menuitemradio").first()).toHaveText("All factories");
+    await expect(menu.getByRole("separator")).toHaveCount(2);
     await capture(page, info, "02-sessions-board-shortcut");
     await page.goto(sessionsPath);
     await page.setViewportSize({ width: 390, height: 844 });
@@ -238,6 +240,7 @@ test("workspace factory creation preserves the default and lands in the returned
         .getByRole("textbox", { name: "Implementation prompt" })
         .fill("Check the fictional delivery notes.");
       await picker.press("Enter");
+      await expect(menu.getByRole("separator")).toHaveCount(1);
       await page.keyboard.press("End");
       await expect(manageFactories).toBeFocused();
       await page.keyboard.press("Enter");

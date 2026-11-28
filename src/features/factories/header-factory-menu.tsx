@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useId, useRef, useState, type RefObject } from "react";
+import { Fragment, useId, useRef, useState, type RefObject } from "react";
 
 import { CheckIcon } from "@/components/shared/icons/check-icon";
 import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
+import { LayersIcon } from "@/components/shared/icons/layers-icon";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -110,19 +111,24 @@ export function HeaderFactoryMenu({
           <>
             <div aria-label="Factory scope" role="group">
               {choices.map((choice) => (
-                <DropdownMenuItem
-                  aria-checked={choice.value === value}
-                  className="items-start px-2.5"
-                  data-value={choice.value}
-                  key={choice.value}
-                  onSelect={() => onValueChange(choice.value)}
-                  role="menuitemradio"
-                >
-                  <CheckIcon
-                    className={cn("mt-0.5 shrink-0", choice.value !== value && "invisible")}
-                  />
-                  <span className="min-w-0 break-words">{choice.label}</span>
-                </DropdownMenuItem>
+                <Fragment key={choice.value}>
+                  <DropdownMenuItem
+                    aria-checked={choice.value === value}
+                    className="items-start px-2.5"
+                    data-value={choice.value}
+                    onSelect={() => onValueChange(choice.value)}
+                    role="menuitemradio"
+                  >
+                    <CheckIcon
+                      className={cn("mt-0.5 shrink-0", choice.value !== value && "invisible")}
+                    />
+                    <span className="min-w-0 break-words">{choice.label}</span>
+                    {choice.value === "all" ? (
+                      <LayersIcon className="mt-0.5 ml-auto text-muted" />
+                    ) : null}
+                  </DropdownMenuItem>
+                  {choice.value === "all" && choices.length > 1 ? <DropdownMenuSeparator /> : null}
+                </Fragment>
               ))}
             </div>
             <DropdownMenuSeparator />
