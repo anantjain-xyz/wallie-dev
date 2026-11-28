@@ -672,8 +672,8 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     expect(new URL(page.url()).searchParams.get("factory")).toBe(visibleFactory.id);
     await expect(
       page
-        .getByRole("navigation", { name: "Factory sections" })
-        .getByRole("link", { name: "Definition", exact: true }),
+        .getByRole("navigation", { name: "Factory views" })
+        .getByRole("link", { name: "Pipeline", exact: true }),
     ).toHaveCount(0);
     await expectFactoryOptions(page, [defaultFactory.name, visibleFactory.name]);
     await expect(page.getByRole("link", { name: "New agent" })).toHaveCount(0);
@@ -910,7 +910,7 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     await expect(factory).toHaveAttribute("data-value", visibleFactory.id);
     await expect(
       page
-        .getByRole("navigation", { name: "Factory sections" })
+        .getByRole("navigation", { name: "Factory views" })
         .getByRole("link", { name: "Access", exact: true }),
     ).toHaveAttribute("aria-current", "page");
 

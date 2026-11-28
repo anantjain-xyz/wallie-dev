@@ -123,7 +123,9 @@ afterEach(() => {
 describe("structured factory definition editor", () => {
   it("shows the serial pipeline without exposing advanced controls until requested", () => {
     renderEditor();
-    expect(screen.getByRole("heading", { name: "Pipeline" })).toBeVisible();
+    const stages = screen.getByRole("heading", { name: "Stages" });
+    expect(stages).toBeVisible();
+    expect(stages).toHaveAttribute("id", "definition-field-stages");
     expect(screen.getByLabelText("Model")).not.toBeVisible();
     openAdvanced();
     expect(screen.getByLabelText("Model")).toBeVisible();

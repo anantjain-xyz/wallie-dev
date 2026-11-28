@@ -80,31 +80,90 @@ describe("grouped workspace navigation", () => {
     ).toBe("sessions");
   });
 
-  it("offers the exact serial editor only to an operator with active factory scope", () => {
-    const settings = nav({
-      hash: "#definition-field-stages",
+  it("offers one ordered row of real links to the same resolved factory", () => {
+    const factory = nav({ pathname: "/w/tandem/settings/factory-definition" });
+    expect(factory.sections).toEqual([]);
+    expect(factory.tabs).toEqual(
+      [
+        ["Pipeline", "settings/factory-definition"],
+        ["Graph workflows", "workflows"],
+        ["Agents", "agents"],
+        ["Context", "context"],
+        ["Memory", "memory"],
+        ["Scorers", "scorers"],
+        ["Automations", "settings/automations"],
+        ["Access", "governance"],
+      ].map(([label, path]) => ({
+        active: label === "Pipeline",
+        label,
+        href: `/w/tandem/${path}?factory=mobile`,
+      })),
+    );
+    const markup = renderToStaticMarkup(
+      <WorkspaceGroupTabs label="Factory" singleRow {...factory} />,
+    );
+    expect(markup.match(/<nav /gu)).toHaveLength(1);
+    expect(markup.match(/aria-current="page"/gu)).toHaveLength(1);
+    expect(markup).not.toMatch(/>Configuration<|>Knowledge<|>Definition</u);
+  });
+
+  it.each([
+    ["settings/factory-definition", "Pipeline"],
+    ["workflows/workflow-1", "Graph workflows"],
+    ["agents/agent-1", "Agents"],
+    ["context", "Context"],
+    ["memory", "Memory"],
+    ["scorers/scorer-1", "Scorers"],
+    ["settings/automations", "Automations"],
+    ["governance", "Access"],
+  ])("marks one current item by route for %s", (path, label) => {
+    const { tabs } = nav({ pathname: `/w/tandem/${path}` });
+    expect(tabs.filter(({ active }) => active).map((item) => item.label)).toEqual([label]);
+  });
+
+  it("keeps Pipeline operator-only and preserves the other management gates", () => {
+    const reader = { ...mobile, canManage: false };
+    const retired = { ...mobile, status: "archived" as const };
+    const labels = (
+      factories: FactorySelectionOption[],
+      canManageDefinition: boolean,
+      factory = factories[0],
+    ) =>
+      nav({
+        pathname: "/w/tandem/agents",
+        canManageDefinition,
+        factories,
+        scope: { kind: "factory", factory },
+      }).tabs.map(({ label }) => label);
+    expect(labels([reader], false)).toEqual(["Agents", "Scorers"]);
+    expect(labels([retired], true)).toEqual(["Agents", "Context", "Memory", "Scorers", "Access"]);
+    expect(labels([mobile], false)).toEqual([
+      "Graph workflows",
+      "Agents",
+      "Context",
+      "Memory",
+      "Scorers",
+      "Automations",
+      "Access",
+    ]);
+  });
+
+  it.each([
+    ["global", "all"],
+    ["resource-pending", "all"],
+    ["pick", "all"],
+    ["unavailable", "unavailable"],
+  ] as const)("never opens Default when Factory scope is %s", (kind, request) => {
+    const { activeItem, tabs } = nav({
       pathname: "/w/tandem/settings/factory-definition",
+      scope: { kind },
     });
-    expect(settings.sections).toContainEqual({
+    expect(activeItem?.href).toBe(`/w/tandem/settings/factory-definition?factory=${request}`);
+    expect(tabs).toContainEqual({
       active: true,
-      href: "/w/tandem/settings/factory-definition?factory=mobile#definition-field-stages",
+      href: `/w/tandem/settings/factory-definition?factory=${request}`,
       label: "Pipeline",
     });
-    expect(settings.sections).toContainEqual({
-      active: false,
-      href: "/w/tandem/workflows?factory=mobile",
-      label: "Graph workflows",
-    });
-    expect(
-      nav({ pathname: "/w/tandem/agents", canManageDefinition: false }).sections.some(
-        ({ label }) => label === "Pipeline",
-      ),
-    ).toBe(false);
-    expect(
-      nav({
-        pathname: "/w/tandem/settings/factory-definition",
-        scope: { kind: "pick" },
-      }).sections.some(({ label }) => label === "Pipeline"),
-    ).toBe(false);
+    expect(tabs.every(({ href }) => href.endsWith(`?factory=${request}`))).toBe(true);
   });
 });

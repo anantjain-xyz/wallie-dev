@@ -317,24 +317,57 @@ describe("ShellHeader", () => {
     expect(screen.queryByRole("link", { name: /New session in/ })).toBeNull();
   });
 
-  it("updates the active factory section when an existing setup anchor is opened", async () => {
+  it("keeps Pipeline current on the page and both existing setup bookmarks", () => {
     mocked.pathname = "/w/acme-corp/settings/factory-definition";
     mocked.searchParams = new URLSearchParams("factory=factory-1");
     const initialUrl = window.location.href;
     try {
       mountShell({ canManageFactoryDefinition: true });
-      const sections = within(screen.getByRole("navigation", { name: "Factory sections" }));
-      const pipeline = sections.getByRole("link", { name: "Pipeline" });
+      const row = screen.getByRole("navigation", { name: "Factory views" });
+      const pipeline = within(row).getByRole("link", { name: "Pipeline" });
       expect(pipeline).toHaveAttribute(
         "href",
-        "/w/acme-corp/settings/factory-definition?factory=factory-1#definition-field-stages",
+        "/w/acme-corp/settings/factory-definition?factory=factory-1",
       );
-      expect(pipeline).not.toHaveAttribute("aria-current");
-      window.location.hash = "definition-field-stages";
-      await waitFor(() => expect(pipeline).toHaveAttribute("aria-current", "page"));
+      for (const hash of ["", "#factory-setup", "#definition-field-stages"]) {
+        window.history.replaceState(null, "", hash || initialUrl);
+        fireEvent(window, new Event("hashchange"));
+        expect(Array.from(row.querySelectorAll('[aria-current="page"]'))).toEqual([pipeline]);
+      }
     } finally {
       window.history.replaceState(null, "", initialUrl);
     }
+  });
+
+  it("uses the locked detail receipt, not the query, for Factory tabs", () => {
+    mocked.pathname = "/w/acme-corp/agents/agent-1";
+    mocked.searchParams = new URLSearchParams("factory=factory-1&q=unrelated");
+    const factory = { ...defaultOptions[1], canManage: true };
+    const factories = [defaultOptions[0], factory];
+    const props = createShellProps({ canManageFactoryDefinition: true, factories });
+    const receipt = {
+      factories,
+      locationKey: workspaceScopeLocationKey(mocked.pathname),
+      picker: "locked" as const,
+      scope: { kind: "factory" as const, factory },
+      viewerId: props.viewerId,
+      workspaceId: workspace.id,
+    };
+    const header = (viewerId: string) =>
+      createElement(
+        ShellHeader,
+        props,
+        createElement(WorkspaceScopeHandoff, { snapshot: { ...receipt, viewerId } }),
+      );
+    const view = render(header("different-user"));
+    const row = screen.getByRole("navigation", { name: "Factory views" });
+    const context = within(row).getByRole("link", { name: "Context" });
+    expect(context).toHaveAttribute("href", "/w/acme-corp/context?factory=all");
+
+    view.rerender(header(props.viewerId));
+    expect(context).toHaveAttribute("href", "/w/acme-corp/context?factory=other-factory");
+    expect(row.querySelector('[aria-current="page"]')).toHaveTextContent("Agents");
+    expect(screen.queryByRole("combobox", { name: "Factory" })).toBeNull();
   });
 
   it("restores the launch page, query, anchor and launcher focus on cancel", async () => {
@@ -990,28 +1023,28 @@ describe("ShellHeader", () => {
       mocked.pathname = "/w/acme-corp/agents";
       mocked.searchParams = new URLSearchParams({ factory: selectedFactory });
       mountShell();
-      const sections = within(screen.getByRole("navigation", { name: "Factory sections" }));
-      expect(sections.getByRole("link", { name: "Graph workflows" })).toHaveAttribute(
+      const row = within(screen.getByRole("navigation", { name: "Factory views" }));
+      expect(row.getByRole("link", { name: "Graph workflows" })).toHaveAttribute(
         "href",
         `/w/acme-corp/workflows?factory=${selectedFactory}`,
       );
     },
   );
 
-  it("shows the definition route within Factory only when authorized", () => {
+  it("shows the Pipeline entry within Factory only when authorized", () => {
     mocked.pathname = "/w/acme-corp/agents";
     mocked.searchParams = new URLSearchParams("factory=factory-1");
     const view = mountShell({ canManageFactoryDefinition: true });
     const nav = within(screen.getByRole("navigation", { name: "Workspace navigation" }));
-    const sections = within(screen.getByRole("navigation", { name: "Factory sections" }));
+    const row = within(screen.getByRole("navigation", { name: "Factory views" }));
     expect(nav.getByRole("link", { name: "Factory" })).toHaveAttribute("aria-current", "page");
     expect(nav.getByRole("link", { name: "Settings" })).not.toHaveAttribute("aria-current");
-    expect(sections.getByRole("link", { name: "Definition" })).toHaveAttribute(
+    expect(row.getByRole("link", { name: "Pipeline" })).toHaveAttribute(
       "href",
       "/w/acme-corp/settings/factory-definition?factory=factory-1",
     );
     view.rerender(shellElement({ canManageFactoryDefinition: false }));
-    expect(sections.queryByRole("link", { name: "Definition" })).toBeNull();
+    expect(row.queryByRole("link", { name: "Pipeline" })).toBeNull();
   });
 
   it("keeps scope on aggregate links and preserves workspace Settings URLs", () => {

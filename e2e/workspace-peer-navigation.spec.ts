@@ -11,7 +11,7 @@ const definition = `${settings}/factory-definition`;
 
 const destinations = [
   { title: "Runs", path: runs, group: "Activity", oldLink: "Sessions" },
-  { title: "Factory definition", path: definition, group: "Factory", oldLink: "Settings" },
+  { title: "Pipeline", path: definition, group: "Factory", oldLink: "Settings" },
   { title: "Automations", path: automations, group: "Factory", oldLink: "Back to Settings" },
 ] as const;
 
@@ -46,10 +46,10 @@ for (const width of [1440, 390]) {
     let current: string = "Sessions";
     for (const destination of destinations) {
       if (current === destination.group) {
-        const sections = page.getByRole("navigation", { name: "Factory sections" });
-        await sections.getByRole("link", { name: destination.title, exact: true }).press("Enter");
+        const views = page.getByRole("navigation", { name: "Factory views" });
+        await views.getByRole("link", { name: destination.title, exact: true }).press("Enter");
         await expectPeerHeader(page, destination);
-        await expect(sections.locator('[aria-current="page"]')).toHaveText(destination.title);
+        await expect(views.locator('[aria-current="page"]')).toHaveText(destination.title);
         continue;
       }
       if (width === 390) {

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { useEffect, useRef } from "react";
 
 import {
   matchWorkspaceLocation,
@@ -29,7 +30,6 @@ type NavigationLink = {
 export function getGroupedWorkspaceNavigation({
   canManageDefinition,
   factories,
-  hash,
   pathname,
   preferRememberedScope,
   returnTo,
@@ -38,7 +38,6 @@ export function getGroupedWorkspaceNavigation({
 }: {
   canManageDefinition: boolean;
   factories: readonly FactorySelectionOption[];
-  hash?: string;
   pathname: string;
   preferRememberedScope?: boolean;
   returnTo?: string | null;
@@ -57,35 +56,37 @@ export function getGroupedWorkspaceNavigation({
     (factory) => factory.canManage && factory.status === "active",
   );
   const definition = canManageDefinition && factories.some(({ status }) => status === "active");
-  const configurationEntry = definition ? "definition" : "agents";
-  const link = (route: WorkspaceRoute) =>
-    workspaceScopeHref(route, workspaceSlug, scope, preferRememberedScope);
+  const factoryEntry = definition ? "definition" : "agents";
+  const unresolvedScope = scope.kind === "global" || scope.kind === "resource-pending";
+  const link = (route: WorkspaceRoute, fromFactory = false) =>
+    workspaceScopeHref(
+      route,
+      workspaceSlug,
+      fromFactory && unresolvedScope ? { kind: "pick" } : scope,
+      preferRememberedScope,
+    );
 
   const sidebar = destinations.map(({ id, label, entry }) => {
     const active = id === destination;
     const route =
-      active && location && !fromInbox
-        ? location.route
-        : id === "factory"
-          ? configurationEntry
-          : entry;
+      active && location && !fromInbox ? location.route : id === "factory" ? factoryEntry : entry;
     return {
       id,
       label,
       active,
-      href: active && fromInbox ? browseReturn.href : link(route),
+      href: active && fromInbox ? browseReturn.href : link(route, active && id === "factory"),
     };
   });
 
-  function tab(
-    route: WorkspaceRoute,
-    label: string,
-    active = location?.tab === label,
-  ): NavigationLink {
-    return { active, href: link(route), label };
+  function tab(route: WorkspaceRoute, label: string): NavigationLink {
+    return { active: location?.tab === label, href: link(route), label };
   }
-  function section(route: WorkspaceRoute, label: string): NavigationLink {
-    return { active: location?.route === route, href: link(route), label };
+  function routeTab(route: WorkspaceRoute, label: string): NavigationLink {
+    return {
+      active: location?.route === route,
+      href: link(route, destination === "factory"),
+      label,
+    };
   }
 
   let tabs: NavigationLink[] = [];
@@ -99,55 +100,62 @@ export function getGroupedWorkspaceNavigation({
       tab("benchmarks", "Benchmarks"),
     ];
     if (location?.tab === "Failures") {
-      sections = [section("failures", "Failure groups"), section("improvements", "Improvements")];
+      sections = [routeTab("failures", "Failure groups"), routeTab("improvements", "Improvements")];
     }
   } else if (destination === "factory") {
-    tabs = [tab(configurationEntry, "Configuration")];
-    if (managed) tabs.push(tab("context", "Knowledge"));
-    if (location?.tab === "Knowledge") {
-      if (managed) sections = [section("context", "Context"), section("memory", "Memory")];
-    } else {
-      if (definition) {
-        const pipeline = hash === "#definition-field-stages";
-        const active = location?.route === "definition";
-        const canOpenPipeline = scope.kind === "factory" && scope.factory.status === "active";
-        sections.push({ ...section("definition", "Definition"), active: active && !pipeline });
-        if (canOpenPipeline)
-          sections.push({
-            active: active && pipeline,
-            href: `${link("definition")}#definition-field-stages`,
-            label: "Pipeline",
-          });
-      }
-      sections.push(section("agents", "Agents"), section("scorers", "Scorers"));
-      if (activeManaged)
-        sections.push(
-          section("automations", "Automations"),
-          section("workflows", "Graph workflows"),
-        );
-      if (managed) sections.push(section("governance", "Access"));
-    }
+    tabs = [
+      ...(definition ? [routeTab("definition", "Pipeline")] : []),
+      ...(activeManaged ? [routeTab("workflows", "Graph workflows")] : []),
+      routeTab("agents", "Agents"),
+      ...(managed ? [routeTab("context", "Context"), routeTab("memory", "Memory")] : []),
+      routeTab("scorers", "Scorers"),
+      ...(activeManaged ? [routeTab("automations", "Automations")] : []),
+      ...(managed ? [routeTab("governance", "Access")] : []),
+    ];
   }
 
   return { activeItem: sidebar.find((item) => item.active), sections, sidebar, tabs };
 }
 
+function revealFactoryTab(row: HTMLElement, tab: Element) {
+  const { left, right } = row.getBoundingClientRect();
+  const bounds = tab.getBoundingClientRect();
+  if (bounds.left < left + 4) row.scrollLeft += bounds.left - (left + 4);
+  else if (bounds.right > right - 4) row.scrollLeft += bounds.right - (right - 4);
+}
+
 export function WorkspaceGroupTabs({
   label,
   sections,
+  singleRow,
   tabs,
 }: {
   label: string;
   sections: readonly NavigationLink[];
+  singleRow?: boolean;
   tabs: readonly NavigationLink[];
 }) {
+  const rowRef = useRef<HTMLElement>(null);
+  const activeLabel = singleRow ? tabs.find(({ active }) => active)?.label : undefined;
+
+  useEffect(() => {
+    const row = rowRef.current;
+    const current = row?.querySelector('[aria-current="page"]');
+    if (!row || !current) return;
+    revealFactoryTab(row, current);
+    const resize = new ResizeObserver(() => revealFactoryTab(row, current));
+    resize.observe(row);
+    return () => resize.disconnect();
+  }, [activeLabel, tabs.length]);
+
   if (tabs.length === 0) return null;
   const links = (entries: readonly NavigationLink[]) =>
     entries.map(({ active, href, label }) => (
       <Link
         aria-current={active ? "page" : undefined}
         className={cn(
-          "ui-top-nav-tab min-h-11 text-wrap sm:min-h-8",
+          "ui-top-nav-tab min-h-11 sm:min-h-8",
+          singleRow ? "shrink-0" : "text-wrap",
           active && "ui-top-nav-tab-active",
         )}
         href={href}
@@ -160,8 +168,24 @@ export function WorkspaceGroupTabs({
 
   return (
     <div className="border-b border-border">
-      <div className="mx-auto max-w-[1080px] px-4 py-2 sm:px-8">
-        <nav aria-label={`${label} views`} className="flex flex-wrap gap-x-1">
+      <div className={cn("mx-auto max-w-[1080px] px-4 sm:px-8", singleRow ? "py-1" : "py-2")}>
+        <nav
+          aria-label={`${label} views`}
+          className={cn(
+            "flex gap-x-1",
+            singleRow
+              ? "overflow-x-auto overscroll-x-contain scroll-px-1 p-1 [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border-strong"
+              : "flex-wrap",
+          )}
+          onFocus={
+            singleRow
+              ? ({ currentTarget, target }) => {
+                  if (target.matches(":focus-visible")) revealFactoryTab(currentTarget, target);
+                }
+              : undefined
+          }
+          ref={singleRow ? rowRef : undefined}
+        >
           {links(tabs)}
         </nav>
         {sections.length ? (
