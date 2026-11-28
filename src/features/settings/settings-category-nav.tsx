@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useId, useState } from "react";
 
 import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
+import { useFactoryManagementLeaveGuard } from "@/features/settings/islands/factory-management-navigation";
 import {
   FACTORY_ROW_ANCHOR_PREFIX,
   SETTINGS_CATEGORY_LINKS,
@@ -149,6 +150,9 @@ export function SettingsCategoryNav({
   const [activeAnchor, setActiveAnchor] = useState<string | null>(null);
   const { stopNavigation: stopPersonalNavigation, warning: personalWarning } =
     usePersonalSettingsGuard();
+  const { blocked: factoryNavigationBlocked, confirmLeave: confirmFactoryLeave } =
+    useFactoryManagementLeaveGuard();
+  const confirmFactoryHashLeave = useEffectEvent(confirmFactoryLeave);
   const activeSection =
     activeAnchor === "factory-setup" ||
     activeAnchor === "factory-management" ||
@@ -200,11 +204,14 @@ export function SettingsCategoryNav({
         return;
       }
       if (
-        activeCategory !== "personal" &&
-        route.category === "personal" &&
-        stopPersonalNavigation()
+        route.category !== activeCategory &&
+        ((route.category === "personal" && stopPersonalNavigation()) || !confirmFactoryHashLeave())
       ) {
-        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        const editorHash =
+          activeCategory === "workspace" && new URLSearchParams(search).has("manageFactory")
+            ? "#factory-management"
+            : "";
+        window.history.replaceState(null, "", pathname + window.location.search + editorHash);
         return;
       }
       if (route.category !== activeCategory || hash !== `#${route.anchor}`) {
@@ -275,9 +282,13 @@ export function SettingsCategoryNav({
             <li className="min-w-0" key={category.id}>
               <Link
                 aria-current={isActive ? "page" : undefined}
+                aria-disabled={factoryNavigationBlocked || undefined}
                 className="settings-anchor !block min-h-9 !px-2 text-center aria-[current=page]:bg-control-hover aria-[current=page]:text-foreground lg:!px-3 lg:text-left"
                 href={`/w/${workspaceSlug}/settings?category=${category.id}`}
                 onFocus={() => preloadSettingsCategory(category.id)}
+                onNavigate={(event) => {
+                  if (!confirmFactoryLeave()) event.preventDefault();
+                }}
                 onPointerEnter={() => preloadSettingsCategory(category.id)}
               >
                 {category.label}
@@ -288,11 +299,12 @@ export function SettingsCategoryNav({
       </ul>
       <Link
         aria-current={activeCategory === "personal" ? "page" : undefined}
+        aria-disabled={factoryNavigationBlocked || undefined}
         className="settings-anchor mt-2 min-h-9 aria-[current=page]:bg-control-hover aria-[current=page]:text-foreground"
         href={`/w/${workspaceSlug}/settings?category=personal`}
         onFocus={() => preloadSettingsCategory("personal")}
         onNavigate={(event) => {
-          if (stopPersonalNavigation()) event.preventDefault();
+          if (stopPersonalNavigation() || !confirmFactoryLeave()) event.preventDefault();
         }}
         onPointerEnter={() => preloadSettingsCategory("personal")}
       >

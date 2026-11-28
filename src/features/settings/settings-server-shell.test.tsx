@@ -1,9 +1,12 @@
-import { createElement, type ComponentProps, type ReactElement } from "react";
+import { createElement, type ComponentProps, type ReactElement, type ReactNode } from "react";
 import { renderToReadableStream, renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/features/settings/settings-category-nav", () => ({
   SettingsCategoryNav: () => <p>Category navigation island</p>,
+}));
+vi.mock("@/features/settings/islands/factory-management-navigation", () => ({
+  FactoryManagementNavigation: ({ children }: { children: ReactNode }) => children,
 }));
 vi.mock("@/features/settings/islands/integration-islands", () => ({
   GithubIntegrationIsland: () => <p>GitHub integration island</p>,

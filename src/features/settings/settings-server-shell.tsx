@@ -18,6 +18,7 @@ import {
   RunHistoryIsland,
   VerifySetupIsland,
 } from "@/features/settings/islands/advanced-islands";
+import { FactoryManagementNavigation } from "@/features/settings/islands/factory-management-navigation";
 import {
   GithubIntegrationIsland,
   LinearIntegrationIsland,
@@ -346,14 +347,16 @@ export function SettingsServerShell(props: SettingsServerShellProps) {
         </header>
         <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-12">
           <PersonalSettingsNavigation key={props.initialData.workspace.id}>
-            <SettingsCategoryNav
-              activeCategory={props.category}
-              canManage={props.initialData.canManage}
-              workspaceSlug={props.initialData.workspace.slug}
-            />
-            <div className="min-w-0" id="settings-sections">
-              <ActiveCategory {...props} />
-            </div>
+            <FactoryManagementNavigation>
+              <SettingsCategoryNav
+                activeCategory={props.category}
+                canManage={props.initialData.canManage}
+                workspaceSlug={props.initialData.workspace.slug}
+              />
+              <div className="min-w-0" id="settings-sections">
+                <ActiveCategory {...props} />
+              </div>
+            </FactoryManagementNavigation>
           </PersonalSettingsNavigation>
         </div>
       </div>

@@ -7,6 +7,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useState,
   useTransition,
   type ReactNode,
@@ -16,9 +17,11 @@ import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
 import { FACTORY_ROW_ANCHOR_PREFIX } from "@/features/settings/settings-categories";
 
 type LeaveGuard = { busy: boolean; dirty: boolean };
+const allowLeave = () => true;
 
 const ManagementNavigation = createContext<{
   blocked: boolean;
+  confirmLeave: () => boolean;
   moving: boolean;
   register: (id: string, guard: LeaveGuard) => () => void;
   toggle: (factoryId: string, open: boolean, trigger: HTMLButtonElement) => void;
@@ -39,15 +42,14 @@ export function FactoryManagementNavigation({ children }: { children: ReactNode 
     };
   }, []);
   const blocked = moving || [...guards.values()].some(({ busy }) => busy);
+  const dirty = [...guards.values()].some((guard) => guard.dirty);
+
+  function confirmLeave() {
+    return !blocked && (!dirty || window.confirm("Discard unsaved changes to this factory?"));
+  }
 
   function toggle(factoryId: string, open: boolean, trigger: HTMLButtonElement) {
-    if (blocked) return;
-    if (
-      [...guards.values()].some(({ dirty }) => dirty) &&
-      !window.confirm("Discard unsaved changes to this factory?")
-    ) {
-      return;
-    }
+    if (!confirmLeave()) return;
     trigger.focus({ preventScroll: true });
     const url = new URL(window.location.href);
     if (open) url.searchParams.delete("manageFactory");
@@ -57,10 +59,18 @@ export function FactoryManagementNavigation({ children }: { children: ReactNode 
   }
 
   return (
-    <ManagementNavigation.Provider value={{ blocked, moving, register, toggle }}>
+    <ManagementNavigation.Provider value={{ blocked, confirmLeave, moving, register, toggle }}>
       {children}
     </ManagementNavigation.Provider>
   );
+}
+
+export function useFactoryManagementLeaveGuard() {
+  const navigation = useContext(ManagementNavigation);
+  return {
+    blocked: navigation?.blocked ?? false,
+    confirmLeave: navigation?.confirmLeave ?? allowLeave,
+  };
 }
 
 export function FactoryManagementToggle({
@@ -96,7 +106,7 @@ export function useFactoryManagementGuard(dirty: boolean, busy: boolean) {
   const id = useId();
   const navigation = useContext(ManagementNavigation);
   const register = navigation?.register;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (dirty || busy) return register?.(id, { dirty, busy });
   }, [busy, dirty, id, register]);
   useEffect(() => {

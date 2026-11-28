@@ -667,6 +667,27 @@ test("factory management changes only the selected factory and leaves workspace 
     await close("Studio Operations").click();
     await expect(manage("Studio Operations")).toBeFocused();
 
+    await manage("Studio Operations").click();
+    await displayName.fill("Unsubmitted category rename");
+    const editorUrl = page.url();
+    const settingsCategories = page.getByRole("navigation", { name: "Settings categories" });
+    const usageCategory = settingsCategories.getByRole("link", { name: "Usage & retention" });
+    const [categoryPrompt] = await Promise.all([
+      page.waitForEvent("dialog", { timeout: 4000 }).then(async (dialog) => {
+        const message = dialog.message();
+        await dialog.dismiss();
+        return message;
+      }),
+      usageCategory.click(),
+    ]);
+    expect(categoryPrompt).toBe("Discard unsaved changes to this factory?");
+    await expect(page).toHaveURL(editorUrl);
+    await expect(displayName).toHaveValue("Unsubmitted category rename");
+    page.once("dialog", (dialog) => dialog.accept());
+    await usageCategory.click();
+    await expect(page).toHaveURL((url) => url.searchParams.get("category") === "advanced");
+    await expect(displayName).toHaveCount(0);
+
     await page.context().clearCookies();
     await signInViaMagicLink(page, managePath(payments.id.toUpperCase()), {
       baseURL: base,
