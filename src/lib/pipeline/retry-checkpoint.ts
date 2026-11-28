@@ -36,7 +36,7 @@ export async function saveRetryCheckpoint(
   const { admin, sandbox, baseSha, runId, attemptCount, signal } = input;
   const headSha = await readSourceBase(sandbox, signal);
   if (headSha === baseSha) return false;
-  if ((await loadRetryCheckpoint(input)).kind === "missing-rpc") return false;
+  await loadRetryCheckpoint(input);
 
   // Resolve the credential set after pinning HEAD so a refresh cannot add
   // sensitive material to that commit after we take the list.
@@ -97,19 +97,15 @@ async function loadRetryCheckpoint(
   });
   const { data, error } = await (signal ? request.abortSignal(signal) : request);
   signal?.throwIfAborted();
-  // App deployments can reach production before the migration reaches PostgREST.
-  if (error?.code === "PGRST202") return { kind: "missing-rpc" } as const;
   if (error) throw new Error("Could not read the Retry checkpoint.");
-  return { kind: "available", checkpoint: data?.[0] } as const;
+  return data?.[0];
 }
 
 export async function restoreRetryInput(
   input: RetryCheckpointContext & { signal?: AbortSignal },
 ): Promise<boolean> {
   const { admin, sandbox, baseSha, signal } = input;
-  const result = await loadRetryCheckpoint(input);
-  if (result.kind === "missing-rpc") return false;
-  const { checkpoint } = result;
+  const checkpoint = await loadRetryCheckpoint(input);
   if (!checkpoint) return false;
   if (checkpoint.input_sha !== baseSha) {
     throw new Error("The Retry checkpoint belongs to a different source input.");

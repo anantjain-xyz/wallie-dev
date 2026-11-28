@@ -722,7 +722,6 @@ export type QueuedRunConfig = {
   modelName: string;
   modelProvider: string;
   runType: WallieRunMode;
-  usesPinnedDefinition: boolean;
 };
 
 /**
@@ -753,7 +752,6 @@ export async function resolveQueuedRunConfig(
       modelName: profile.model,
       modelProvider: profile.provider,
       runType: "code",
-      usesPinnedDefinition: true,
     };
   }
   const [agentConfig, resolvedRunType] = await Promise.all([
@@ -764,7 +762,6 @@ export async function resolveQueuedRunConfig(
     modelName: agentConfig.model,
     modelProvider: agentConfig.provider,
     runType: resolvedRunType,
-    usesPinnedDefinition: false,
   };
 }
 
@@ -786,23 +783,17 @@ export async function enqueueSessionJobWithRun(
     p_agent_model_name: runConfig.modelName,
     p_run_type: runConfig.runType,
   };
-  const retryEnqueue =
+  const { data, error } =
     input.retryRunId === undefined
-      ? null
+      ? await admin.rpc("enqueue_session_job_with_run", {
+          ...args,
+          p_requested_by_member_id: input.requestedByMemberId ?? undefined,
+          p_trigger_type: input.triggerType,
+        })
       : await admin.rpc("enqueue_session_retry_with_checkpoint", {
           ...args,
           p_requested_by_member_id: input.requestedByMemberId,
           p_retry_run_id: input.retryRunId,
-        });
-  // Compatibility sessions keep the original fallback during schema rollover.
-  // Pinned Retry always uses the exact checkpoint-aware path.
-  const { data, error } =
-    retryEnqueue && (runConfig.usesPinnedDefinition || retryEnqueue.error?.code !== "PGRST202")
-      ? retryEnqueue
-      : await admin.rpc("enqueue_session_job_with_run", {
-          ...args,
-          p_requested_by_member_id: input.requestedByMemberId ?? undefined,
-          p_trigger_type: input.triggerType,
         });
   if (error) throw error;
   const queued = data?.[0];
