@@ -120,6 +120,7 @@ export function AutomationEditor({
   async function perform(kind: "saving" | "publishing" | "loading", work: () => Promise<void>) {
     if (inFlight.current) return;
     inFlight.current = true;
+    navigation.setBusy(true);
     setAction(kind);
     setFeedback(null);
     try {
@@ -150,6 +151,7 @@ export function AutomationEditor({
       }
     } finally {
       inFlight.current = false;
+      navigation.setBusy(false);
       setAction(null);
     }
   }

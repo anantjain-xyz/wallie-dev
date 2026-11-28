@@ -12,7 +12,11 @@ import {
 } from "../src/lib/factory-proposals/workbench-contracts";
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
-import { selectDropdownOption } from "./helpers/select";
+import {
+  selectDropdownOption,
+  selectWorkspaceFactory,
+  workspaceFactoryPicker,
+} from "./helpers/select";
 
 const sourceSchema = z.object({
   cohortId: z.uuid(),
@@ -204,9 +208,7 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
       const cursorPage = new URL(firstPage);
       cursorPage.searchParams.set("after", first.revisionId);
       await page.goto(cursorPage.href);
-      const header = page.locator("[data-shell-header]");
-      const factory = header.getByRole("combobox", { name: "Factory", exact: true });
-      await selectDropdownOption(factory, fixture.siblingFactoryId);
+      await selectWorkspaceFactory(page, fixture.siblingFactoryId);
       await expect(page).toHaveURL(
         (url) =>
           url.pathname === firstPage.pathname &&
@@ -247,7 +249,7 @@ test("reviews exact proposal revisions and preserves discussion after dismissal"
           main.getByRole("heading", { name: "Proposal revision unavailable", exact: true }),
         ).toBeVisible();
         await expect(banner.getByText("Product delivery", { exact: true })).toBeVisible();
-        await expect(banner.getByRole("combobox", { name: "Factory", exact: true })).toHaveCount(0);
+        await expect(workspaceFactoryPicker(page)).toHaveCount(0);
         await expect(failureGroups).toHaveAttribute(
           "href",
           `${workspacePath}/failure-groups?factory=${fixture.factoryId}`,

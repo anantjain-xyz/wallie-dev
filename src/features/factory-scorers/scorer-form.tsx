@@ -1,7 +1,15 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import type { z } from "zod";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
@@ -122,6 +130,7 @@ export function ScorerForm({
   const router = useRouter();
   const guard = useScorerDraftGuard();
   const dirty = guard?.dirty;
+  const setBusy = guard?.setBusy;
   const id = useId();
   const create = draft.kind === "create";
   const [initial] = useState(() => initialValues(draft));
@@ -176,6 +185,11 @@ export function ScorerForm({
       );
     },
   });
+
+  useLayoutEffect(() => {
+    setBusy?.(action.isBusy);
+    return () => setBusy?.(false);
+  }, [action.isBusy, setBusy]);
 
   useEffect(
     () => () => {

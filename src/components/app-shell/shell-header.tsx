@@ -149,6 +149,7 @@ export function ShellHeader({
   const currentFactories = snapshot?.factories ?? factories;
   const scopeChoices =
     location && snapshot ? workspaceScopeOptions(location, currentFactories) : [];
+  const manageFactoriesHref = scopeChoices.length ? snapshot?.manageFactoriesHref : undefined;
   const scoped = snapshot?.scope ?? { kind: "global" };
   const globalScope = location?.mode === "global";
   const remembered = useRememberedWorkspaceScope({
@@ -169,11 +170,14 @@ export function ShellHeader({
   const [guardedPickerTarget, setGuardedPickerTarget] = useState<HTMLDivElement | null>(null);
   const scopeContext = useMemo(
     () => ({
-      guardedPicker: snapshot?.picker === "guarded" ? { target: guardedPickerTarget } : null,
+      guardedPicker:
+        snapshot?.picker === "guarded"
+          ? { target: guardedPickerTarget, manageFactoriesHref }
+          : null,
       ownsPicker: snapshot?.picker === "header",
       publish,
     }),
-    [guardedPickerTarget, publish, snapshot?.picker],
+    [guardedPickerTarget, manageFactoriesHref, publish, snapshot?.picker],
   );
   const [drawerLocation, setDrawerLocation] = useState<string | null>(null);
   const drawerOpen = drawerLocation === locationKey;
@@ -500,6 +504,7 @@ export function ShellHeader({
                   choices={scopeChoices}
                   guardTarget={snapshot.picker === "guarded" ? setGuardedPickerTarget : undefined}
                   locked={snapshot.picker !== "header"}
+                  manageFactoriesHref={manageFactoriesHref}
                   resetParams={snapshot.resetParams}
                   scope={scoped}
                   visibleFactoryCount={

@@ -11,11 +11,15 @@ import { FactorySelector } from "@/features/factories/factory-selector";
 import { workspaceAutomationPreviewPath } from "@/lib/routes";
 
 const DraftNavigation = createContext<{
+  busy: boolean;
   guard: (navigate: () => void, trigger: HTMLElement | null) => void;
+  setBusy: (value: boolean) => void;
   setDirty: (value: boolean) => void;
   navigate: (href: string) => void;
 }>({
+  busy: false,
   guard: () => undefined,
+  setBusy: () => undefined,
   setDirty: () => undefined,
   navigate: () => undefined,
 });
@@ -54,6 +58,7 @@ export function AutomationDraftNavigation({ children }: { children: ReactNode })
   const dirtyRef = useRef(false);
   const restoreFocus = useRef<HTMLElement | null>(null);
   const [dirty, setDirtyState] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [destination, setDestination] = useState<Destination | null>(null);
   const [historyNotice, setHistoryNotice] = useState("");
 
@@ -120,7 +125,12 @@ export function AutomationDraftNavigation({ children }: { children: ReactNode })
       )
         return;
       const link = event.target.closest<HTMLAnchorElement>("a[href]");
-      if (!link || (link.target && link.target !== "_self") || link.hasAttribute("download"))
+      if (
+        !link ||
+        link.hasAttribute("data-guarded-factory-link") ||
+        (link.target && link.target !== "_self") ||
+        link.hasAttribute("download")
+      )
         return;
       const url = new URL(link.href);
       if (url.protocol !== "http:" && url.protocol !== "https:") return;
@@ -222,7 +232,7 @@ export function AutomationDraftNavigation({ children }: { children: ReactNode })
   }, [dirty]);
 
   return (
-    <DraftNavigation.Provider value={{ guard, setDirty, navigate }}>
+    <DraftNavigation.Provider value={{ busy, guard, setBusy, setDirty, navigate }}>
       {children}
       {historyNotice ? (
         <p role="status" className="px-4 py-3 text-sm text-muted">
@@ -272,15 +282,19 @@ export function AutomationFactoryPicker({
   factories: readonly FactorySelectionOption[];
   resetParams?: readonly string[];
 }) {
-  const { guard } = useAutomationDraftNavigation();
+  const { busy, guard } = useAutomationDraftNavigation();
   const trigger = useRef<HTMLButtonElement>(null);
-  const target = useContext(WorkspaceScopeContext)?.guardedPicker?.target;
-  if (!target || factories.length <= 1) return null;
+  const picker = useContext(WorkspaceScopeContext)?.guardedPicker;
+  if (!picker?.target || (factories.length <= 1 && !picker.manageFactoriesHref)) return null;
+
+  const guardFromPicker = (navigate: () => void) => guard(navigate, trigger.current);
 
   return (
     <FactorySelector
       factories={factories}
-      onSwitch={(navigate) => guard(navigate, trigger.current)}
+      manageDisabled={busy}
+      onManage={guardFromPicker}
+      onSwitch={guardFromPicker}
       resetParams={resetParams}
       selectedValue={factoryId}
       triggerRef={trigger}

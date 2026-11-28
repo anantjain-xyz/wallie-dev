@@ -8,7 +8,12 @@ import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 
 import { signInViaMagicLink } from "./helpers/auth";
-import { openDropdownListbox, selectDropdownOption } from "./helpers/select";
+import {
+  openDropdownListbox,
+  selectDropdownOption,
+  selectWorkspaceFactory,
+  workspaceFactoryPicker,
+} from "./helpers/select";
 
 function localOrigin(value: string | undefined) {
   const url = value ? new URL(value) : null;
@@ -73,8 +78,9 @@ test("workspace factory creation preserves the default and lands in the returned
   const factories = page.getByRole("list", { name: "Factories", exact: true });
   const factoriesHeading = page.getByRole("heading", { name: "Factories", exact: true });
   const newFactory = page.getByRole("button", { name: "New factory", exact: true });
-  const manageFactories = page.getByRole("link", { name: "Manage factories", exact: true });
-  const picker = page.getByRole("combobox", { name: "Factory", exact: true });
+  const menu = page.getByRole("menu", { name: "Factory", exact: true });
+  const manageFactories = menu.getByRole("menuitem", { name: "Manage factories", exact: true });
+  const picker = workspaceFactoryPicker(page);
   let workspaceId: string | undefined;
 
   try {
@@ -194,25 +200,85 @@ test("workspace factory creation preserves the default and lands in the returned
     await capture(page, info, "01-workspace-factories");
 
     await page.goto(workspacePath);
+    await expect(page.getByRole("link", { name: "Manage factories", exact: true })).toHaveCount(0);
+    await expect(picker).toHaveAttribute("data-value", defaultFactory.id);
+    await picker.press("Enter");
     await expect(manageFactories).toHaveAttribute("href", factoriesPath);
+    await expect(menu.getByRole("menuitemradio", { checked: true })).toHaveText(
+      defaultFactory.name,
+    );
+    await expect(menu.getByRole("menuitemradio").first()).toHaveText("All factories");
+    await expect(menu.getByRole("separator")).toHaveCount(2);
     await capture(page, info, "02-sessions-board-shortcut");
     await page.goto(sessionsPath);
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(picker).toHaveCount(0);
-    await expect(manageFactories).toHaveAttribute("href", factoriesPath);
+    await expect(picker).toHaveAttribute("data-value", defaultFactory.id);
+    await expect(page.getByRole("link", { name: "Manage factories", exact: true })).toHaveCount(0);
     await page.goto(`${sessionsPath}?factory=all`);
     await expect(picker).toHaveAttribute("data-value", "all");
     await picker.press("Enter");
-    const options = page.getByRole("listbox");
-    await expect(options.getByRole("option", { name: "All factories" })).toBeVisible();
-    await expect(options.getByText("Manage factories")).toHaveCount(0);
+    await expect(
+      menu.getByRole("menuitemradio", { name: "All factories", checked: true }),
+    ).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(picker).toBeFocused();
-    await manageFactories.focus();
+    await picker.press("Enter");
+    await page.keyboard.press("End");
+    await expect(manageFactories).toBeFocused();
     await capture(page, info, "03-sessions-mobile-shortcut");
-    await manageFactories.press("Enter");
+    await page.keyboard.press("Enter");
     await expect(page).toHaveURL((url) => url.pathname + url.search + url.hash === factoriesPath);
     await expect(factoriesHeading).toBeFocused();
+
+    await test.step("guard the directory link while editing or saving a sole-factory draft", async () => {
+      const agentPath = `${workspacePath}/agents?factory=${defaultFactory.id}&new=1#new-agent`;
+      const agentApi = `${factoryApi}/${defaultFactory.id}/agents`;
+      await page.goto(agentPath);
+      const name = page.getByRole("textbox", { name: "Agent name", exact: true });
+      await name.fill("Delivery reviewer");
+      await page
+        .getByRole("textbox", { name: "Implementation prompt" })
+        .fill("Check the fictional delivery notes.");
+      await picker.press("Enter");
+      await expect(menu.getByRole("separator")).toHaveCount(1);
+      await page.keyboard.press("End");
+      await expect(manageFactories).toBeFocused();
+      await page.keyboard.press("Enter");
+      const leave = page.getByRole("alertdialog", { name: "Leave without saving?" });
+      await expect(leave.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(picker).toBeFocused();
+      await expect(name).toHaveValue("Delivery reviewer");
+      await expect(page).toHaveURL((url) => url.pathname + url.search + url.hash === agentPath);
+
+      const response = Promise.withResolvers<void>();
+      await page.route(
+        agentApi,
+        async (route) => {
+          await response.promise;
+          await route.fulfill({ status: 503, json: { error: "Synthetic interrupted save." } });
+        },
+        { times: 1 },
+      );
+      try {
+        await page.getByRole("button", { name: "Create agent", exact: true }).click();
+        await expect(page.getByRole("button", { name: "Creating…", exact: true })).toBeVisible();
+        await picker.press("Enter");
+        await expect(manageFactories).toBeDisabled();
+        await expect(manageFactories).not.toHaveAttribute("href");
+        await page.keyboard.press("Escape");
+      } finally {
+        response.resolve();
+      }
+
+      await expect(page.getByText("Synthetic interrupted save.", { exact: true })).toBeVisible();
+      await expect(name).toHaveValue("Delivery reviewer");
+      await picker.press("Enter");
+      await manageFactories.press("Enter");
+      await leave.getByRole("button", { name: "Discard and leave", exact: true }).click();
+      await expect(factoriesHeading).toBeFocused();
+      await expect(page).toHaveURL((url) => url.pathname + url.search + url.hash === factoriesPath);
+    });
 
     await newFactory.press("Enter");
     const dialog = page.getByRole("dialog", { name: "New factory" });
@@ -326,8 +392,9 @@ test("workspace factory creation preserves the default and lands in the returned
     await expect(composer).toBeHidden();
     await expect(newSession).toBeFocused();
     await capture(page, info, "06-new-factory-sessions");
-    await selectDropdownOption(picker, defaultFactory.id);
+    await selectWorkspaceFactory(page, defaultFactory.id);
     await expect(picker).toHaveAttribute("data-value", defaultFactory.id);
+    await picker.click();
     await manageFactories.click();
     await expect(factories.getByRole("listitem")).toHaveCount(2);
 
@@ -383,8 +450,17 @@ test("workspace factory creation preserves the default and lands in the returned
     for (const { role, email, memberId } of viewers) {
       await page.context().clearCookies();
       await signInViaMagicLink(page, sessionsPath, { baseURL: base, email });
-      await expect(manageFactories).toHaveCount(role === "admin" ? 1 : 0);
-      await page.goto(factoriesPath);
+      if (role === "admin") {
+        await picker.press("Enter");
+        await expect(manageFactories).toHaveAttribute("href", factoriesPath);
+        await manageFactories.press("Enter");
+      } else {
+        await expect(picker).toHaveCount(0);
+        await expect(page.getByRole("link", { name: "Manage factories", exact: true })).toHaveCount(
+          0,
+        );
+        await page.goto(factoriesPath);
+      }
       await expect(factoriesHeading).toBeVisible();
       if (role === "admin") {
         await expect(newFactory).toBeVisible();
@@ -636,9 +712,10 @@ test("factory management changes only the selected factory and leaves workspace 
     const sessionsPath = `/w/${slug}/sessions`;
     for (const path of [sessionsPath, `${sessionsPath}?factory=${defaultFactory.id}`]) {
       await sessionsPage.goto(path);
-      await expect(
-        sessionsPage.getByRole("combobox", { name: "Factory", exact: true }),
-      ).toHaveAttribute("data-value", defaultFactory.id);
+      await expect(workspaceFactoryPicker(sessionsPage)).toHaveAttribute(
+        "data-value",
+        defaultFactory.id,
+      );
     }
     await sessionsPage.close();
 

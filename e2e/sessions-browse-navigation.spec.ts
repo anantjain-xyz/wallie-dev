@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { signIn, signInViaMagicLink } from "./helpers/auth";
+import { workspaceFactoryPicker as factory } from "./helpers/select";
 
 const boardPath = "/w/acme-corp";
 const listPath = `${boardPath}/sessions`;
@@ -10,7 +11,6 @@ const firstReviewFactoryId = "e1b2c3d4-0001-4000-8000-000000000001";
 const views = (page: Page) => page.getByRole("navigation", { name: "Sessions views" });
 const currentView = (page: Page) => views(page).locator('[aria-current="page"]');
 const status = (page: Page) => page.getByRole("combobox", { name: "Filter by status" });
-const factory = (page: Page) => page.getByRole("combobox", { name: "Factory", exact: true });
 
 async function applyBoardSearch(page: Page, query: string) {
   const input = page.getByRole("searchbox", { name: "Search active board" });
@@ -49,7 +49,7 @@ test("one Sessions entry marks both views and carries compatible factory and sta
   await expect(
     page.getByRole("link", { name: "Review session Dark mode and theme customization" }),
   ).toHaveCount(0);
-  await expect(factory(page)).toHaveCount(0);
+  await expect(factory(page)).toHaveAttribute("data-value", factoryId!);
   await expect(page).toHaveURL(`${boardPath}?status=awaiting_review`);
 
   const listHref = `${listPath}?factory=${factoryId}&scope=active&status=awaiting_review`;
@@ -59,7 +59,7 @@ test("one Sessions entry marks both views and carries compatible factory and sta
   await expect(sessions).toHaveAttribute("aria-current", "page");
   await expect(sessions).toHaveAttribute("href", `${listPath}?factory=${factoryId}`);
   await expect(currentView(page)).toHaveText("List");
-  await expect(factory(page)).toHaveCount(0);
+  await expect(factory(page)).toHaveAttribute("data-value", factoryId!);
   await expect(status(page)).toHaveText("Awaiting review");
   await expect(page.getByRole("searchbox")).toHaveValue("");
   await expect(page.getByText("Dark mode and theme customization", { exact: true })).toBeVisible();
@@ -414,7 +414,7 @@ test("Inbox still opens the exact review and Runs remains a separate attempt rou
   await expect(runs).toHaveAttribute("href", runsHref);
   await runs.click();
   await expect(page).toHaveURL(runsHref);
-  await expect(factory(page)).toHaveCount(0);
+  await expect(factory(page)).toHaveAttribute("data-value", firstReviewFactoryId);
   const inspect = page
     .getByRole("list", { name: /^Runs/ })
     .getByRole("link", { name: /— .*attempt \d+/i })

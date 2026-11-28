@@ -6,7 +6,13 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 
 import { signInViaMagicLink } from "./helpers/auth";
-import { selectDropdownOption } from "./helpers/select";
+import {
+  openWorkspaceFactoryPicker,
+  selectDropdownOption,
+  selectWorkspaceFactory,
+  workspaceFactoryChoices,
+  workspaceFactoryPicker,
+} from "./helpers/select";
 
 type Admin = SupabaseClient<Database>;
 
@@ -141,20 +147,14 @@ async function seedFactoryWork(
 }
 
 async function selectFactory(page: Page, name: string) {
-  await page.getByRole("combobox", { name: "Factory", exact: true }).click();
-  await page
-    .getByRole("listbox", { name: "Factory", exact: true })
-    .getByRole("option", { name, exact: true })
-    .click();
+  await selectWorkspaceFactory(page, { label: name });
 }
 
 async function expectFactoryOptions(page: Page, labels: string[]) {
-  const factory = page.getByRole("combobox", { name: "Factory", exact: true });
-  await factory.click();
-  const listbox = page.getByRole("listbox", { name: "Factory", exact: true });
-  await expect(listbox.getByRole("option")).toHaveText(labels);
+  const popup = await openWorkspaceFactoryPicker(page);
+  await expect(workspaceFactoryChoices(popup)).toHaveText(labels);
   await page.keyboard.press("Escape");
-  await expect(listbox).toHaveCount(0);
+  await expect(popup).toHaveCount(0);
 }
 
 async function capture(page: Page, info: TestInfo, name: string) {
@@ -294,9 +294,7 @@ test("a factory switch wins before its route commits and an unconfirmed draft re
     archiveResponse.resolve();
 
     await expect(page).toHaveURL(archived);
-    await expect(page.getByRole("combobox", { name: "Factory", exact: true })).toHaveText(
-      "Legacy studio (archived)",
-    );
+    await expect(workspaceFactoryPicker(page)).toHaveText("Legacy studio (archived)");
     await expect(page.getByRole("button", { name: "New session", exact: true })).toBeEnabled();
     await expect(preview).toBeHidden();
     await capture(page, info, "archived-browse-with-draft-recovery");
@@ -464,7 +462,7 @@ test("factory navigation scopes lists, resets incompatible filters, and hides re
     const visibleLink = page.getByRole("link", {
       name: /Open session #\d+: Customer tools session 1/,
     });
-    const factory = page.getByRole("combobox", { name: "Factory", exact: true });
+    const factory = workspaceFactoryPicker(page);
     const launcher = page
       .locator("[data-shell-header]")
       .getByRole("button", { name: "New session", exact: true });

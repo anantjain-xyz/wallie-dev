@@ -85,7 +85,6 @@ export function AgentPromptForm({
   const slug = editedIdentifier ?? suggestAgentIdentifier(name);
   const needsReview = Boolean(latest && latest.revision > basedOn);
   const dirty = Boolean(draft || name || editedIdentifier !== null);
-  useDirectoryDraftStatus(dirty);
 
   useEffect(() => {
     if (!dirty) return;
@@ -107,6 +106,7 @@ export function AgentPromptForm({
       const link = event.target.closest("a[href]");
       if (
         !(link instanceof HTMLAnchorElement) ||
+        link.hasAttribute("data-guarded-factory-link") ||
         link.hasAttribute("download") ||
         (link.target && link.target !== "_self")
       )
@@ -203,6 +203,7 @@ export function AgentPromptForm({
       );
     },
   });
+  useDirectoryDraftStatus(dirty, action.isBusy || review.isBusy);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

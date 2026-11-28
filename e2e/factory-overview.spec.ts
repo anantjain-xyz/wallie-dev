@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { signInViaMagicLink } from "./helpers/auth";
 import { seedFactoryAnalytics } from "./helpers/factory-analytics";
+import { workspaceFactoryPicker } from "./helpers/select";
 
 async function expectReflow(page: Page) {
   expect(
@@ -229,9 +230,7 @@ test("Reporting health keeps projection actions scoped through stale, paused, an
 
     await fixture.archiveFactory();
     await page.reload();
-    await expect(page.getByRole("combobox", { name: "Factory", exact: true })).toContainText(
-      "(archived)",
-    );
+    await expect(workspaceFactoryPicker(page)).toContainText("(archived)");
     await expect(outcomes).toBeVisible();
     await health.locator("details").first().locator(":scope > summary").press("Enter");
     await health

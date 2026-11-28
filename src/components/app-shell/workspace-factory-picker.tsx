@@ -9,6 +9,7 @@ export function WorkspaceFactoryPicker({
   choices,
   guardTarget,
   locked,
+  manageFactoriesHref,
   resetParams,
   scope,
   visibleFactoryCount,
@@ -17,12 +18,18 @@ export function WorkspaceFactoryPicker({
   choices: readonly FactorySelectionOption[];
   guardTarget?: (target: HTMLDivElement | null) => void;
   locked: boolean;
+  manageFactoriesHref?: string;
   resetParams?: readonly string[];
   scope: WorkspaceScope;
   visibleFactoryCount: number;
 }) {
   if (scope.kind === "global" || scope.kind === "resource-pending") return null;
-  if (scope.kind === "factory" && visibleFactoryCount <= 1 && scope.factory.status === "active")
+  if (
+    scope.kind === "factory" &&
+    visibleFactoryCount <= 1 &&
+    scope.factory.status === "active" &&
+    !(manageFactoriesHref && choices.length && (!locked || guardTarget))
+  )
     return null;
   if (guardTarget) return <div className="min-w-0" ref={guardTarget} />;
 
@@ -51,6 +58,7 @@ export function WorkspaceFactoryPicker({
     <FactorySelector
       allowAll={allowAll}
       factories={choices}
+      manageFactoriesHref={manageFactoriesHref}
       presentation="header"
       resetParams={resetParams}
       selectedValue={value}

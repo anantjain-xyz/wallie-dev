@@ -3,7 +3,7 @@
 import {
   createContext,
   useContext,
-  useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -20,22 +20,34 @@ import {
 import type { FactorySelectionOption } from "@/features/factories/factory-selection";
 import { FactorySelector } from "@/features/factories/factory-selector";
 
-const DraftContext = createContext<RefObject<boolean> | null>(null);
+const DraftContext = createContext<{
+  dirty: RefObject<boolean>;
+  busy: boolean;
+  setBusy: (busy: boolean) => void;
+} | null>(null);
 
 export function AgentDirectoryDraftScope({ children }: { children: ReactNode }) {
   const dirtyRef = useRef(false);
-  return <DraftContext.Provider value={dirtyRef}>{children}</DraftContext.Provider>;
+  const [busy, setBusy] = useState(false);
+  return (
+    <DraftContext.Provider value={{ busy, dirty: dirtyRef, setBusy }}>
+      {children}
+    </DraftContext.Provider>
+  );
 }
 
-export function useDirectoryDraftStatus(dirty: boolean) {
-  const statusRef = useContext(DraftContext);
-  useEffect(() => {
-    if (!statusRef) return;
-    statusRef.current = dirty;
+export function useDirectoryDraftStatus(dirty: boolean, busy = false) {
+  const { dirty: statusRef, setBusy } = useContext(DraftContext) ?? {};
+  useLayoutEffect(() => {
+    if (statusRef) statusRef.current = dirty;
     return () => {
-      statusRef.current = false;
+      if (statusRef) statusRef.current = false;
     };
   }, [statusRef, dirty]);
+  useLayoutEffect(() => {
+    setBusy?.(busy);
+    return () => setBusy?.(false);
+  }, [setBusy, busy]);
 }
 
 export function AgentDirectoryFactorySelector({
@@ -45,19 +57,24 @@ export function AgentDirectoryFactorySelector({
   factories: readonly FactorySelectionOption[];
   selectedValue: string;
 }) {
-  const dirtyRef = useContext(DraftContext);
+  const draft = useContext(DraftContext);
   const trigger = useRef<HTMLButtonElement>(null);
-  const [target, setTarget] = useState<{ navigate: () => void; label: string } | null>(null);
+  const [target, setTarget] = useState<{ navigate: () => void; label?: string } | null>(null);
+  const leaving = target !== null && target.label === undefined;
+
+  function guard(navigate: () => void, label?: string) {
+    if (draft?.dirty.current) setTarget({ navigate, label });
+    else navigate();
+  }
 
   return (
     <>
       <div className="min-w-0">
         <FactorySelector
           factories={factories}
-          onSwitch={(navigate, label) => {
-            if (dirtyRef?.current) setTarget({ navigate, label });
-            else navigate();
-          }}
+          manageDisabled={draft?.busy}
+          onManage={guard}
+          onSwitch={guard}
           resetParams={["q", "new"]}
           selectedValue={selectedValue}
           triggerRef={trigger}
@@ -70,17 +87,21 @@ export function AgentDirectoryFactorySelector({
         }}
       >
         <AlertDialogContent
-          description={`Switching to ${target?.label ?? "another factory"} will discard your unsaved agent draft.`}
+          description={
+            leaving
+              ? "Leaving this page will discard your unsaved agent draft."
+              : `Switching to ${target?.label ?? "another factory"} will discard your unsaved agent draft.`
+          }
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             trigger.current?.focus();
           }}
-          title="Switch factories without saving?"
+          title={leaving ? "Leave without saving?" : "Switch factories without saving?"}
         >
           <AlertDialogFooter className="flex-wrap">
             <AlertDialogCancel className="ui-button">Cancel</AlertDialogCancel>
             <AlertDialogAction className="ui-button-danger" onClick={() => target?.navigate()}>
-              Discard and switch
+              {leaving ? "Discard and leave" : "Discard and switch"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
