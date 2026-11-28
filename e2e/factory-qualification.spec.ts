@@ -16,7 +16,11 @@ import { getSandboxProviderContract } from "@/lib/sandbox/provider-contract";
 import type { Database } from "@/lib/supabase/database.types";
 
 import { signInViaMagicLink } from "./helpers/auth";
-import { openDropdownListbox } from "./helpers/select";
+import {
+  openDropdownListbox,
+  openWorkspaceFactoryPicker,
+  workspaceFactoryChoices,
+} from "./helpers/select";
 
 type Admin = SupabaseClient<Database>;
 const provider = "e2b";
@@ -925,11 +929,8 @@ test("qualifies definition edit, test, publish, run admission and rollback", asy
     ]);
     const siblingAgents = `/w/${workspace.slug}/agents?factory=${sibling.id}`;
     await page.goto(`/w/${workspace.slug}/agents?factory=${factory.id}`);
-    const factoryPicker = page.getByRole("combobox", { name: "Factory", exact: true });
-    await factoryPicker.click();
-    const siblingOption = page
-      .getByRole("listbox", { name: "Factory", exact: true })
-      .getByRole("option", { name: sibling.name, exact: true });
+    const popup = await openWorkspaceFactoryPicker(page);
+    const siblingOption = workspaceFactoryChoices(popup, sibling.name);
     await expect(siblingOption).toHaveCount(1);
     await siblingOption.click();
     await expect(page).toHaveURL(`${app}${siblingAgents}`);

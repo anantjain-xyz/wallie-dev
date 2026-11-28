@@ -1,15 +1,11 @@
 import { WorkspaceScopeHandoff } from "@/components/app-shell/workspace-scope-context";
 import { loadWorkspaceRouteScope } from "@/components/app-shell/workspace-scope.server";
+import { FactorySelector } from "@/features/factories/factory-selector";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { parseBoardStatus } from "@/features/pipeline/board-browse-history";
 import { loadPipelineDashboardData } from "@/features/pipeline/data";
 import { PipelinePageClient } from "@/features/pipeline/pipeline-page-client";
-import { SessionsFactoryControls } from "@/features/sessions/components/sessions-factory-controls";
 import { SessionsViewNavigation } from "@/features/sessions/components/sessions-view-navigation";
-import {
-  isWorkspaceOperator,
-  loadAuthenticatedWorkspaceContext,
-} from "@/features/workspaces/authenticated-context";
 
 type WorkspaceHomePageProps = {
   params: Promise<{
@@ -22,24 +18,20 @@ const boardFactoryResetParams = ["status"] as const;
 
 export default async function WorkspaceHomePage({ params, searchParams }: WorkspaceHomePageProps) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
-  const [snapshot, { currentMember, user }] = await Promise.all([
-    loadWorkspaceRouteScope({
-      route: "board",
-      workspaceSlug,
-      search,
-      resetParams: boardFactoryResetParams,
-    }),
-    loadAuthenticatedWorkspaceContext(workspaceSlug),
-  ]);
+  const snapshot = await loadWorkspaceRouteScope({
+    route: "board",
+    workspaceSlug,
+    search,
+    resetParams: boardFactoryResetParams,
+  });
   const { factories, scope: selection } = snapshot;
   const handoff = <WorkspaceScopeHandoff snapshot={snapshot} />;
   const factorySelector = (
-    <SessionsFactoryControls
-      canManageFactories={isWorkspaceOperator(currentMember)}
+    <FactorySelector
+      allowAll
       factories={factories}
       resetParams={boardFactoryResetParams}
       selectedValue={selection.kind === "factory" ? selection.factory.id : selection.kind}
-      workspaceSlug={workspaceSlug}
     />
   );
   if (selection.kind === "unavailable")
@@ -79,7 +71,7 @@ export default async function WorkspaceHomePage({ params, searchParams }: Worksp
         }}
         initialNow={initialNow}
         initialStatus={parseBoardStatus(search.status)}
-        viewerId={user.id}
+        viewerId={snapshot.viewerId}
       />
     </>
   );

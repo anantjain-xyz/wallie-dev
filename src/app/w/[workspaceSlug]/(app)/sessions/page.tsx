@@ -5,14 +5,10 @@ import { WorkspaceScopeHandoff } from "@/components/app-shell/workspace-scope-co
 import { loadWorkspaceRouteScope } from "@/components/app-shell/workspace-scope.server";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { FACTORY_QUERY_PARAM } from "@/features/factories/factory-selection";
-import { SessionsFactoryControls } from "@/features/sessions/components/sessions-factory-controls";
+import { FactorySelector } from "@/features/factories/factory-selector";
 import { SessionsViewTitle } from "@/features/sessions/components/sessions-view-navigation";
 import { loadSessionListPageData } from "@/features/sessions/list/data";
 import { SessionsPage } from "@/features/sessions/list/sessions-page";
-import {
-  isWorkspaceOperator,
-  loadAuthenticatedWorkspaceContext,
-} from "@/features/workspaces/authenticated-context";
 import { workspaceSessionsPath } from "@/lib/routes";
 import {
   readSessionSearchContinuation,
@@ -29,27 +25,16 @@ type SessionsPageProps = {
 
 export default async function SessionsRoutePage({ params, searchParams }: SessionsPageProps) {
   const [{ workspaceSlug }, search] = await Promise.all([params, searchParams]);
-  const [snapshot, { currentMember }] = await Promise.all([
-    loadWorkspaceRouteScope({ route: "sessions", workspaceSlug, search }),
-    loadAuthenticatedWorkspaceContext(workspaceSlug),
-  ]);
+  const snapshot = await loadWorkspaceRouteScope({ route: "sessions", workspaceSlug, search });
   const requested = search[FACTORY_QUERY_PARAM];
   const { factories, scope: selection } = snapshot;
   const handoff = <WorkspaceScopeHandoff snapshot={snapshot} />;
-  const canManageFactories = isWorkspaceOperator(currentMember);
   const factorySelector =
-    factories.length > 0 || canManageFactories ? (
-      <SessionsFactoryControls
-        canManageFactories={canManageFactories}
+    factories.length > 0 ? (
+      <FactorySelector
+        allowAll
         factories={factories}
-        selectedValue={
-          selection.kind === "factory"
-            ? selection.factory.id
-            : factories.length === 0
-              ? "unavailable"
-              : selection.kind
-        }
-        workspaceSlug={workspaceSlug}
+        selectedValue={selection.kind === "factory" ? selection.factory.id : selection.kind}
       />
     ) : null;
   if (selection.kind === "unavailable" || factories.length === 0)

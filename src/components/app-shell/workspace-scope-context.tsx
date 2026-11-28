@@ -25,13 +25,14 @@ export type WorkspaceScopeSnapshot = {
   scope: WorkspaceScope;
   factories: readonly FactorySelectionOption[];
   picker: "header" | "guarded" | "leaf" | "locked";
+  manageFactoriesHref?: string;
   resetParams?: readonly string[];
 };
 
 export const WorkspaceScopeContext = createContext<{
   publish: (snapshot: WorkspaceScopeSnapshot) => () => void;
   ownsPicker: boolean;
-  guardedPicker: { target: HTMLElement | null } | null;
+  guardedPicker: { target: HTMLElement | null; manageFactoriesHref?: string } | null;
 } | null>(null);
 
 export function useWorkspaceScopeSnapshot(

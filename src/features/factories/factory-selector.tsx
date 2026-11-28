@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useContext, useTransition, type Ref } from "react";
+import { useContext, useTransition, type RefObject } from "react";
 import { createPortal } from "react-dom";
 
 import { workspaceFactorySwitchHref } from "@/components/app-shell/workspace-location";
@@ -14,9 +14,10 @@ import {
   factorySwitchHref,
   type FactorySelectionOption,
 } from "@/features/factories/factory-selection";
-
-export const WORKSPACE_FACTORY_TRIGGER_CLASS =
-  "min-h-11 w-auto min-w-0 max-w-36 gap-1.5 border-transparent bg-transparent px-2 text-[13px] sm:min-h-9 sm:max-w-48";
+import {
+  HeaderFactoryMenu,
+  WORKSPACE_FACTORY_TRIGGER_CLASS,
+} from "@/features/factories/header-factory-menu";
 
 export function factoryOptionLabel(factory: FactorySelectionOption) {
   return `${factory.name}${factory.status === "archived" ? " (archived)" : ""}`;
@@ -26,6 +27,9 @@ export function FactorySelector({
   allowAll = false,
   disabled,
   factories,
+  manageDisabled,
+  manageFactoriesHref,
+  onManage,
   onSwitch,
   presentation,
   resetParams,
@@ -35,11 +39,14 @@ export function FactorySelector({
   allowAll?: boolean;
   disabled?: boolean;
   factories: readonly FactorySelectionOption[];
+  manageDisabled?: boolean;
+  manageFactoriesHref?: string;
+  onManage?: (navigate: () => void) => void;
   onSwitch?: (navigate: () => void, factoryLabel: string) => void;
   presentation?: "header";
   resetParams?: readonly string[];
   selectedValue: string;
-  triggerRef?: Ref<HTMLButtonElement>;
+  triggerRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -65,32 +72,55 @@ export function FactorySelector({
       : effectiveValue === "unavailable"
         ? "Factory unavailable"
         : null;
+  const label = selectedFactory
+    ? factoryOptionLabel(selectedFactory)
+    : (placeholder ?? "All factories");
+  const manageHref =
+    presentation === "header"
+      ? manageFactoriesHref
+      : onManage
+        ? guarded?.manageFactoriesHref
+        : undefined;
 
-  const selector = (
-    <Select
+  function selectValue(value: string) {
+    if (value === effectiveValue || value === "unavailable") return;
+    const href = inHeader
+      ? workspaceFactorySwitchHref(
+          pathname,
+          search.toString(),
+          value,
+          resetParams,
+          window.location.hash,
+        )
+      : factorySwitchHref(pathname, search.toString(), value, resetParams);
+    const navigate = () => {
+      if (presentation === "header") startNavigation(href);
+      startTransition(() => router.push(href, { scroll: false }));
+    };
+    if (onSwitch) {
+      const factory = factories.find((option) => option.id === value);
+      onSwitch(navigate, factory ? factoryOptionLabel(factory) : "All factories");
+    } else navigate();
+  }
+
+  const selector = manageHref ? (
+    <HeaderFactoryMenu
+      choices={[
+        ...(allowAll ? [{ value: "all", label: "All factories" }] : []),
+        ...factories.map((factory) => ({ value: factory.id, label: factoryOptionLabel(factory) })),
+      ]}
       disabled={disabled}
-      onValueChange={(value) => {
-        if (value === effectiveValue || value === "unavailable") return;
-        const href = inHeader
-          ? workspaceFactorySwitchHref(
-              pathname,
-              search.toString(),
-              value,
-              resetParams,
-              window.location.hash,
-            )
-          : factorySwitchHref(pathname, search.toString(), value, resetParams);
-        const navigate = () => {
-          if (presentation === "header") startNavigation(href);
-          startTransition(() => router.push(href, { scroll: false }));
-        };
-        if (onSwitch) {
-          const factory = factories.find((option) => option.id === value);
-          onSwitch(navigate, factory ? factoryOptionLabel(factory) : "All factories");
-        } else navigate();
-      }}
+      label={label}
+      manageDisabled={manageDisabled}
+      manageHref={manageHref}
+      onManage={onManage}
+      onValueChange={selectValue}
+      pending={pending}
+      triggerRef={triggerRef}
       value={effectiveValue}
-    >
+    />
+  ) : (
+    <Select disabled={disabled} onValueChange={selectValue} value={effectiveValue}>
       {inHeader ? (
         <SelectTrigger
           accessibleLabel="Factory"
@@ -98,9 +128,7 @@ export function FactorySelector({
           className={WORKSPACE_FACTORY_TRIGGER_CLASS}
           id="workspace-factory-trigger"
           ref={triggerRef}
-          title={
-            selectedFactory ? factoryOptionLabel(selectedFactory) : (placeholder ?? "All factories")
-          }
+          title={label}
         />
       ) : (
         <FilterSelectTrigger

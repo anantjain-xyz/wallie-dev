@@ -14,14 +14,17 @@ import {
 import { BackLink } from "@/components/ui/back-link";
 
 const DraftGuard = createContext<{
+  busy: boolean;
   dirty: React.RefObject<boolean>;
   guard: (action: () => void, trigger?: HTMLElement) => void;
+  setBusy: (busy: boolean) => void;
 } | null>(null);
 
 export function ScorerDraftGuard({ children }: { children: ReactNode }) {
   const dirty = useRef(false);
   const trigger = useRef<HTMLElement | null>(null);
   const [pending, setPending] = useState<(() => void) | null>(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     function beforeUnload(event: BeforeUnloadEvent) {
@@ -43,7 +46,7 @@ export function ScorerDraftGuard({ children }: { children: ReactNode }) {
   }
 
   return (
-    <DraftGuard.Provider value={{ dirty, guard }}>
+    <DraftGuard.Provider value={{ busy, dirty, guard, setBusy }}>
       {children}
       <AlertDialog open={pending !== null} onOpenChange={(open) => !open && setPending(null)}>
         <AlertDialogContent

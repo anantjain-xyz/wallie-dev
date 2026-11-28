@@ -57,6 +57,7 @@ export function shouldTrackRouteClick(
     event.ctrlKey ||
     event.shiftKey ||
     event.altKey ||
+    anchor.hasAttribute("data-guarded-factory-link") ||
     anchor.download ||
     (anchor.target && anchor.target !== "_self")
   ) {

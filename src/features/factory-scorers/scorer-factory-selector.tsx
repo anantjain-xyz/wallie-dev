@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useContext, useId, useTransition } from "react";
+import { useContext, useRef, useTransition } from "react";
 import { createPortal } from "react-dom";
 
 import { workspaceFactorySwitchHref } from "@/components/app-shell/workspace-location";
@@ -12,7 +12,10 @@ import {
   factorySwitchHref,
   type FactorySelectionOption,
 } from "@/features/factories/factory-selection";
-import { WORKSPACE_FACTORY_TRIGGER_CLASS } from "@/features/factories/factory-selector";
+import {
+  HeaderFactoryMenu,
+  WORKSPACE_FACTORY_TRIGGER_CLASS,
+} from "@/features/factories/header-factory-menu";
 
 import { useScorerDraftGuard } from "./scorer-draft-guard";
 import { scorerFactoryLabel } from "./scorer-factory-label";
@@ -27,29 +30,47 @@ export function ScorerFactorySelector({
   const pathname = usePathname();
   const router = useRouter();
   const search = useSearchParams();
-  const triggerId = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
   const [pending, startTransition] = useTransition();
   const draft = useScorerDraftGuard();
   const guarded = useContext(WorkspaceScopeContext)?.guardedPicker;
   if (guarded && !guarded.target) return null;
 
-  const selector = (
-    <Select
+  function guardFromPicker(navigate: () => void) {
+    if (draft) draft.guard(navigate, trigger.current ?? undefined);
+    else navigate();
+  }
+
+  function selectValue(value: string) {
+    if (value === selectedValue || value === "unavailable") return;
+    const switchHref = guarded ? workspaceFactorySwitchHref : factorySwitchHref;
+    const href = switchHref(pathname, search.toString(), value, ["revision", "preset", "q"]);
+    guardFromPicker(() => startTransition(() => router.push(href, { scroll: false })));
+  }
+
+  const choices = factories.map((factory) => ({
+    value: factory.id,
+    label: `${scorerFactoryLabel(factory, factories)}${factory.isDefault ? " · Default" : ""}${factory.status === "archived" ? " · Archived" : ""}`,
+  }));
+  const selector = guarded?.manageFactoriesHref ? (
+    <HeaderFactoryMenu
+      choices={choices}
+      label={choices.find(({ value }) => value === selectedValue)?.label ?? "Factory unavailable"}
+      manageDisabled={draft?.busy}
+      manageHref={guarded.manageFactoriesHref}
+      onManage={guardFromPicker}
+      onValueChange={selectValue}
+      pending={pending}
+      triggerRef={trigger}
       value={selectedValue}
-      onValueChange={(value) => {
-        if (value === selectedValue || value === "unavailable") return;
-        const switchHref = guarded ? workspaceFactorySwitchHref : factorySwitchHref;
-        const href = switchHref(pathname, search.toString(), value, ["revision", "preset", "q"]);
-        const navigate = () => startTransition(() => router.push(href, { scroll: false }));
-        if (draft) draft.guard(navigate, document.getElementById(triggerId) ?? undefined);
-        else navigate();
-      }}
-    >
+    />
+  ) : (
+    <Select value={selectedValue} onValueChange={selectValue}>
       <FilterSelectTrigger
         accessibleLabel="Factory"
         aria-busy={pending}
         className={guarded ? WORKSPACE_FACTORY_TRIGGER_CLASS : "max-w-full sm:max-w-64"}
-        id={triggerId}
+        ref={trigger}
       />
       <SelectContent
         align={guarded ? "start" : "end"}
@@ -60,11 +81,9 @@ export function ScorerFactorySelector({
             Factory unavailable
           </SelectItem>
         ) : null}
-        {factories.map((factory) => (
-          <SelectItem key={factory.id} value={factory.id} wrap>
-            {scorerFactoryLabel(factory, factories)}
-            {factory.isDefault ? " · Default" : ""}
-            {factory.status === "archived" ? " · Archived" : ""}
+        {choices.map(({ label, value }) => (
+          <SelectItem key={value} value={value} wrap>
+            {label}
           </SelectItem>
         ))}
       </SelectContent>

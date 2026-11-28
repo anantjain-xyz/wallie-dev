@@ -48,6 +48,7 @@ vi.mock("next/navigation", () => ({
 
 const account = "person-a";
 const workspace = { id: "workspace-a", slug: "tandem", name: "Tandem tools" };
+const manageFactoriesHref = "/w/tandem/settings?category=workspace#factories";
 const platform = {
   id: "platform",
   name: "Platform",
@@ -183,16 +184,49 @@ describe("scoped application shell", () => {
   });
 
   it("ignores receipts from a previous URL or another signed-in account", async () => {
-    const previous = receipt();
+    const previous = { ...receipt(), manageFactoriesHref };
     const view = render(shell({ snapshot: previous }));
-    await header().findByRole("combobox", { name: "Factory" });
+    await header().findByRole("button", { name: "Factory" });
     router.query = new URLSearchParams("factory=platform");
     view.rerender(shell({ snapshot: previous }));
-    expect(header().queryByRole("combobox", { name: "Factory" })).toBeNull();
+    expect(header().queryByRole("button", { name: "Factory" })).toBeNull();
     expect(header().getByRole("button", { name: "New session" })).toBeDisabled();
-    view.rerender(shell({ snapshot: receipt(), viewerId: "person-b" }));
-    expect(header().queryByRole("combobox", { name: "Factory" })).toBeNull();
+    view.rerender(shell({ snapshot: { ...receipt(), manageFactoriesHref }, viewerId: "person-b" }));
+    expect(header().queryByRole("button", { name: "Factory" })).toBeNull();
     expect(header().getByRole("button", { name: "New session" })).toBeDisabled();
+    view.rerender(shell({ snapshot: { ...receipt(), manageFactoriesHref, workspaceId: "other" } }));
+    expect(header().queryByRole("button", { name: "Factory" })).toBeNull();
+  });
+
+  it("opens a sole factory for a workspace operator and separates the directory link from choices", async () => {
+    render(shell({ options: [mobile], snapshot: { ...receipt([mobile]), manageFactoriesHref } }));
+    const trigger = await header().findByRole("button", { name: "Factory" });
+    expect(trigger).toHaveAccessibleDescription("Mobile app");
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+    expect(screen.queryByText("Manage factories")).toBeNull();
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    const menu = within(await screen.findByRole("menu", { name: "Factory" }));
+    const current = menu.getByRole("menuitemradio", { checked: true, name: "Mobile app" });
+    const action = menu.getByRole("menuitem", { name: "Manage factories" });
+    expect(action.tagName).toBe("A");
+    expect(action).toHaveAttribute("href", manageFactoriesHref);
+    expect(action.previousElementSibling).toBe(menu.getByRole("separator"));
+    expect(current).toHaveFocus();
+    fireEvent.click(current);
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it.each(["leaf", "locked"] as const)("does not add management to a %s scope", (picker) => {
+    render(shell({ snapshot: { ...receipt(), manageFactoriesHref, picker } }));
+    expect(header().getByText("Mobile app")).toBeInTheDocument();
+    expect(header().queryByRole("button", { name: "Factory" })).toBeNull();
+    expect(screen.queryByText("Manage factories")).toBeNull();
+  });
+
+  it("does not open an empty scope just for management", () => {
+    render(shell({ options: [], snapshot: { ...receipt([]), manageFactoriesHref } }));
+    expect(header().getByText("Factory unavailable")).toBeInTheDocument();
+    expect(header().queryByRole("button", { name: "Factory" })).toBeNull();
   });
 
   it("shows the actual review factory without retargeting the action, even with an All inbox return", async () => {

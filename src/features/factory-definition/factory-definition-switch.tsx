@@ -28,7 +28,13 @@ export function FactoryDefinitionSwitch({
   selection: FactoryDefinitionSelection;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
-  const [target, setTarget] = useState<{ navigate: () => void; label: string } | null>(null);
+  const [target, setTarget] = useState<{ navigate: () => void; label?: string } | null>(null);
+  const leaving = target !== null && target.label === undefined;
+
+  function guard(navigate: () => void, label?: string) {
+    if (dirty) setTarget({ navigate, label });
+    else navigate();
+  }
 
   return (
     <>
@@ -37,10 +43,8 @@ export function FactoryDefinitionSwitch({
           {...selection}
           disabled={disabled}
           triggerRef={trigger}
-          onSwitch={(navigate, label) => {
-            if (dirty) setTarget({ navigate, label });
-            else navigate();
-          }}
+          onManage={guard}
+          onSwitch={guard}
         />
       </div>
       <AlertDialog
@@ -51,15 +55,17 @@ export function FactoryDefinitionSwitch({
       >
         <AlertDialogContent
           description={
-            target
-              ? `Switching to ${target.label} will discard your unsaved edits here. Saved drafts aren’t affected.`
-              : "Switching factories will discard your unsaved edits here."
+            leaving
+              ? "Leaving this page will discard your unsaved edits. Saved drafts aren’t affected."
+              : target
+                ? `Switching to ${target.label} will discard your unsaved edits here. Saved drafts aren’t affected.`
+                : "Switching factories will discard your unsaved edits here."
           }
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             trigger.current?.focus();
           }}
-          title="Switch factories without saving?"
+          title={leaving ? "Leave without saving?" : "Switch factories without saving?"}
         >
           <AlertDialogFooter className="flex-wrap">
             <AlertDialogCancel className="ui-button">Stay</AlertDialogCancel>
@@ -71,7 +77,7 @@ export function FactoryDefinitionSwitch({
                 target.navigate();
               }}
             >
-              Discard and switch
+              {leaving ? "Discard and leave" : "Discard and switch"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

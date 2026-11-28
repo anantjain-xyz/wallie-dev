@@ -5,6 +5,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/supabase/database.types";
 import { signInViaMagicLink } from "./helpers/auth";
+import { selectWorkspaceFactory, workspaceFactoryPicker } from "./helpers/select";
 
 type Admin = SupabaseClient<Database>;
 
@@ -242,7 +243,7 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
     const main = page.getByRole("main");
     const rail = page.getByRole("navigation", { name: "Workspace navigation" });
     const inbox = rail.getByRole("link", { name: "Inbox", exact: true });
-    const factory = page.getByRole("combobox", { name: "Factory", exact: true });
+    const factory = workspaceFactoryPicker(page);
     const defaultLink = main.getByRole("link", { name: defaultTitle, exact: true });
     const delegatedLink = main.getByRole("link", { name: delegatedTitle, exact: true });
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -342,11 +343,7 @@ test("Inbox opens exact reviews and reconciles supersession, approval and access
     await expect(itemTypes.getByRole("link", { name: "Reviews 1" })).toBeVisible();
     await expect(defaultLink).toHaveCount(0);
 
-    await factory.click();
-    await page
-      .getByRole("listbox", { name: "Factory", exact: true })
-      .getByRole("option", { name: "Customer Tools", exact: true })
-      .click();
+    await selectWorkspaceFactory(page, { label: "Customer Tools" });
     await expect(factory).toHaveText("Customer Tools");
     await expect(factory).toHaveAttribute("data-value", delegated.id);
     await expect(main.getByText(delegatedTitle, { exact: true })).toBeVisible();

@@ -14,7 +14,11 @@ import {
 import type { WorkspaceScopeSnapshot } from "@/components/app-shell/workspace-scope-context";
 import { loadWorkspaceFactoryOptions } from "@/features/factories/factory-options-data";
 import { FACTORY_QUERY_PARAM } from "@/features/factories/factory-selection";
-import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
+import {
+  isWorkspaceOperator,
+  loadAuthenticatedWorkspaceContext,
+} from "@/features/workspaces/authenticated-context";
+import { workspaceFactoriesPath } from "@/lib/routes";
 
 export async function loadWorkspaceRouteScope({
   picker = "header",
@@ -30,7 +34,7 @@ export async function loadWorkspaceRouteScope({
   workspaceSlug: string;
 }): Promise<WorkspaceScopeSnapshot> {
   const location = workspaceLocationForRoute(route, workspaceSlug);
-  const [{ user, workspace }, factories] = await Promise.all([
+  const [{ currentMember, user, workspace }, factories] = await Promise.all([
     loadAuthenticatedWorkspaceContext(workspaceSlug),
     loadWorkspaceFactoryOptions(workspaceSlug),
   ]);
@@ -42,6 +46,9 @@ export async function loadWorkspaceRouteScope({
   return {
     factories,
     locationKey: workspaceScopeLocationKey(location.indexPath, value),
+    ...(picker !== "leaf" && isWorkspaceOperator(currentMember)
+      ? { manageFactoriesHref: workspaceFactoriesPath(workspace.slug) }
+      : {}),
     picker: scope.kind === "pick" || scope.kind === "unavailable" ? "header" : picker,
     resetParams,
     scope,
