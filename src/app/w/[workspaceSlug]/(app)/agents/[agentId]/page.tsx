@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 
+import { BackLink } from "@/components/ui/back-link";
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
 import { AgentBindings } from "@/features/factory-agents/agent-bindings";
 import { AgentFactoryRecovery } from "@/features/factory-agents/agent-factory-recovery";
@@ -114,12 +115,12 @@ export default async function AgentDetailPage({
         title={agent.name}
         description={`${factory.name} · ${agent.slug}`}
         eyebrow={
-          <Link
+          <BackLink
             className="hover:text-foreground"
             href={workspaceAgentsPath(workspaceSlug, detailQuery)}
           >
-            ← Agents
-          </Link>
+            Agents
+          </BackLink>
         }
         eyebrowAsPlain
       />

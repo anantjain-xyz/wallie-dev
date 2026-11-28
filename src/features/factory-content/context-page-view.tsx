@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 
 import { TimeDisplay } from "@/components/shared/time-display";
+import { BackLink } from "@/components/ui/back-link";
 import {
   MetadataItem,
   MetadataList,
@@ -125,9 +126,9 @@ export function ContextPageView({
             <p className="type-secondary text-muted">
               The requested context source is unavailable.
             </p>
-            <Link className="ui-button" href={rootPath}>
+            <BackLink className="ui-button" href={rootPath}>
               Back to context
-            </Link>
+            </BackLink>
           </section>
         ) : source ? (
           <>
@@ -135,9 +136,9 @@ export function ContextPageView({
               className="[overflow-wrap:anywhere]"
               title={source.file_path}
               actions={
-                <Link className="ui-button" href={rootPath}>
+                <BackLink className="ui-button" href={rootPath}>
                   All sources
-                </Link>
+                </BackLink>
               }
             >
               <div className="ui-sheet min-w-0 space-y-4 p-4 sm:p-5">

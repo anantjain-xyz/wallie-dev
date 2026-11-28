@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 
+import { BackLink } from "@/components/ui/back-link";
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { ImprovementAdoption } from "@/features/factory-proposals/improvement-adoption";
@@ -62,12 +63,12 @@ export default async function ImprovementPage({
     reviewState: reviewState.data,
   };
   const back = (
-    <Link
+    <BackLink
       className="underline-offset-4 hover:underline"
       href={workspaceImprovementsPath(workspaceSlug, listQuery)}
     >
       Back to improvements
-    </Link>
+    </BackLink>
   );
   const resourceScope = (
     <WorkspaceResourceScope

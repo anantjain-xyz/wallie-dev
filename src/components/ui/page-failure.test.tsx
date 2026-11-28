@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import RootErrorPage from "@/app/error";
 import WorkspaceErrorPage from "@/app/w/[workspaceSlug]/(app)/error";
 import { PageFailure } from "./page-failure";
 const mocked = vi.hoisted(() => ({ refresh: vi.fn(), pathname: "/w/acme/sessions", returnTo: "" }));
@@ -25,9 +26,16 @@ it("retries errors and keeps the workspace return destination", () => {
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(reset).toHaveBeenCalledTimes(1);
   expect(mocked.refresh).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole("link", { name: "Back to sessions" }).getAttribute("href")).toBe(
-    "/w/acme/sessions",
-  );
+  const back = screen.getByRole("link", { name: "Back to sessions" });
+  expect(back.getAttribute("href")).toBe("/w/acme/sessions");
+  expect(back.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+});
+
+it("keeps the public support action a plain link, not a back link", () => {
+  render(<RootErrorPage reset={vi.fn()} />);
+  const help = screen.getByRole("link", { name: "Get help" });
+  expect(help.getAttribute("href")).toBe("/recovery");
+  expect(help.querySelector("svg")).toBeNull();
 });
 
 it("returns unavailable detail to its task and keeps supported browse filters", () => {

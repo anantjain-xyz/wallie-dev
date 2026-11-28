@@ -2,11 +2,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { ArchiveIcon } from "@/components/shared/icons/archive-icon";
+import { ArrowLeftIcon } from "@/components/shared/icons/arrow-left-icon";
 import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
 import { GitHubIcon } from "@/components/shared/icons/github-icon";
 import { XIcon } from "@/components/shared/icons/x-icon";
 
 const decorativeIcons = {
+  "navigation arrow": <ArrowLeftIcon />,
   "multi-path stroke icon": <ArchiveIcon />,
   "fill icon": <GitHubIcon />,
   "single-letter icon": <XIcon />,

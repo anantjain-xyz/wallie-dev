@@ -260,10 +260,12 @@ it("shows readers the published and viewed revisions without implying readiness 
   expect(screen.queryByRole("link", { name: "Configure bindings" })).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: "Review readiness" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Save prompt revision" })).not.toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "← Agents" })).toHaveAttribute(
+  const back = screen.getByRole("link", { name: "Agents" });
+  expect(back).toHaveAttribute(
     "href",
     `/w/release/agents?factory=${factory.id}&q=Release&after=${after}`,
   );
+  expect(back.querySelector('svg[aria-hidden="true"]')).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Revision 1" }).getAttribute("href")).toContain(
     `revision=${publishedPrompt.id}#prompt-revision`,
   );

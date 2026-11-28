@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useTransition } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { BackLink } from "@/components/ui/back-link";
 
 export function PageFailure({
   actions,
@@ -12,6 +13,7 @@ export function PageFailure({
   notFound = false,
   reset,
   returnHref = "/",
+  returnIsBack = true,
   returnLabel = "Back to Wallie",
 }: {
   actions?: ReactNode;
@@ -19,12 +21,14 @@ export function PageFailure({
   notFound?: boolean;
   reset?: () => void;
   returnHref?: string;
+  returnIsBack?: boolean;
   returnLabel?: string;
 }) {
   const [pending, startRetry] = useTransition();
   const router = useRouter();
   const heading = useRef<HTMLHeadingElement>(null);
   const canRetry = Boolean(reset);
+  const ReturnLink = returnIsBack ? BackLink : Link;
   useEffect(() => {
     if (canRetry) heading.current?.focus();
   }, [canRetry]);
@@ -57,9 +61,9 @@ export function PageFailure({
             <ActionButtonLabel idle="Try again" pending={pending} pendingLabel="Trying again…" />
           </button>
         ) : null}
-        <Link className="ui-button" href={returnHref}>
+        <ReturnLink className="ui-button" href={returnHref}>
           {returnLabel}
-        </Link>
+        </ReturnLink>
         {actions}
       </div>
       <span role="status" className="sr-only">

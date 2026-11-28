@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 
 import { ExecutionProfileFields } from "@/components/shared/execution-profile-fields";
 import { TimeDisplay } from "@/components/shared/time-display";
+import { BackLink } from "@/components/ui/back-link";
 import {
   MetadataItem,
   MetadataList,
@@ -140,12 +141,12 @@ export function RunInspector({
           </>
         }
         eyebrow={
-          <Link
+          <BackLink
             className="hover:text-foreground"
             href={returnTo?.href ?? workspaceRunsPath(workspaceSlug)}
           >
-            ← {returnTo?.label ?? "Back to runs"}
-          </Link>
+            {returnTo?.label ?? "Back to runs"}
+          </BackLink>
         }
         eyebrowAsPlain
         title={run.sessionTitle}
