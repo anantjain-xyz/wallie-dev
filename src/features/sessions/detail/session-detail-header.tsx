@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { BackLink } from "@/components/ui/back-link";
 import type { SessionReviewRepository, SessionReviewSession } from "./data";
 import { SessionInspector } from "./session-inspector";
 import { workspaceSessionDetailPath, workspaceSessionsPath } from "@/lib/routes";
@@ -38,15 +39,16 @@ export function SessionDetailHeader({
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
           <nav aria-label="Breadcrumb" className="flex shrink-0 items-center gap-2">
-            <Link
+            <BackLink
               href={browseReturn?.href ?? workspaceSessionsPath(workspaceSlug)}
-              className="inline-flex min-h-11 items-center hover:text-foreground sm:min-h-8"
+              className="min-h-11 hover:text-foreground sm:min-h-8"
             >
-              <span aria-hidden="true">← </span>
               {browseReturn?.label ?? "Sessions"}
-            </Link>
+            </BackLink>
             <span aria-hidden="true">/</span>
-            <span className="font-mono">#{session.number}</span>
+            <span aria-current="page" className="font-mono">
+              #{session.number}
+            </span>
           </nav>
           {factoryName ? (
             <span className="min-w-0 max-w-full [overflow-wrap:anywhere]">

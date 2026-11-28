@@ -10,7 +10,7 @@ const automations = `${settings}/automations`;
 const definition = `${settings}/factory-definition`;
 
 const destinations = [
-  { title: "Runs", path: runs, group: "Activity", oldLink: "← Sessions" },
+  { title: "Runs", path: runs, group: "Activity", oldLink: "Sessions" },
   { title: "Pipeline", path: definition, group: "Factory", oldLink: "Settings" },
   { title: "Automations", path: automations, group: "Factory", oldLink: "Back to Settings" },
 ] as const;
@@ -110,8 +110,9 @@ test("Settings and Sessions launches keep scoped recovery and exact run returns"
   await expect(session).toHaveAttribute("href", /\/sessions\/\d+#wallie-run-[\da-f-]+$/u);
   await row.getByRole("link", { name: /— .*?(?:attempt \d+|created )/u }).press("Enter");
   await expect(page).toHaveURL((url) => url.pathname.startsWith(`${runs}/`));
-  const back = main.getByRole("link", { name: "← Back to filtered runs", exact: true });
+  const back = main.getByRole("link", { name: "Back to filtered runs", exact: true });
   await expect(back).toHaveAttribute("href", filteredRuns);
+  await expect(back.locator('svg[aria-hidden="true"]')).toBeVisible();
   await back.click();
   await expect(page).toHaveURL(filteredRuns);
 });
@@ -121,10 +122,9 @@ test("unavailable selections still offer scoped recovery", async ({ page }) => {
   const main = page.getByRole("main");
 
   await page.goto(`${automations}?factory=unavailable`);
-  await expect(main.getByRole("link", { name: "Back to automations" })).toHaveAttribute(
-    "href",
-    automations,
-  );
+  const backToAutomations = main.getByRole("link", { name: "Back to automations", exact: true });
+  await expect(backToAutomations).toHaveAttribute("href", automations);
+  await expect(backToAutomations.locator('svg[aria-hidden="true"]')).toBeVisible();
   for (const path of [runs, definition]) {
     await page.goto(`${path}?factory=unavailable`);
     await expect(main.getByRole("link", { name: "View accessible sessions" })).toHaveAttribute(

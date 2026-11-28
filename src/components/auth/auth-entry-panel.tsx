@@ -3,6 +3,7 @@ import Link from "next/link";
 import { AuthForm } from "@/components/auth/auth-form";
 import { EmailCodeInputs } from "@/components/auth/email-code-inputs";
 import { WallieMark } from "@/components/shared/wallie-mark";
+import { BackLink } from "@/components/ui/back-link";
 import { loginPath } from "@/lib/routes";
 
 const authErrorMessages = {
@@ -133,12 +134,12 @@ export function AuthEntryPanel({
           </p>
         </>
       )}
-      <Link
+      <BackLink
         href="/"
-        className="ui-touch-target mt-4 flex min-h-11 w-fit items-center rounded-[6px] text-sm text-muted underline decoration-border-strong underline-offset-4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        className="ui-touch-target mt-4 min-h-11 w-fit rounded-[6px] text-sm text-muted underline decoration-border-strong underline-offset-4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
       >
         Back to Wallie
-      </Link>
+      </BackLink>
     </div>
   );
 }

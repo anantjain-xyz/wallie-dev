@@ -369,9 +369,9 @@ describe("RunInspector", () => {
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(run.sessionTitle);
     expect(screen.getByText("Build · Attempt 6")).toBeTruthy();
     expect(screen.getByText(run.id)).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Back to filtered runs/ }).getAttribute("href")).toBe(
-      href,
-    );
+    const back = screen.getByRole("link", { name: "Back to filtered runs" });
+    expect(back.getAttribute("href")).toBe(href);
+    expect(back.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
     expect(screen.getByRole("link", { name: "Open session #42" }).getAttribute("href")).toBe(
       run.sessionRunHref,
     );

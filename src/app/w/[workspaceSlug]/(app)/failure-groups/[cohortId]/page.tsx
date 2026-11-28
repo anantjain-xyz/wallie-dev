@@ -3,6 +3,7 @@ import Form from "next/form";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { BackLink } from "@/components/ui/back-link";
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
 import { FactoryUnavailable } from "@/features/factories/factory-unavailable";
 import { failureValidationPath } from "@/features/factory-failures/failure-evidence-path";
@@ -190,9 +191,9 @@ export default async function FailureGroupPage({
     : {};
   const list = workspaceFailureGroupsPath(workspaceSlug, { ...factoryQuery, ...filters });
   const back = (
-    <Link className="underline-offset-4 hover:underline" href={list}>
+    <BackLink className="underline-offset-4 hover:underline" href={list}>
       Back to failure groups
-    </Link>
+    </BackLink>
   );
   const resourceScope = (
     <WorkspaceResourceScope

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { BackLink } from "@/components/ui/back-link";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import { useOptionalToast } from "@/components/ui/toast";
@@ -748,7 +749,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
   }
 
   const sessionsLink = isCompleted ? (
-    <Link
+    <BackLink
       aria-disabled={navigationDisabled || undefined}
       className={cn(
         "min-h-11 aria-disabled:cursor-wait aria-disabled:opacity-60",
@@ -758,7 +759,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
       onNavigate={(event) => guardLink(event, sessionsDestination)}
     >
       Back to sessions
-    </Link>
+    </BackLink>
   ) : null;
   const verificationActions =
     isVerifyingStep && (data.canManage || isCompleted) ? (

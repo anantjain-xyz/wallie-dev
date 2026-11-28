@@ -6,6 +6,7 @@ import { notFound } from "next/navigation";
 import { z } from "zod";
 
 import { TimeDisplay } from "@/components/shared/time-display";
+import { BackLink } from "@/components/ui/back-link";
 import {
   MetadataItem,
   MetadataList,
@@ -124,12 +125,12 @@ export default async function BenchmarkSuitePage({
         title={selected.name}
         description={`${factory.name} · ${benchmarkPurposeLabel(selected.purpose)}${factory.status === "archived" ? " · Archived" : ""}`}
         eyebrow={
-          <Link
+          <BackLink
             className="hover:text-foreground"
             href={workspaceBenchmarksPath(workspaceSlug, factoryQuery)}
           >
-            ← Benchmarks
-          </Link>
+            Benchmarks
+          </BackLink>
         }
         eyebrowAsPlain
         actionsRightOnDesktop

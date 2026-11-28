@@ -21,6 +21,10 @@ test("invalid invitation preserves sign-in destination and offers a usable retur
     await expect(page.getByRole("button", { name: "Use a different account" })).toHaveCount(0);
     const returnLink = page.getByRole("link", { name: "Back to Wallie" });
     await expect(returnLink).toBeVisible();
+    await expect(returnLink).toHaveAttribute("href", "/");
+    await expect(returnLink.locator('svg[aria-hidden="true"]')).toBeVisible();
+    await page.keyboard.press("Tab");
+    await expect(returnLink).toBeFocused();
     expect((await returnLink.boundingBox())?.height).toBeGreaterThanOrEqual(44);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
       width,

@@ -1,7 +1,7 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { WorkspaceResourceScope } from "@/components/app-shell/workspace-factory-page.server";
+import { BackLink } from "@/components/ui/back-link";
 import { PageContainer, PageHeader, PageSection } from "@/components/ui/page-shell";
 import { Status } from "@/components/ui/status";
 import { failureValidationPath } from "@/features/factory-failures/failure-evidence-path";
@@ -54,12 +54,12 @@ export default async function FailureValidationPage({
     ...(evidenceFilters.success ? evidenceFilters.data : {}),
   };
   const back = (
-    <Link
+    <BackLink
       className="underline-offset-4 hover:underline"
       href={workspaceFailureGroupPath(workspaceSlug, cohort.data, backQuery)}
     >
       Back to failure group
-    </Link>
+    </BackLink>
   );
   const resourceScope = (
     <WorkspaceResourceScope

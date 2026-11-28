@@ -11,6 +11,7 @@ import {
   AlertDialogCancel,
   AlertDialogContent,
 } from "@/components/ui/alert-dialog";
+import { BackLink } from "@/components/ui/back-link";
 
 const DraftGuard = createContext<{
   dirty: React.RefObject<boolean>;
@@ -70,13 +71,15 @@ export function useScorerDraftGuard() {
 }
 
 export function ScorerDraftLink({
+  back = false,
   href,
   ...props
-}: Omit<ComponentProps<typeof Link>, "href" | "onNavigate"> & { href: string }) {
+}: Omit<ComponentProps<typeof Link>, "href" | "onNavigate"> & { back?: boolean; href: string }) {
   const draft = useScorerDraftGuard();
   const router = useRouter();
+  const DraftLink = back ? BackLink : Link;
   return (
-    <Link
+    <DraftLink
       {...props}
       href={href}
       onNavigate={(event) => {

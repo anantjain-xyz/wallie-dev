@@ -3,6 +3,7 @@ import Link from "next/link";
 import { z } from "zod";
 
 import { scopeFactoryIndex } from "@/components/app-shell/workspace-factory-page.server";
+import { BackLink } from "@/components/ui/back-link";
 import {
   MetadataItem,
   MetadataList,
@@ -91,9 +92,9 @@ function Unavailable({ actions, href, text }: { actions?: ReactNode; href: strin
       <PageHeader actions={actions} actionsRightOnDesktop title="Governance" />
       <div className="ui-sheet space-y-3 p-4 sm:p-5">
         <p className="type-secondary text-muted">{text}</p>
-        <Link className="ui-button" href={href}>
+        <BackLink className="ui-button" href={href}>
           Back to governance
-        </Link>
+        </BackLink>
       </div>
     </PageContainer>
   );
@@ -518,9 +519,9 @@ async function GovernancePage({
         actionsRightOnDesktop
         eyebrow={
           source.data ? (
-            <Link className="hover:text-foreground" href={overviewHref}>
-              ← Governance
-            </Link>
+            <BackLink className="hover:text-foreground" href={overviewHref}>
+              Governance
+            </BackLink>
           ) : undefined
         }
         eyebrowAsPlain

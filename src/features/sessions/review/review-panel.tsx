@@ -11,6 +11,7 @@ import {
   useState,
 } from "react";
 
+import { ArrowLeftIcon } from "@/components/shared/icons/arrow-left-icon";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { SelectField } from "@/components/ui/select";
 import { PencilIcon } from "@/components/shared/icons/pencil-icon";
@@ -658,15 +659,13 @@ export function ArtifactReviewPanel({
           {readingThread ? (
             <div className="flex flex-wrap items-center gap-x-2">
               <button
-                className={inlineLinkClass}
+                className={cn(inlineLinkClass, "gap-1.5")}
                 disabled={pending}
                 onClick={showAllThreads}
                 type="button"
               >
-                <span aria-hidden="true" className="mr-1.5">
-                  ←
-                </span>{" "}
-                All threads
+                <ArrowLeftIcon />
+                <span>All threads</span>
               </button>
               <span className="text-xs text-muted">
                 v{artifactVersion}

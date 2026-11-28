@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useEffect, useRef, type ReactNode } from "react";
 
+import { ArrowLeftIcon } from "@/components/shared/icons/arrow-left-icon";
 import { ShimmerText } from "@/components/shared/shimmer-text";
 import { PageContainer, PageHeader, PAGE_HEADER_TITLE_CLASS } from "@/components/ui/page-shell";
 
@@ -46,7 +47,7 @@ export function PendingSessionCreation({
           eyebrowAsPlain
           eyebrow={
             <button
-              className="cursor-pointer transition-colors hover:text-foreground"
+              className="inline-flex items-center gap-1.5 text-start cursor-pointer transition-colors hover:text-foreground"
               onClick={() => {
                 onDismiss();
                 requestAnimationFrame(() => {
@@ -59,7 +60,8 @@ export function PendingSessionCreation({
               }}
               type="button"
             >
-              ← Back to workspace
+              <ArrowLeftIcon />
+              <span>Back to workspace</span>
             </button>
           }
           titleAsChild
