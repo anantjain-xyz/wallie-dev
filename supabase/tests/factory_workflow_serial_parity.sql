@@ -107,9 +107,11 @@ begin
   if p_mode='compiled' then
     select * into strict pin from public.session_factory_admission_inputs where session_id=admitted.session_id;
     select * into strict bundle from compiled_serial_bundle;
-    perform public.start_factory_workflow_execution(pin.session_id,pin.workspace_id,pin.factory_id,pin.definition_revision_id,
-      pin.definition_digest,bundle.workflow_json,bundle.workflow_digest);
-    if not found then raise exception 'The actual compiler projection was not enrolled.'; end if;
+    if (pin.definition_revision_id,pin.definition_digest,pin.pipeline_id,pin.selected_stage_ids) is distinct from
+       (pg_temp.op657_id(41),bundle.definition_digest,pg_temp.op657_id(31),
+        array[pg_temp.op657_id(32),pg_temp.op657_id(33)]) then
+      raise exception 'Native admission did not pin the exact compiled definition and stage order.';
+    end if;
   end if;
 
   run_plan := pg_temp.prepare_serial_attempt(admitted.job_id,repeat('a',40),repeat('b',40),'Plan the same change.');
@@ -128,6 +130,9 @@ begin
   select * into strict session_row from public.sessions where id=admitted.session_id;
   if session_row.phase_status<>'awaiting_review' then raise exception 'Plan was not submitted for review.'; end if;
 
+  if p_mode='compiled' then
+    update public.pipeline_stages set anyone_can_approve=true where id=pg_temp.op657_id(32);
+  end if;
   perform set_config('request.jwt.claim.sub',pg_temp.op657_id(3)::text,true);
   begin
     perform public.approve_session_stage(session_row.id,session_row.workspace_id,session_row.current_stage_id,
@@ -166,6 +171,7 @@ begin
 
   return jsonb_build_object(
     'modeAdmitted',true,
+    'noWorkflowLedger',not exists(select 1 from internal.factory_workflow_executions where root_session_id=admitted.session_id),
     'workerRecovery',recovered,
     'duplicateCompletion',duplicate and 1=(select count(*) from public.session_git_checkpoints where run_id=run_plan),
     'reviewerDenied',denied_reviewer,
@@ -201,7 +207,7 @@ insert into qualification_result values ('compiled', pg_temp.qualify_serial_case
 select is((select trace from qualification_result where mode='legacy'),
   (select trace from qualification_result where mode='compiled'),
   'legacy and compiled modes produce the same durable trace');
-select ok(trace @> '{"modeAdmitted":true,"workerRecovery":true,"duplicateCompletion":true,
+select ok(trace @> '{"modeAdmitted":true,"noWorkflowLedger":true,"workerRecovery":true,"duplicateCompletion":true,
     "reviewerDenied":true,"approvalSource":"Plan the same change.","buildStage":"build",
     "retryOwnsCheckpoint":true,"cancelReturnsExactAttempts":true,"lateAttemptRefused":true,
     "acceptedHeadUnchanged":true,"acceptedPrTargetUnchanged":true,"staleIntentRetained":true,

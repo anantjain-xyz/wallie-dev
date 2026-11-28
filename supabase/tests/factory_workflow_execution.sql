@@ -23,6 +23,7 @@ values (pg_temp.op644_id(1), 'platform_api_key', 'fixture-ciphertext');
 create temp table op644_scope as
 select workspace_id, id as factory_id from public.factories
 where workspace_id = pg_temp.op644_id(11) and is_default;
+select public.create_factory(pg_temp.op644_id(11), pg_temp.op644_id(1), 'Other workflow factory', 'other-workflow-factory');
 insert into public.pipelines(id, workspace_id, factory_id, name, is_default)
 select pg_temp.op644_id(31), workspace_id, factory_id, 'Workflow receipt pipeline', true from op644_scope;
 insert into public.pipeline_stages(id, pipeline_id, workspace_id, position, slug, name)
@@ -35,19 +36,22 @@ select pg_temp.op644_id(34), workspace_id, factory_id, pg_temp.op644_id(33), 644
   'workflow-fixture', 'fixture/workflow-fixture', true, 'https://github.test/fixture/workflow-fixture', 'main'
 from op644_scope;
 
+create temp table op644_policy as
+select * from public.save_execution_policy(pg_temp.op644_id(11), pg_temp.op644_id(1), 0,
+  '{"version":1,"maxRepairAttempts":1,"maxExecutionMs":900000,"maxTotalTokens":null,"maxCostUsd":null}');
 with definition as (
-  select workspace_id, factory_id, jsonb_build_object(
+  select scope.workspace_id, scope.factory_id, jsonb_build_object(
     'schemaVersion', 1, 'kind', 'serial', 'pipelineId', pg_temp.op644_id(31),
     'repositoryId', pg_temp.op644_id(34), 'sandboxProvider', 'e2b',
     'agent', jsonb_build_object('provider', 'codex', 'model', 'gpt-5.5', 'effort', 'high',
       'concurrencyLimit', 1, 'stallTimeoutMs', 900000, 'maxRetries', 3, 'maxTurns', 5),
-    'executionPolicyRevisionId', null, 'deliveryPolicyRevisionId', null,
+    'executionPolicyRevisionId', policy.id, 'deliveryPolicyRevisionId', null,
     'skillIds', '[]'::jsonb, 'toolIds', '[]'::jsonb, 'operatingRulesMd', '', 'operatingRuleStageIds', '[]'::jsonb,
     'stages', jsonb_build_array(jsonb_build_object('id', pg_temp.op644_id(32), 'slug', 'inspect-output',
       'name', 'Inspect output', 'description', '', 'promptTemplateMd', 'Inspect the admitted output.',
       'anyoneCanApprove', false, 'previousStageIds', '[]'::jsonb,
       'approverMemberIds', jsonb_build_array(pg_temp.op644_id(21))))
-  )::text as body from op644_scope
+  )::text as body from op644_scope scope cross join op644_policy policy
 ), revision as (
   insert into public.factory_definition_revisions(id, workspace_id, factory_id, schema_version,
     definition_json, canonical_digest, created_by)
@@ -64,56 +68,39 @@ select * from public.create_session_with_first_job(
   'codex', 'gpt-5.5');
 
 create temp table op644_workflow as
-with pinned as (
-  select admitted.job_id, pin.session_id as root_session_id, pin.workspace_id, pin.factory_id,
-    pin.definition_revision_id, pin.definition_digest, 'stage.' || pin.selected_stage_ids[1] as entry_node_id,
-    'approval.' || pin.selected_stage_ids[1] as next_node_id,
-    revision.definition_json::jsonb#>'{stages,0}' as stage
-  from op644_admitted admitted
-  join public.session_factory_admission_inputs pin using (session_id)
-  join public.factory_definition_revisions revision on revision.id = pin.definition_revision_id
-), compiled as (
-  select pinned.*, 'next.' || entry_node_id as edge_id, jsonb_build_object(
-    'kind', 'serial', 'entryNodeId', entry_node_id,
-    'nodes', jsonb_build_array(
-      jsonb_build_object('id', entry_node_id, 'kind', 'agent',
-        'stage', stage - 'anyoneCanApprove' - 'approverMemberIds'),
-      jsonb_build_object('id', next_node_id, 'kind', 'human-gate', 'stageId', stage->'id',
-        'approval', jsonb_build_object('anyoneCanApprove', stage->'anyoneCanApprove',
-          'approverMemberIds', stage->'approverMemberIds'))),
-    'edges', jsonb_build_array(jsonb_build_object('id', 'next.' || entry_node_id,
-      'kind', 'next', 'from', entry_node_id, 'to', next_node_id)))::text as workflow_json
-  from pinned
-)
-select compiled.*, encode(sha256(convert_to(workflow_json, 'UTF8')), 'hex') as workflow_digest from compiled;
+select admitted.job_id, pin.session_id as root_session_id, pin.workspace_id, pin.factory_id,
+  pin.definition_revision_id, pin.definition_digest, 'policy.check' as entry_node_id,
+  'next.policy' as edge_id, 'policy:' || pin.execution_policy_revision_id as evidence_ref,
+  graph.body as workflow_json, digest.value as workflow_digest, registered.graph_revision_id
+from op644_admitted admitted
+join public.session_factory_admission_inputs pin using (session_id)
+cross join (values ('{"schemaVersion":1,"kind":"graph","entryNodeId":"policy.check",
+  "nodes":[{"id":"policy.check","kind":"deterministic","operation":"policy"},
+    {"id":"policy.recheck","kind":"deterministic","operation":"policy"}],
+  "edges":[{"id":"next.policy","kind":"next","from":"policy.check","to":"policy.recheck"}],"grants":[]}')) graph(body)
+cross join lateral (select encode(sha256(convert_to(graph.body, 'UTF8')), 'hex') as value) digest
+cross join lateral public.register_factory_workflow_graph_revision(pin.workspace_id, pin.factory_id,
+  pin.definition_revision_id, pin.definition_digest, graph.body, digest.value) registered;
 
 create function pg_temp.read_op644_workflow() returns jsonb language sql as $$
   select public.read_factory_workflow_execution(root_session_id, workspace_id, factory_id) from op644_workflow;
 $$;
 select is((select count(*) from op644_workflow), 1::bigint, 'the root has one real pinned definition');
-select throws_ok($$select public.start_factory_workflow_execution(root_session_id, workspace_id, factory_id,
+select throws_ok($$select public.register_factory_workflow_graph_revision(workspace_id, factory_id,
   definition_revision_id, repeat('0', 64), workflow_json, workflow_digest) from op644_workflow$$,
-  'PT409', 'The workflow must match the session definition pin.', 'start rejects a different definition digest');
-select throws_ok($$select public.start_factory_workflow_execution(root_session_id, workspace_id, factory_id,
+  'PT404', 'The graph base definition revision is unavailable.', 'registration rejects a different definition digest');
+select throws_ok($$select public.register_factory_workflow_graph_revision(workspace_id, factory_id,
   definition_revision_id, definition_digest, workflow_json, repeat('0', 64)) from op644_workflow$$,
-  '22023', 'A verified compiled workflow is required.', 'start rejects a different workflow digest');
-
-select throws_ok($$select public.start_factory_workflow_execution(root_session_id, workspace_id, factory_id,
-  definition_revision_id, definition_digest, forged.body, encode(sha256(convert_to(forged.body, 'UTF8')), 'hex'))
-  from op644_workflow cross join lateral (select replace(workflow_json, entry_node_id, 'stage.forged') as body) forged$$,
-  'PT409', 'The workflow must match the session definition pin.', 'a self-consistent substituted stage node is not the pinned projection');
-select throws_ok($$select public.start_factory_workflow_execution(root_session_id, workspace_id, factory_id,
-  definition_revision_id, definition_digest, forged.body, encode(sha256(convert_to(forged.body, 'UTF8')), 'hex'))
+  '22023', 'A verified compiled workflow graph is required.', 'registration rejects a different workflow digest');
+select throws_ok($$select public.register_factory_workflow_graph_revision(workspace_id, factory_id,
+  definition_revision_id, definition_digest, serial.body, encode(sha256(convert_to(serial.body, 'UTF8')), 'hex'))
   from op644_workflow cross join lateral (
-    select jsonb_set(workflow_json::jsonb, '{nodes,1,approval,anyoneCanApprove}', 'true'::jsonb)::text as body) forged$$,
-  'PT409', 'The workflow must match the session definition pin.', 'a recomputed digest cannot widen the pinned approval policy');
-
-select throws_ok($$select public.start_factory_workflow_execution(root_session_id, workspace_id, factory_id,
-  definition_revision_id, definition_digest, graph,
-  encode(sha256(convert_to(graph, 'UTF8')), 'hex'))
-  from op644_workflow
-  cross join (values ('{"schemaVersion":1,"kind":"graph","entryNodeId":"check","nodes":[{"id":"check","kind":"deterministic","operation":"policy"}],"edges":[],"grants":[]}')) candidate(graph)$$,
-  '22023', 'A verified compiled workflow is required.', 'a serial admission cannot substitute a graph plan');
+    select jsonb_set(workflow_json::jsonb, '{kind}', '"serial"')::text as body) serial$$,
+  '22023', 'A verified compiled workflow graph is required.', 'a serial plan cannot substitute for a registered graph');
+select ok((select not replay.created and replay.graph_revision_id = workflow.graph_revision_id
+  from op644_workflow workflow cross join lateral public.register_factory_workflow_graph_revision(
+    workspace_id, factory_id, definition_revision_id, definition_digest, workflow_json, workflow_digest) replay),
+  'registration replays only the exact graph bytes and base definition');
 
 -- Historical sessions could capture a definition receipt and still run live stages.
 insert into public.sessions(id, workspace_id, factory_id, number, title, creator_member_id, pipeline_id,
@@ -128,27 +115,32 @@ select pg_temp.op644_id(51), pin.workspace_id, pin.factory_id, pin.activation_nu
   pin.definition_revision_id, pin.definition_digest, pin.pipeline_id, pin.github_repository_id, pin.selected_stage_ids,
   pin.execution_policy_revision_id, pin.model_provider, pin.model_name, pin.title_sha256, pin.prompt_sha256
 from public.session_factory_admission_inputs pin join op644_admitted admitted using (session_id);
-select throws_ok($$select public.start_factory_workflow_execution(pg_temp.op644_id(51), workspace_id, factory_id,
-  definition_revision_id, definition_digest, workflow_json, workflow_digest) from op644_workflow$$,
-  'PT409', 'The workflow must match the session definition pin.', 'retained provenance alone cannot enroll live-stage execution');
+select throws_ok($$select public.start_factory_workflow_graph_execution(pg_temp.op644_id(51), workspace_id, factory_id,
+  graph_revision_id) from op644_workflow$$,
+  'PT409', 'The graph revision must match an active session definition pin.',
+  'retained provenance alone cannot enroll live-stage execution');
 
 create temp table op644_started as
-select started.* from op644_workflow workflow cross join lateral public.start_factory_workflow_execution(
-  root_session_id, workspace_id, factory_id, definition_revision_id, definition_digest, workflow_json, workflow_digest) started;
+select started.* from op644_workflow workflow cross join lateral public.start_factory_workflow_graph_execution(
+  root_session_id, workspace_id, factory_id, graph_revision_id) started;
 select ok((select created and execution_generation = 1 and entry_occurrence_id is not null
     and ownership_token is not null from op644_started),
   'start admits a single entry occurrence and returns its ownership token');
 select ok((select not replay.created and replay.entry_occurrence_id = started.entry_occurrence_id
     and replay.execution_generation = started.execution_generation and replay.ownership_token is null
-  from op644_workflow workflow cross join op644_started started cross join lateral public.start_factory_workflow_execution(
-    root_session_id, workspace_id, factory_id, definition_revision_id, definition_digest, workflow_json, workflow_digest) replay),
+  from op644_workflow workflow cross join op644_started started cross join lateral public.start_factory_workflow_graph_execution(
+    root_session_id, workspace_id, factory_id, graph_revision_id) replay),
   'an exact start replay returns the same occurrence without its ownership token');
-select throws_ok($$select public.start_factory_workflow_execution(root_session_id, workspace_id, factory_id,
-  definition_revision_id, definition_digest, workflow_json || ' ',
-  encode(sha256(convert_to(workflow_json || ' ', 'UTF8')), 'hex')) from op644_workflow$$,
-  'PT409', 'The root session already has a different workflow.', 'start cannot replace the stored workflow bytes');
+select throws_ok($$select public.start_factory_workflow_graph_execution(root_session_id, workspace_id, factory_id,
+  candidate.graph_revision_id) from op644_workflow workflow
+  cross join lateral public.register_factory_workflow_graph_revision(workspace_id, factory_id,
+    definition_revision_id, definition_digest, workflow_json || ' ',
+    encode(sha256(convert_to(workflow_json || ' ', 'UTF8')), 'hex')) candidate$$,
+  'PT409', 'The root session already has a different workflow or input run.',
+  'a new graph revision cannot replace the stored workflow bytes');
 select ok((select payload#>>'{execution,definition_revision_id}' = workflow.definition_revision_id::text
     and payload#>>'{execution,definition_digest}' = workflow.definition_digest
+    and payload#>>'{execution,graph_revision_id}' = workflow.graph_revision_id::text
     and payload#>>'{execution,workflow_json}' = workflow.workflow_json
     and payload#>>'{execution,workflow_digest}' = workflow.workflow_digest
     and payload#>>'{occurrences,0,node_id}' = workflow.entry_node_id
@@ -161,33 +153,24 @@ select throws_ok($$select public.admit_factory_workflow_next(root_session_id, wo
   1, ownership_token, entry_occurrence_id, edge_id, pg_temp.op644_id(99)) from op644_workflow cross join op644_started$$,
   'PT409', 'The expected successful predecessor result is unavailable.', 'admission requires an actual successful result');
 
-create temp table op644_failed_source as
-select session.session_id as root_session_id, workflow.workspace_id, workflow.factory_id, workflow.edge_id,
-  started.entry_occurrence_id, started.ownership_token, failed.result_id
-from op644_workflow workflow
-cross join lateral public.create_session_with_first_job(workflow.workspace_id, pg_temp.op644_id(21),
-  'Failed workflow receipt fixture', 'Inspect the admitted output.', 'codex', 'gpt-5.5') session
-cross join lateral public.start_factory_workflow_execution(session.session_id, workflow.workspace_id, workflow.factory_id,
-  workflow.definition_revision_id, workflow.definition_digest, workflow.workflow_json, workflow.workflow_digest) started
-cross join lateral public.record_factory_workflow_node_result(session.session_id, workflow.workspace_id, workflow.factory_id,
-  1, started.ownership_token, started.entry_occurrence_id, 'failed', 'validation:failed-artifact') failed;
-select is((select public.read_factory_workflow_execution(root_session_id, workspace_id, factory_id)->'runnableTransitions'
-  from op644_failed_source), '[]'::jsonb, 'a recorded failure does not make its successor runnable');
-select throws_ok($$select public.admit_factory_workflow_next(root_session_id, workspace_id, factory_id,
-  1, ownership_token, entry_occurrence_id, edge_id, result_id) from op644_failed_source$$,
-  'PT409', 'The expected successful predecessor result is unavailable.', 'the exact failed result cannot admit a successor');
+select is((select count(*) from op644_workflow cross join op644_started
+  cross join lateral public.record_factory_workflow_command_result(root_session_id, workspace_id, factory_id,
+    1, ownership_token, entry_occurrence_id, 'policy:' || pg_temp.op644_id(99))), 0::bigint,
+  'a proof for a different policy cannot create a result for the guarded entry');
+select is(pg_temp.read_op644_workflow()->'runnableTransitions', '[]'::jsonb,
+  'a failed proof leaves its successor unrunnable');
 
 create temp table op644_result as
-select accepted.* from op644_workflow cross join op644_started cross join lateral public.record_factory_workflow_node_result(
-  root_session_id, workspace_id, factory_id, 1, ownership_token, entry_occurrence_id, 'succeeded', 'validation:exact-artifact') accepted;
+select accepted.* from op644_workflow cross join op644_started cross join lateral public.record_factory_workflow_command_result(
+  root_session_id, workspace_id, factory_id, 1, ownership_token, entry_occurrence_id, evidence_ref) accepted;
 select ok((select created and result_id is not null from op644_result), 'the first completion receives a terminal result ID');
 select ok((select not duplicate.created and duplicate.result_id = accepted.result_id
   from op644_workflow cross join op644_started cross join op644_result accepted
-  cross join lateral public.record_factory_workflow_node_result(root_session_id, workspace_id, factory_id,
-    1, ownership_token, entry_occurrence_id, 'succeeded', 'validation:exact-artifact') duplicate),
+  cross join lateral public.record_factory_workflow_command_result(root_session_id, workspace_id, factory_id,
+    1, ownership_token, entry_occurrence_id, evidence_ref) duplicate),
   'duplicate completion returns the same result ID');
-select throws_ok($$select public.record_factory_workflow_node_result(root_session_id, workspace_id, factory_id,
-  1, ownership_token, entry_occurrence_id, 'succeeded', 'validation:different-artifact') from op644_workflow cross join op644_started$$,
+select throws_ok($$select public.record_factory_workflow_command_result(root_session_id, workspace_id, factory_id,
+  1, ownership_token, entry_occurrence_id, 'policy:' || pg_temp.op644_id(99)) from op644_workflow cross join op644_started$$,
   'PT409', 'The workflow node already has a different result.', 'duplicate completion cannot replace the evidence reference');
 select throws_ok($$select public.admit_factory_workflow_next(root_session_id, workspace_id, factory_id,
   1, ownership_token, entry_occurrence_id, edge_id, pg_temp.op644_id(99)) from op644_workflow cross join op644_started$$,
@@ -195,19 +178,26 @@ select throws_ok($$select public.admit_factory_workflow_next(root_session_id, wo
 
 create temp table op644_handoff as
 select handoff.* from op644_workflow
-cross join lateral public.advance_factory_workflow_generation(root_session_id, workspace_id, factory_id, 1) handoff;
+cross join lateral public.acquire_factory_workflow_ownership(
+  root_session_id, workspace_id, factory_id, 1, pg_temp.op644_id(98)) handoff;
 select ok((select handoff.execution_generation = 2 and handoff.ownership_token is not null
     and handoff.ownership_token <> started.ownership_token
   from op644_started started cross join op644_handoff handoff),
   'a handoff advances the root generation and rotates its ownership token');
-select throws_ok($$select public.record_factory_workflow_node_result(root_session_id, workspace_id, factory_id,
-  1, ownership_token, entry_occurrence_id, 'succeeded', 'validation:exact-artifact') from op644_workflow cross join op644_started$$,
+select throws_ok($$select public.record_factory_workflow_command_result(root_session_id, workspace_id, factory_id,
+  1, ownership_token, entry_occurrence_id, evidence_ref) from op644_workflow cross join op644_started$$,
   'PT409', 'Workflow generation is stale.', 'old ownership cannot replay a result mutation');
 select throws_ok($$select public.admit_factory_workflow_next(root_session_id, workspace_id, factory_id,
   1, ownership_token, entry_occurrence_id, edge_id, result_id) from op644_workflow cross join op644_started cross join op644_result$$,
   'PT409', 'Workflow generation is stale.', 'old ownership cannot admit a transition');
-select throws_ok($$select public.advance_factory_workflow_generation(root_session_id, workspace_id, factory_id, 1)
-  from op644_workflow$$, 'PT409', 'Workflow generation is stale.', 'old ownership cannot advance the generation again');
+select is((select count(*) from op644_workflow cross join lateral public.acquire_factory_workflow_ownership(
+  root_session_id, workspace_id, factory_id, 1, pg_temp.op644_id(99))), 0::bigint,
+  'a different candidate cannot acquire the retired generation');
+select ok((select (replay.execution_generation, replay.ownership_token) =
+    (handoff.execution_generation, handoff.ownership_token)
+  from op644_workflow cross join op644_handoff handoff cross join lateral public.acquire_factory_workflow_ownership(
+    root_session_id, workspace_id, factory_id, 1, pg_temp.op644_id(98)) replay),
+  'an exact handoff replay returns the same capability without advancing again');
 
 create temp table op644_observed_execution as
 select pg_temp.read_op644_workflow()->'execution' as payload;
@@ -216,12 +206,11 @@ select ok((select (payload->>'generation')::bigint = 2 and not (payload ? 'owner
 select ok((select not replay.created and replay.execution_generation = (observed.payload->>'generation')::bigint
     and replay.ownership_token is null and replay.entry_occurrence_id = started.entry_occurrence_id
   from op644_workflow workflow cross join op644_started started cross join op644_observed_execution observed
-  cross join lateral public.start_factory_workflow_execution(root_session_id, workspace_id, factory_id,
-    definition_revision_id, definition_digest, workflow_json, workflow_digest) replay),
+  cross join lateral public.start_factory_workflow_graph_execution(root_session_id, workspace_id, factory_id,
+    graph_revision_id) replay),
   'an old owner cannot obtain the rotated token by replaying start');
-select throws_ok($$select public.record_factory_workflow_node_result(root_session_id, workspace_id, factory_id,
-  (observed.payload->>'generation')::bigint, started.ownership_token, started.entry_occurrence_id,
-  'succeeded', 'validation:exact-artifact')
+select throws_ok($$select public.record_factory_workflow_command_result(root_session_id, workspace_id, factory_id,
+  (observed.payload->>'generation')::bigint, started.ownership_token, started.entry_occurrence_id, evidence_ref)
   from op644_workflow cross join op644_started started cross join op644_observed_execution observed$$,
   'PT409', 'Workflow ownership token is stale.', 'the observed generation cannot authorize an old owner to write a result');
 select throws_ok($$select public.admit_factory_workflow_next(root_session_id, workspace_id, factory_id,
@@ -229,10 +218,21 @@ select throws_ok($$select public.admit_factory_workflow_next(root_session_id, wo
   from op644_workflow cross join op644_started started cross join op644_observed_execution observed cross join op644_result$$,
   'PT409', 'Workflow ownership token is stale.', 'the observed generation cannot authorize an old owner to admit an edge');
 
-select throws_ok($$select public.advance_factory_workflow_generation(root_session_id, foreign_factory.workspace_id, foreign_factory.id, 2)
+select throws_ok($$select public.acquire_factory_workflow_ownership(
+  root_session_id, foreign_factory.workspace_id, foreign_factory.id, 2, gen_random_uuid())
   from op644_workflow cross join public.factories foreign_factory
   where foreign_factory.workspace_id = pg_temp.op644_id(12) and foreign_factory.is_default$$,
-  'PT404', 'Workflow root session is unavailable.', 'a matching root ID cannot grant authority to another factory');
+  'PT404', 'Workflow root session is unavailable.', 'a matching root ID cannot grant authority across workspaces');
+select throws_ok($$select public.start_factory_workflow_graph_execution(
+  root_session_id, workflow.workspace_id, other.id, graph_revision_id)
+  from op644_workflow workflow join public.factories other using (workspace_id)
+  where other.slug = 'other-workflow-factory'$$,
+  'PT404', 'Workflow root session is unavailable.', 'a matching workspace cannot open a root from another factory');
+select throws_ok($$select public.acquire_factory_workflow_ownership(
+  root_session_id, workflow.workspace_id, other.id, 2, gen_random_uuid())
+  from op644_workflow workflow join public.factories other using (workspace_id)
+  where other.slug = 'other-workflow-factory'$$,
+  'PT404', 'Workflow root session is unavailable.', 'a matching workspace cannot hand off a root from another factory');
 select is((select public.read_factory_workflow_execution(root_session_id, foreign_factory.workspace_id, foreign_factory.id)
   from op644_workflow cross join public.factories foreign_factory
   where foreign_factory.workspace_id = pg_temp.op644_id(12) and foreign_factory.is_default), null::jsonb,
@@ -241,7 +241,7 @@ select is((select public.read_factory_workflow_execution(root_session_id, foreig
 update public.workspaces set deletion_requested_at = clock_timestamp() where id = pg_temp.op644_id(11);
 select is(pg_temp.read_op644_workflow()->'runnableTransitions', '[]'::jsonb,
   'restart hides runnable edges once workspace deletion starts');
-select throws_ok($$select public.advance_factory_workflow_generation(root_session_id, workspace_id, factory_id, 2)
+select throws_ok($$select public.acquire_factory_workflow_ownership(root_session_id, workspace_id, factory_id, 2, gen_random_uuid())
   from op644_workflow$$, 'P0010', 'Workspace deletion is in progress.', 'a workspace deletion fence blocks new workflow ownership');
 select throws_ok($$select public.admit_factory_workflow_next(root_session_id, workspace_id, factory_id,
   handoff.execution_generation, handoff.ownership_token, entry_occurrence_id, edge_id, result_id)
@@ -359,7 +359,7 @@ begin;
 select is((select array_agg(job.id order by job.id) from op644_workflow workflow join public.agent_jobs job
   on (job.workspace_id, job.session_id) = (workflow.workspace_id, workflow.root_session_id)
   and job.status in ('queued', 'started', 'running')),
-  (select array[job_id] from op644_workflow), 'the original job is still the only active legacy job');
+  (select array[job_id] from op644_workflow), 'the graph ledger has not enqueued a second session job');
 
 select ok(not exists (select 1 from (values ('anon'), ('authenticated'), ('service_role')) roles(role_name)
   cross join (values ('internal.factory_workflow_executions'), ('internal.factory_workflow_node_occurrences'),
@@ -370,9 +370,15 @@ select is((select count(*) from pg_class cls join pg_namespace ns on ns.oid = cl
   where ns.nspname = 'internal' and cls.relrowsecurity and cls.relname in ('factory_workflow_executions',
     'factory_workflow_node_occurrences', 'factory_workflow_node_results', 'factory_workflow_transition_receipts')), 4::bigint,
   'all ledger tables have RLS enabled');
-select ok(not exists (select 1 from (values
-  ('public.start_factory_workflow_execution(uuid,uuid,uuid,uuid,text,text,text)'),
+select is(to_regprocedure(signature), null::regprocedure, 'retired workflow routine is absent: ' || signature)
+from (values ('public.start_factory_workflow_execution(uuid,uuid,uuid,uuid,text,text,text)'),
   ('public.advance_factory_workflow_generation(uuid,uuid,uuid,bigint)'),
+  ('internal.matches_serial_factory_workflow_plan(jsonb,jsonb,uuid[])')) functions(signature);
+select ok(not exists (select 1 from (values
+  ('public.register_factory_workflow_graph_revision(uuid,uuid,uuid,text,text,text)'),
+  ('public.start_factory_workflow_graph_execution(uuid,uuid,uuid,uuid,uuid)'),
+  ('public.acquire_factory_workflow_ownership(uuid,uuid,uuid,bigint,uuid)'),
+  ('public.record_factory_workflow_command_result(uuid,uuid,uuid,bigint,uuid,uuid,text)'),
   ('public.record_factory_workflow_node_result(uuid,uuid,uuid,bigint,uuid,uuid,public.factory_workflow_node_outcome,text)'),
   ('public.admit_factory_workflow_next(uuid,uuid,uuid,bigint,uuid,uuid,text,uuid)'),
   ('public.read_factory_workflow_execution(uuid,uuid,uuid)')) functions(signature)

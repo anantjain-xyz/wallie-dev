@@ -10602,18 +10602,6 @@ export type Database = {
         }
         Returns: Json
       }
-      advance_factory_workflow_generation: {
-        Args: {
-          p_expected_generation: number
-          p_factory_id: string
-          p_root_session_id: string
-          p_workspace_id: string
-        }
-        Returns: {
-          execution_generation: number
-          ownership_token: string
-        }[]
-      }
       answer_session_specification_clarification_once: {
         Args: {
           p_actor_member_id: string
@@ -18737,23 +18725,6 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: Json
-      }
-      start_factory_workflow_execution: {
-        Args: {
-          p_definition_digest: string
-          p_definition_revision_id: string
-          p_factory_id: string
-          p_root_session_id: string
-          p_workflow_digest: string
-          p_workflow_json: string
-          p_workspace_id: string
-        }
-        Returns: {
-          created: boolean
-          entry_occurrence_id: string
-          execution_generation: number
-          ownership_token: string
-        }[]
       }
       start_factory_workflow_graph_execution: {
         Args: {
